@@ -3,27 +3,42 @@ from app.core.llm import LlamaClient
 from app.core.vector_store import VectorStore
 
 class Brain:
-    def __init__(self, llm: LlamaClient, vector_store: VectorStore):
-        self.llm = llm
+    def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
 
     async def build_prompt(self, user_message: str, state: Dict[str, Any]) -> str:
         # 1. Query VectorStore for context
         context_data = await self.vector_store.query_memory(user_message)
-        documents = context_data.get("documents", [[]])
-        context = " ".join(documents[0]) if documents and documents[0] else "No relevant memory found."
+        
+        # Robust handling for nested list structure from VectorStore
+        context = "No relevant memory found."
+        if isinstance(context_data, dict):
+            documents = context_data.get("documents")
+            if isinstance(documents, list) and len(documents) > 0:
+                first_doc_list = documents[0]
+                if isinstance(first_doc_list, list) and len(first_doc_list) > 0:
+                    context = " ".join([str(doc) for doc in first_doc_list if doc])
 
         # 2. Format world state
-        state_str = "\n".join([f"- {k}: {v}" for k, v in state.items()])
+        if state:
+            state_str = "\n".join([f"- {k}: {v}" for k, v in state.items()])
+        else:
+            state_str = "No active state variables."
 
-        # 3. Combine into prompt
-        prompt = f"""System Context:
-Relevant Memories: {context}
+        # 3. Combine into prompt with clear separation
+        prompt = f"""### INSTRUCTIONS ###
+You are a helpful AI assistant. Use the PROVIDED DATA to inform your response.
 
-Current World State:
+### PROVIDED DATA ###
+RELEVANT MEMORIES:
+{context}
+
+CURRENT WORLD STATE:
 {state_str}
 
-User Message: {user_message}
+### USER INPUT ###
+USER MESSAGE: {user_message}
 
-Assistant Response:"""
+### RESPONSE ###
+ASSISTANT RESPONSE:"""
         return prompt

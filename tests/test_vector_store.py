@@ -5,11 +5,9 @@ import shutil
 import os
 
 @pytest.mark.asyncio
-async def test_vector_store_add_and_query():
-    # Clean up test dir if exists
-    test_path = "./test_chroma"
-    if os.path.exists(test_path):
-        shutil.rmtree(test_path)
+async def test_vector_store_add_and_query(tmp_path):
+    # Use tmp_path for test dir
+    test_path = str(tmp_path / "test_chroma")
         
     # Mock the LLM client for embeddings
     mock_llm = AsyncMock()
@@ -22,7 +20,3 @@ async def test_vector_store_add_and_query():
     
     assert len(results["documents"]) > 0
     assert "pizza" in results["documents"][0][0]
-    
-    # Cleanup
-    if os.path.exists(test_path):
-        shutil.rmtree(test_path)

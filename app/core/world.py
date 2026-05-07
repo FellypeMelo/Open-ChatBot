@@ -37,3 +37,44 @@ class WorldEngine:
             "is_night": is_night,
             "suggested_mood": suggested_mood
         }
+
+    def update_energy(self, stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any]:
+        """
+        Calculates energy drain or recovery based on time passed.
+        Drains 5 energy per hour of wakefulness.
+        Recovers 10 energy per hour of sleep.
+        """
+        last_update = datetime.fromisoformat(stats.get("last_update", current_time.isoformat()))
+        duration = current_time - last_update
+        hours_passed = duration.total_seconds() / 3600.0
+        
+        current_energy = stats.get("energy", 100)
+        was_sleeping = stats.get("is_sleeping", False)
+        
+        if was_sleeping:
+            # Recover 10 energy per hour
+            new_energy = current_energy + (hours_passed * 10)
+        else:
+            # Drain 5 energy per hour
+            new_energy = current_energy - (hours_passed * 5)
+            
+        # Clamp energy between 0 and 100
+        new_energy = max(0, min(100, new_energy))
+        
+        return {
+            "energy": int(new_energy),
+            "last_update": current_time.isoformat(),
+            "is_sleeping": was_sleeping
+        }
+
+    def should_be_sleeping(self, stats: Dict[str, Any], current_time: datetime) -> bool:
+        """
+        Returns True if energy < 20 OR it's between 11 PM and 6 AM.
+        """
+        energy = stats.get("energy", 100)
+        hour = current_time.hour
+        
+        # Late night: 11 PM to 6 AM
+        is_late_night = hour >= 23 or hour < 6
+        
+        return energy < 20 or is_late_night

@@ -1,5 +1,16 @@
 from sqlalchemy import Column, Integer, String, JSON
 from app.db.database import Base
+from datetime import datetime
+
+def get_default_stats():
+    return {
+        "energy": 100,
+        "hunger": 0,
+        "happiness": 100,
+        "social": 100,
+        "is_sleeping": False,
+        "last_update": datetime.now().isoformat()
+    }
 
 class AgentState(Base):
     __tablename__ = "agent_states"
@@ -9,23 +20,9 @@ class AgentState(Base):
     mood = Column(String)
     location = Column(String)
     clothes = Column(String)
-    stats = Column(JSON, default={
-        "energy": 100,
-        "hunger": 0,
-        "happiness": 100,
-        "social": 100,
-        "is_sleeping": False,
-        "last_update": "2026-05-07T10:00:00"
-    })
+    stats = Column(JSON, default=get_default_stats)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if self.stats is None:
-            self.stats = {
-                "energy": 100,
-                "hunger": 0,
-                "happiness": 100,
-                "social": 100,
-                "is_sleeping": False,
-                "last_update": "2026-05-07T10:00:00"
-            }
+            self.stats = get_default_stats()

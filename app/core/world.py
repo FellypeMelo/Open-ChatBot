@@ -6,6 +6,13 @@ class WorldEngine:
     WorldEngine calculates the AI's temporal context and environmental state.
     """
     
+    # Biological drain/recovery rates (per hour)
+    ENERGY_DRAIN_RATE = 5.0
+    ENERGY_RECOVERY_RATE = 10.0
+    HUNGER_INCREASE_RATE = 10.0
+    SOCIAL_DECREASE_RATE = 5.0
+    HAPPINESS_DECREASE_RATE = 2.0
+
     def get_time_context(self, current_time: Optional[datetime] = None) -> Dict[str, Any]:
         """
         Returns time string, day/night boolean, and suggested mood based on hour ranges.
@@ -38,25 +45,29 @@ class WorldEngine:
             "suggested_mood": suggested_mood
         }
 
+    def _calculate_hours_passed(self, stats: Dict[str, Any], current_time: datetime) -> float:
+        """
+        Helper to calculate hours passed since last update.
+        """
+        last_update_str = stats.get("last_update")
+        if not last_update_str:
+            return 0.0
+        last_update = datetime.fromisoformat(last_update_str)
+        duration = current_time - last_update
+        return duration.total_seconds() / 3600.0
+
     def update_energy(self, stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any]:
         """
         Calculates energy drain or recovery based on time passed.
-        Drains 5 energy per hour of wakefulness.
-        Recovers 10 energy per hour of sleep.
         """
-        last_update = datetime.fromisoformat(stats.get("last_update", current_time.isoformat()))
-        duration = current_time - last_update
-        hours_passed = duration.total_seconds() / 3600.0
-        
+        hours_passed = self._calculate_hours_passed(stats, current_time)
         current_energy = stats.get("energy", 100)
         was_sleeping = stats.get("is_sleeping", False)
         
         if was_sleeping:
-            # Recover 10 energy per hour
-            new_energy = current_energy + (hours_passed * 10)
+            new_energy = current_energy + (hours_passed * self.ENERGY_RECOVERY_RATE)
         else:
-            # Drain 5 energy per hour
-            new_energy = current_energy - (hours_passed * 5)
+            new_energy = current_energy - (hours_passed * self.ENERGY_DRAIN_RATE)
             
         # Clamp energy between 0 and 100
         new_energy = max(0, min(100, new_energy))
@@ -70,30 +81,25 @@ class WorldEngine:
     def update_needs(self, stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any]:
         """
         Updates hunger, happiness, social, and energy based on time passed.
-        Hunger increases by 10 per hour.
-        Social decreases by 5 per hour.
-        Happiness decreases by 2 per hour.
         """
-        # First get updated energy and common fields
+        hours_passed = self._calculate_hours_passed(stats, current_time)
+        
+        # Start with energy update which also updates last_update
         updated_stats = self.update_energy(stats, current_time)
         
-        last_update = datetime.fromisoformat(stats.get("last_update", current_time.isoformat()))
-        duration = current_time - last_update
-        hours_passed = duration.total_seconds() / 3600.0
-        
-        # Hunger: increases 10 per hour
+        # Hunger: increases
         current_hunger = stats.get("hunger", 0)
-        new_hunger = current_hunger + (hours_passed * 10)
+        new_hunger = current_hunger + (hours_passed * self.HUNGER_INCREASE_RATE)
         updated_stats["hunger"] = int(max(0, min(100, new_hunger)))
         
-        # Social: decreases 5 per hour
+        # Social: decreases
         current_social = stats.get("social", 100)
-        new_social = current_social - (hours_passed * 5)
+        new_social = current_social - (hours_passed * self.SOCIAL_DECREASE_RATE)
         updated_stats["social"] = int(max(0, min(100, new_social)))
         
-        # Happiness: decreases 2 per hour
+        # Happiness: decreases
         current_happiness = stats.get("happiness", 100)
-        new_happiness = current_happiness - (hours_passed * 2)
+        new_happiness = current_happiness - (hours_passed * self.HAPPINESS_DECREASE_RATE)
         updated_stats["happiness"] = int(max(0, min(100, new_happiness)))
         
         return updated_stats

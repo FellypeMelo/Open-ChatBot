@@ -4,3 +4,4 @@ sqlalchemy
 pydantic-settings
 httpx
 python-multipart
+chromadb

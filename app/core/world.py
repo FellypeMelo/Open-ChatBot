@@ -67,6 +67,37 @@ class WorldEngine:
             "is_sleeping": was_sleeping
         }
 
+    def update_needs(self, stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any]:
+        """
+        Updates hunger, happiness, social, and energy based on time passed.
+        Hunger increases by 10 per hour.
+        Social decreases by 5 per hour.
+        Happiness decreases by 2 per hour.
+        """
+        # First get updated energy and common fields
+        updated_stats = self.update_energy(stats, current_time)
+        
+        last_update = datetime.fromisoformat(stats.get("last_update", current_time.isoformat()))
+        duration = current_time - last_update
+        hours_passed = duration.total_seconds() / 3600.0
+        
+        # Hunger: increases 10 per hour
+        current_hunger = stats.get("hunger", 0)
+        new_hunger = current_hunger + (hours_passed * 10)
+        updated_stats["hunger"] = int(max(0, min(100, new_hunger)))
+        
+        # Social: decreases 5 per hour
+        current_social = stats.get("social", 100)
+        new_social = current_social - (hours_passed * 5)
+        updated_stats["social"] = int(max(0, min(100, new_social)))
+        
+        # Happiness: decreases 2 per hour
+        current_happiness = stats.get("happiness", 100)
+        new_happiness = current_happiness - (hours_passed * 2)
+        updated_stats["happiness"] = int(max(0, min(100, new_happiness)))
+        
+        return updated_stats
+
     def should_be_sleeping(self, stats: Dict[str, Any], current_time: datetime) -> bool:
         """
         Returns True if energy < 20 OR it's between 11 PM and 6 AM.

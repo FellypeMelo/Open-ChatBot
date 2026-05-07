@@ -11,6 +11,21 @@ class AgentState(Base):
     clothes = Column(String)
     stats = Column(JSON, default={
         "energy": 100,
+        "hunger": 0,
+        "happiness": 100,
+        "social": 100,
         "is_sleeping": False,
-        "last_update": "2026-05-07T10:00:00" # Initial default seed
+        "last_update": "2026-05-07T10:00:00"
     })
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.stats is None:
+            self.stats = {
+                "energy": 100,
+                "hunger": 0,
+                "happiness": 100,
+                "social": 100,
+                "is_sleeping": False,
+                "last_update": "2026-05-07T10:00:00"
+            }

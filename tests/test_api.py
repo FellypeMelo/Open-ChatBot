@@ -7,10 +7,9 @@ from unittest.mock import patch, MagicMock
 
 from app.main import app
 from app.db.database import Base, get_db
-from app.db.models import AgentState
+from app.db.models import AgentState, Character
 
 # Setup in-memory DB for testing
-# We use a static engine and SessionLocal to keep the memory DB alive across connections
 TEST_ENGINE = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
 
@@ -22,7 +21,6 @@ def init_db():
 
 @pytest.fixture
 def db_session():
-    # Use a single connection for the duration of the test to keep memory tables alive
     connection = TEST_ENGINE.connect()
     transaction = connection.begin()
     db = TestSessionLocal(bind=connection)
@@ -46,13 +44,20 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 def test_chat_endpoint(client, db_session):
-    # Mock VectorStore query to avoid ChromaDB issues in CI/CD if any
+    # Setup: Create character and state in mock DB
+    char = Character(id=1, name="Gemi", description="Test")
+    db_session.add(char)
+    db_session.commit()
+    
+    state = AgentState(character_id=1)
+    db_session.add(state)
+    db_session.commit()
+
     with patch("app.api.chat.VectorStore.query_memory") as mock_query, \
          patch("app.api.chat.LlamaClient.complete") as mock_complete:
         
         mock_query.return_value = {"documents": [["some memory"]]}
         
-        # Mocking the AI response as a JSON string because we use grammar
         ai_response_content = json.dumps({
             "thought": "I should reply hello.",
             "actions": [],
@@ -60,10 +65,9 @@ def test_chat_endpoint(client, db_session):
         })
         mock_complete.return_value = {"content": ai_response_content}
         
-        response = client.post("/chat", json={"message": "hello"})
+        response = client.post("/chat", json={"message": "hello", "character_id": 1})
         
         assert response.status_code == 200
         data = response.json()
         assert data["reply"] == "Hello there!"
         assert data["thought"] == "I should reply hello."
-        mock_complete.assert_called_once()

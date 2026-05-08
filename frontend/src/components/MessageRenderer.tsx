@@ -12,9 +12,49 @@ interface MessageRendererProps {
     thought?: string;
     actions?: string[];
   };
+  isLatest?: boolean;
 }
 
-const MessageRenderer: React.FC<MessageRendererProps> = ({ sequence, fallback }) => {
+const RevealingText: React.FC<{ text: string; isLatest: boolean }> = ({ text, isLatest }) => {
+  if (!isLatest) return <>{text}</>;
+
+  // Split text into words, then group into clusters of 3-5
+  const words = text.split(/(\s+)/); // Preserve whitespace
+  const clusters: string[] = [];
+  let currentCluster: string[] = [];
+  let wordCount = 0;
+  const targetWordsPerCluster = 4;
+
+  for (let i = 0; i < words.length; i++) {
+    const part = words[i];
+    currentCluster.push(part);
+    if (part.trim().length > 0) {
+      wordCount++;
+    }
+
+    if (wordCount >= targetWordsPerCluster || i === words.length - 1) {
+      clusters.push(currentCluster.join(''));
+      currentCluster = [];
+      wordCount = 0;
+    }
+  }
+
+  return (
+    <>
+      {clusters.map((cluster, i) => (
+        <span
+          key={i}
+          className="inline-block opacity-0 animate-word-reveal"
+          style={{ animationDelay: `${i * 0.8}s` }}
+        >
+          {cluster}
+        </span>
+      ))}
+    </>
+  );
+};
+
+const MessageRenderer: React.FC<MessageRendererProps> = ({ sequence, fallback, isLatest = false }) => {
   if (sequence && sequence.length > 0) {
     return (
       <div className="message-container leading-relaxed spatial-field p-8 rounded-3xl transition-all duration-500 hover:scale-[1.01]">
@@ -25,7 +65,7 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ sequence, fallback })
           
           return (
             <span key={i} className={className}>
-              {block.content}
+              <RevealingText text={block.content} isLatest={isLatest} />
               {" "}
             </span>
           );
@@ -45,12 +85,12 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ sequence, fallback })
       <div className="spatial-field p-8 rounded-3xl text-zinc-100 transition-all duration-500 hover:scale-[1.01]">
         {fallback?.thought && (
           <div className="font-serif italic text-zinc-400 text-lg mb-4 border-l-2 border-emerald-500/20 pl-4 py-1">
-            {fallback.thought}
+            <RevealingText text={fallback.thought} isLatest={isLatest} />
           </div>
         )}
-        <p className="whitespace-pre-wrap leading-relaxed font-sans text-lg">
-          {fallback?.content}
-        </p>
+        <div className="whitespace-pre-wrap leading-relaxed font-sans text-lg">
+          <RevealingText text={fallback?.content || ''} isLatest={isLatest} />
+        </div>
       </div>
     </div>
   );

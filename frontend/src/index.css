@@ -55,6 +55,10 @@ body {
   }
 }
 
+.animate-word-reveal {
+  animation: word-fade-in 0.8s ease forwards;
+}
+
 @keyframes ambient-pulse {
   0%, 100% {
     opacity: 0.3;

@@ -362,7 +362,8 @@ function App() {
                           content: msg.content, 
                           thought: msg.thought, 
                           actions: msg.actions 
-                        }} 
+                        }}
+                        isLatest={i === messages.length - 1}
                       />
                     </div>
                   )}

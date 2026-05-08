@@ -17,7 +17,15 @@ class LlamaClient:
         await self.client.aclose()
 
     async def complete(self, prompt: str, grammar: str = None):
-        payload = {"prompt": prompt, "n_predict": settings.N_PREDICT}
+        payload = {
+            "prompt": prompt,
+            "n_predict": settings.N_PREDICT,
+            "temperature": 0.92,
+            "top_p": 0.95,
+            "top_k": 40,
+            "repeat_penalty": 1.08,
+            "min_p": 0.05,
+        }
         if grammar:
             payload["grammar"] = grammar
         

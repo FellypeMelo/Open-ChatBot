@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+*.db
+chroma_db/
+
+# Node/React
+node_modules/
+dist/
+static/
+
+# Binaries/Models
+llama-b8984/
+models/
+*.gguf
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/

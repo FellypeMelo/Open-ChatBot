@@ -2,8 +2,12 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.api import chat
-import os
+from app.db.database import engine, Base
 
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
 app = FastAPI(title="Open-ChatBot")
 
 app.include_router(chat.router)

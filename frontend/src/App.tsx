@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Plus, Users, Tag as TagIcon, Brain as BrainIcon, Heart, Zap, Pizza } from 'lucide-react'
+import MessageRenderer, { SequenceBlock } from './components/MessageRenderer'
 
 interface Tag {
   id: number
@@ -19,6 +20,7 @@ interface Message {
   content: string
   thought?: string
   actions?: string[]
+  sequence?: SequenceBlock[]
   timestamp?: Date
 }
 
@@ -103,6 +105,7 @@ function App() {
         content: data.reply, 
         thought: data.thought,
         actions: data.actions,
+        sequence: data.sequence,
         timestamp: new Date() 
       }
       setMessages(prev => [...prev, assistantMessage])
@@ -219,30 +222,22 @@ function App() {
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
               <div className={`flex flex-col gap-1.5 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                {/* Actions (Bold) */}
-                {msg.actions && msg.actions.length > 0 && (
-                  <div className="px-2 text-xs font-bold text-emerald-500/80 uppercase tracking-widest">
-                    {msg.actions.map(a => `**${a}**`).join(' ')}
+                {msg.role === 'user' ? (
+                  <div className="p-4 rounded-2xl shadow-lg border bg-emerald-600 border-emerald-500 text-white rounded-tr-none">
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {msg.content}
+                    </p>
                   </div>
+                ) : (
+                  <MessageRenderer 
+                    sequence={msg.sequence} 
+                    fallback={{ 
+                      content: msg.content, 
+                      thought: msg.thought, 
+                      actions: msg.actions 
+                    }} 
+                  />
                 )}
-
-                <div className={`p-4 rounded-2xl shadow-lg border ${
-                  msg.role === 'user' 
-                    ? 'bg-emerald-600 border-emerald-500 text-white rounded-tr-none' 
-                    : 'bg-zinc-900 border-zinc-800 text-zinc-100 rounded-tl-none'
-                }`}>
-                  {/* Internal Thought (Italic) */}
-                  {msg.thought && (
-                    <div className="text-sm italic text-zinc-400 mb-2 border-l-2 border-emerald-500/30 pl-3 py-0.5">
-                      {msg.thought}
-                    </div>
-                  )}
-                  
-                  {/* Dialogue */}
-                  <p className="whitespace-pre-wrap leading-relaxed">
-                    {msg.content}
-                  </p>
-                </div>
               </div>
             </div>
           ))}

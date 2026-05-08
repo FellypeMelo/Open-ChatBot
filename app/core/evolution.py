@@ -61,6 +61,39 @@ class EvolutionManager:
             else:
                 base[key] = value
 
+def ensure_stats_integrity(stats: dict) -> dict:
+    """
+    Ensures that the stats dictionary contains all required keys with default values.
+    """
+    from datetime import datetime
+    defaults = {
+        "energy": 100,
+        "hunger": 0,
+        "happiness": 100,
+        "social": 100,
+        "is_sleeping": False,
+        "last_update": datetime.now().isoformat(),
+        "relationship": {
+            "score": 50,
+            "dynamic_preferences": ["teasing", "playful"],
+            "user_sentiment": "Neutral"
+        }
+    }
+    
+    if not stats:
+        return defaults
+    
+    # Deep merge defaults for missing keys
+    for key, val in defaults.items():
+        if key not in stats:
+            stats[key] = val
+        elif isinstance(val, dict) and isinstance(stats[key], dict):
+            for subkey, subval in val.items():
+                if subkey not in stats[key]:
+                    stats[key][subkey] = subval
+                    
+    return stats
+
 def get_behavioral_modifiers(stats: dict) -> str:
     mods = []
     

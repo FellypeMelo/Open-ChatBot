@@ -17,20 +17,19 @@ interface MessageRendererProps {
 const MessageRenderer: React.FC<MessageRendererProps> = ({ sequence, fallback }) => {
   if (sequence && sequence.length > 0) {
     return (
-      <div className="message-container leading-relaxed">
-        {sequence.map((block, i) => (
-          <span 
-            key={i} 
-            className={
-              block.type === 'thought' ? 'italic text-zinc-400 text-[0.95em]' : 
-              block.type === 'action' ? 'font-bold text-zinc-300' : 
-              'text-zinc-100'
-            }
-          >
-            {block.content}
-            {" "}
-          </span>
-        ))}
+      <div className="message-container leading-relaxed spatial-field p-8 rounded-3xl transition-all duration-500 hover:scale-[1.01]">
+        {sequence.map((block, i) => {
+          let className = 'text-zinc-100 font-sans text-lg';
+          if (block.type === 'thought') className = 'font-serif italic text-zinc-400 text-[1.1em] tracking-wide';
+          else if (block.type === 'action') className = 'font-bold text-zinc-300';
+          
+          return (
+            <span key={i} className={className}>
+              {block.content}
+              {" "}
+            </span>
+          );
+        })}
       </div>
     );
   }
@@ -43,13 +42,13 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ sequence, fallback })
           {fallback.actions.map(a => `**${a}**`).join(' ')}
         </div>
       )}
-      <div className="p-4 rounded-2xl shadow-lg border bg-zinc-900 border-zinc-800 text-zinc-100 rounded-tl-none">
+      <div className="spatial-field p-8 rounded-3xl text-zinc-100 transition-all duration-500 hover:scale-[1.01]">
         {fallback?.thought && (
-          <div className="text-sm italic text-zinc-400 mb-2 border-l-2 border-emerald-500/30 pl-3 py-0.5">
+          <div className="font-serif italic text-zinc-400 text-lg mb-4 border-l-2 border-emerald-500/20 pl-4 py-1">
             {fallback.thought}
           </div>
         )}
-        <p className="whitespace-pre-wrap leading-relaxed">
+        <p className="whitespace-pre-wrap leading-relaxed font-sans text-lg">
           {fallback?.content}
         </p>
       </div>

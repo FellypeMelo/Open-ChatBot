@@ -333,51 +333,54 @@ function App() {
         </header>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-          {messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-zinc-600 max-w-sm mx-auto text-center space-y-4">
-              <div className="p-6 bg-zinc-900 rounded-3xl border border-zinc-800">
-                <BrainIcon size={48} className="mx-auto mb-4 text-emerald-500/40" />
-                <p className="text-lg font-medium text-zinc-400">Pronto para o Roleplay?</p>
-                <p className="text-sm">A entidade vai responder com pensamentos internos, ações físicas e diálogos.</p>
+        <div className="flex-1 overflow-y-auto px-6 py-12">
+          <div className="max-w-[680px] mx-auto space-y-12">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center text-zinc-600 mx-auto text-center space-y-4">
+                <div className="p-12 spatial-field rounded-3xl border border-zinc-800/50">
+                  <BrainIcon size={48} className="mx-auto mb-6 text-emerald-500/40" />
+                  <p className="text-xl font-serif italic text-zinc-400">Pronto para o Roleplay?</p>
+                  <p className="text-sm mt-4 font-sans text-zinc-500 max-w-xs mx-auto">A entidade vai responder com pensamentos internos, ações físicas e diálogos.</p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-              <div className={`flex flex-col gap-1.5 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                {msg.role === 'user' ? (
-                  <div className="p-4 rounded-2xl shadow-lg border bg-emerald-600 border-emerald-500 text-white rounded-tr-none">
-                    <p className="whitespace-pre-wrap leading-relaxed">
-                      {msg.content}
-                    </p>
-                  </div>
-                ) : (
-                  <MessageRenderer 
-                    sequence={msg.sequence} 
-                    fallback={{ 
-                      content: msg.content, 
-                      thought: msg.thought, 
-                      actions: msg.actions 
-                    }} 
-                  />
-                )}
+            {messages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+                <div className={`flex flex-col gap-3 w-full ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  {msg.role === 'user' ? (
+                    <div className="p-6 rounded-3xl shadow-2xl bg-emerald-600/90 text-white max-w-[90%] font-sans text-lg leading-relaxed transition-all duration-500 hover:scale-[1.01]">
+                      <p className="whitespace-pre-wrap">
+                        {msg.content}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="w-full">
+                      <MessageRenderer 
+                        sequence={msg.sequence} 
+                        fallback={{ 
+                          content: msg.content, 
+                          thought: msg.thought, 
+                          actions: msg.actions 
+                        }} 
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-          {isLoading && (
-            <div className="flex justify-start">
-               <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl rounded-tl-none flex gap-1.5 items-center">
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.4s]" />
-               </div>
-            </div>
-          )}
-          <div ref={chatEndRef} />
+            ))}
+            {isLoading && (
+              <div className="flex justify-start">
+                 <div className="spatial-field p-6 rounded-3xl flex gap-2 items-center">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce" />
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                 </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
         </div>
-
         {/* Input */}
         <footer className="p-6 bg-zinc-950/80 backdrop-blur-xl border-t border-zinc-800">
           <div className="max-w-5xl mx-auto relative flex items-center gap-3">

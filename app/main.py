@@ -2,10 +2,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from app.api import chat, characters, tags
-from app.db.database import engine, Base
+from app.db.database import init_db
 
 # Create tables
-Base.metadata.create_all(bind=engine)
+init_db()
 
 app = FastAPI(title="Open-ChatBot")
 

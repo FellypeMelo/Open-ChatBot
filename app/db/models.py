@@ -17,11 +17,19 @@ class Tag(Base):
     label = Column(String, unique=True, index=True)
     instruction = Column(Text) # The prompt snippet this tag injects
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    gender = Column(String)
+    is_active = Column(Boolean, default=True)
+
 class Character(Base):
     __tablename__ = "characters"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     description = Column(Text)
+    short_description = Column(Text)
     persona_prompt = Column(Text)
     is_active = Column(Boolean, default=True)
 

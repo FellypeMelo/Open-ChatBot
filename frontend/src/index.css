@@ -61,11 +61,48 @@ body {
 
 @keyframes ambient-pulse {
   0%, 100% {
-    opacity: 0.3;
+    opacity: 0.1;
+    filter: blur(16px) brightness(0.8);
+    transform: scale(1);
   }
   50% {
-    opacity: 0.6;
+    opacity: 0.3;
+    filter: blur(24px) brightness(1.2);
+    transform: scale(1.1);
   }
+}
+
+.animate-ambient-bloom {
+  animation: ambient-pulse 8s ease-in-out infinite;
+}
+
+.refractive-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.refractive-shimmer::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.refractive-shimmer:active::after {
+  opacity: 1;
+  transform: scale(0.5);
+  transition: transform 0s;
+}
+
+.refractive-shimmer:active {
+  filter: brightness(1.2) contrast(1.1);
+  transform: scale(0.98);
 }
 
 .spatial-field {

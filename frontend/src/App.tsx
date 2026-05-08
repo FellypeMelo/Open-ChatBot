@@ -240,7 +240,7 @@ function App() {
           </h2>
           <button 
             onClick={() => setShowCharModal(true)}
-            className="p-1.5 hover:bg-emerald-500/10 text-emerald-500 rounded-lg transition-colors border border-emerald-500/20"
+            className="p-1.5 hover:bg-emerald-500/10 text-emerald-500 rounded-lg transition-colors border border-emerald-500/20 refractive-shimmer"
           >
             <Plus size={18} />
           </button>
@@ -250,7 +250,7 @@ function App() {
             <button
               key={char.id}
               onClick={() => setSelectedCharId(char.id)}
-              className={`w-full text-left p-3 rounded-xl transition-all duration-200 flex flex-col gap-1 ${
+              className={`w-full text-left p-3 rounded-xl transition-all duration-200 flex flex-col gap-1 refractive-shimmer ${
                 selectedCharId === char.id 
                   ? 'bg-emerald-600 shadow-lg shadow-emerald-900/20 scale-[1.02]' 
                   : 'hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100'
@@ -268,7 +268,7 @@ function App() {
         <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur space-y-2 min-w-[16rem]">
           <button 
             onClick={() => setShowUserModal(true)}
-            className="w-full flex items-center justify-between p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors border border-transparent hover:border-zinc-700"
+            className="w-full flex items-center justify-between p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors border border-transparent hover:border-zinc-700 refractive-shimmer"
           >
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] font-bold text-emerald-500">
@@ -278,7 +278,7 @@ function App() {
             </div>
             <span className="text-[10px] opacity-50">{user?.gender}</span>
           </button>
-          <button className="w-full flex items-center gap-2 p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors">
+          <button className="w-full flex items-center gap-2 p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors refractive-shimmer">
             <TagIcon size={16} /> Gerenciar Tags
           </button>
         </div>
@@ -287,18 +287,24 @@ function App() {
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col relative bg-zinc-950">
         {/* Header / HUD */}
-        <header className={`px-6 py-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50 backdrop-blur-md sticky top-0 z-10 transition-all duration-700 ease-in-out ${
+        <header className={`px-6 py-4 border-b border-white/5 flex justify-between items-center bg-zinc-950/40 backdrop-blur-2xl sticky top-0 z-10 transition-all duration-700 ease-in-out ${
           isImmersed ? '-translate-y-full opacity-0 h-0 py-0 border-none' : 'translate-y-0 opacity-100 h-auto'
         }`}>
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
-              <span className="text-xl">✨</span>
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg relative">
+              <span className="text-xl relative z-10">✨</span>
+              {isLoading && (
+                <div className="absolute inset-0 bg-emerald-400/20 blur-xl animate-ambient-bloom rounded-full" />
+              )}
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-white leading-tight">
+            <div className="relative">
+              {isLoading && (
+                <div className="absolute -inset-x-4 -inset-y-2 bg-emerald-500/5 blur-2xl animate-ambient-bloom pointer-events-none" />
+              )}
+              <h1 className="text-lg font-bold text-white leading-tight relative z-10">
                 {activeChar?.name || 'Open-ChatBot'}
               </h1>
-              <div className="flex items-center gap-3 mt-1">
+              <div className="flex items-center gap-3 mt-1 relative z-10">
                 <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
                   Online
                 </span>
@@ -397,7 +403,7 @@ function App() {
             <button
               onClick={handleSend}
               disabled={isLoading || !selectedCharId}
-              className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 text-white w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-900/20 transition-all hover:scale-105 active:scale-95"
+              className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 text-white w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-900/20 transition-all hover:scale-105 active:scale-95 refractive-shimmer"
             >
               <Send size={24} />
             </button>
@@ -445,13 +451,13 @@ function App() {
             <div className="flex gap-3 mt-8">
               <button 
                 onClick={() => setShowCharModal(false)}
-                className="flex-1 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 font-bold transition-colors"
+                className="flex-1 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 font-bold transition-colors refractive-shimmer"
               >
                 Cancelar
               </button>
               <button 
                 onClick={createCharacter}
-                className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold transition-all"
+                className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold transition-all refractive-shimmer"
               >
                 Criar Entidade
               </button>
@@ -493,13 +499,13 @@ function App() {
             <div className="flex gap-3 mt-8">
               <button 
                 onClick={() => setShowUserModal(false)}
-                className="flex-1 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 font-bold transition-colors"
+                className="flex-1 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 font-bold transition-colors refractive-shimmer"
               >
                 Cancelar
               </button>
               <button 
                 onClick={updateUser}
-                className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold transition-all"
+                className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold transition-all refractive-shimmer"
               >
                 Salvar Perfil
               </button>

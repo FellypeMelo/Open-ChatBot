@@ -94,6 +94,19 @@ class Brain:
             for tag in character.tags:
                 tag_instructions.append(f"- {tag.label.upper()}: {tag.instruction}")
         
+        # Inject Lust descriptor
+        if character and hasattr(character, 'lust') and character.lust is not None:
+            lust = character.lust
+            if lust >= 80:
+                lust_desc = "Intensely passionate and sensually driven."
+            elif lust >= 50:
+                lust_desc = "Warm and openly affectionate with a romantic edge."
+            elif lust >= 20:
+                lust_desc = "Mildly flirtatious, responsive to romantic cues."
+            else:
+                lust_desc = "Reserved or indifferent toward physical intimacy."
+            tag_instructions.append(f"- LUST: {lust}/100 — {lust_desc}")
+
         # Inject Stat-based behavior
         if state and "stats" in state:
             from app.core.evolution import get_behavioral_modifiers

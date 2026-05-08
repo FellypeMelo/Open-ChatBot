@@ -31,16 +31,22 @@ class TagSchema(BaseModel):
 class CharacterCreate(BaseModel):
     name: str
     description: str
-    short_description: str = ""
     tag_ids: List[int] = []
+    lust: int = 0
+
+class CharacterUpdate(BaseModel):
+    name: str
+    description: str
+    tag_ids: List[int] = []
+    lust: int = 0
 
 class CharacterResponse(BaseModel):
     id: int
     name: str
     description: str
-    short_description: Optional[str] = ""
     is_active: bool
     tags: List[TagSchema] = []
+    lust: int = 0
 
     class Config:
         from_attributes = True
@@ -48,9 +54,9 @@ class CharacterResponse(BaseModel):
 @router.post("/", response_model=CharacterResponse)
 def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
     new_char = Character(
-        name=char.name, 
+        name=char.name,
         description=char.description,
-        short_description=char.short_description
+        lust=char.lust
     )
     
     # Associate tags
@@ -68,6 +74,24 @@ def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
     db.commit()
     
     return new_char
+
+@router.put("/{char_id}", response_model=CharacterResponse)
+def update_character(char_id: int, char: CharacterUpdate, db: Session = Depends(get_db)):
+    existing = db.query(Character).filter(Character.id == char_id).first()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    existing.name = char.name
+    existing.description = char.description
+    existing.lust = char.lust
+    
+    if char.tag_ids is not None:
+        tags = db.query(Tag).filter(Tag.id.in_(char.tag_ids)).all()
+        existing.tags = tags
+    
+    db.commit()
+    db.refresh(existing)
+    return existing
 
 @router.get("/", response_model=List[CharacterResponse])
 def list_characters(db: Session = Depends(get_db)):

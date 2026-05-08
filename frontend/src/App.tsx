@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Plus, Users, Tag as TagIcon, Brain as BrainIcon, Heart, Zap, Pizza } from 'lucide-react'
 import MessageRenderer, { SequenceBlock } from './components/MessageRenderer'
 
@@ -32,6 +32,14 @@ interface Message {
   timestamp?: Date
 }
 
+interface Stats {
+  energy: number
+  hunger: number
+  relationship: {
+    score: number
+  }
+}
+
 function App() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedCharId, setSelectedCharId] = useState<number | null>(null)
@@ -41,8 +49,10 @@ function App() {
   const [showCharModal, setShowCharModal] = useState(false)
   const [showUserModal, setShowUserModal] = useState(false)
   const [user, setUser] = useState<User | null>(null)
-  const [stats, setStats] = useState<any>(null)
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [isImmersed, setIsImmersed] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Character Form State
   const [newCharName, setNewCharName] = useState('')
@@ -53,12 +63,7 @@ function App() {
   const [userName, setUserName] = useState('')
   const [userGender, setUserGender] = useState('Male')
 
-  useEffect(() => {
-    fetchCharacters()
-    fetchUser()
-  }, [])
-
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
     try {
       const response = await fetch('/users/me')
       const data = await response.json()
@@ -68,7 +73,72 @@ function App() {
     } catch (err) {
       console.error('Failed to fetch user', err)
     }
-  }
+  }, [])
+
+  const fetchCharacters = useCallback(async () => {
+    try {
+      const response = await fetch('/characters/')
+      const data = await response.json()
+      setCharacters(data)
+      if (data.length > 0 && !selectedCharId) {
+        setSelectedCharId(data[0].id)
+      }
+    } catch (err) {
+      console.error('Failed to fetch characters', err)
+    }
+  }, [selectedCharId])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchCharacters()
+      fetchUser()
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [fetchCharacters, fetchUser])
+
+  // Immersion logic
+  const resetImmersion = useCallback(() => {
+    setIsImmersed(false)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    
+    // Only start timer if there are messages and we aren't loading
+    if (messages.length > 0 && !isLoading) {
+      timerRef.current = setTimeout(() => {
+        setIsImmersed(true)
+      }, 3000)
+    }
+  }, [messages.length, isLoading])
+
+  useEffect(() => {
+    const handleActivity = () => resetImmersion()
+    window.addEventListener('mousemove', handleActivity)
+    window.addEventListener('keydown', handleActivity)
+    window.addEventListener('mousedown', handleActivity)
+    window.addEventListener('touchstart', handleActivity)
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity)
+      window.removeEventListener('keydown', handleActivity)
+      window.removeEventListener('mousedown', handleActivity)
+      window.removeEventListener('touchstart', handleActivity)
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [resetImmersion])
+
+  // Trigger immersion when messages change or loading finishes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsImmersed(false)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      
+      if (messages.length > 0 && !isLoading) {
+        timerRef.current = setTimeout(() => {
+          setIsImmersed(true)
+        }, 3000)
+      }
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [messages.length, isLoading])
 
   const updateUser = async () => {
     try {
@@ -82,19 +152,6 @@ function App() {
       setShowUserModal(false)
     } catch (err) {
       console.error('Failed to update user', err)
-    }
-  }
-
-  const fetchCharacters = async () => {
-    try {
-      const response = await fetch('/characters/')
-      const data = await response.json()
-      setCharacters(data)
-      if (data.length > 0 && !selectedCharId) {
-        setSelectedCharId(data[0].id)
-      }
-    } catch (err) {
-      console.error('Failed to fetch characters', err)
     }
   }
 
@@ -174,8 +231,10 @@ function App() {
   return (
     <div className="flex h-screen w-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
       {/* Sidebar: Character List */}
-      <aside className="w-64 border-r border-zinc-800 flex flex-col bg-zinc-900 shadow-xl">
-        <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
+      <aside className={`border-r border-zinc-800 flex flex-col bg-zinc-900 shadow-xl transition-all duration-700 ease-in-out overflow-hidden ${
+        isImmersed ? 'w-0 opacity-0 -translate-x-full border-none' : 'w-64 opacity-100 translate-x-0'
+      }`}>
+        <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50 min-w-[16rem]">
           <h2 className="font-bold text-emerald-500 flex items-center gap-2">
             <Users size={18} /> Entidades
           </h2>
@@ -186,7 +245,7 @@ function App() {
             <Plus size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 overflow-y-auto p-2 space-y-1 min-w-[16rem]">
           {characters.map(char => (
             <button
               key={char.id}
@@ -206,7 +265,7 @@ function App() {
         </div>
         
         {/* Global Systems Link */}
-        <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur space-y-2">
+        <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur space-y-2 min-w-[16rem]">
           <button 
             onClick={() => setShowUserModal(true)}
             className="w-full flex items-center justify-between p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors border border-transparent hover:border-zinc-700"
@@ -228,7 +287,9 @@ function App() {
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col relative bg-zinc-950">
         {/* Header / HUD */}
-        <header className="px-6 py-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50 backdrop-blur-md sticky top-0 z-10">
+        <header className={`px-6 py-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50 backdrop-blur-md sticky top-0 z-10 transition-all duration-700 ease-in-out ${
+          isImmersed ? '-translate-y-full opacity-0 h-0 py-0 border-none' : 'translate-y-0 opacity-100 h-auto'
+        }`}>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
               <span className="text-xl">✨</span>

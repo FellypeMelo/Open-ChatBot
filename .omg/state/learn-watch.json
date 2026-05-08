@@ -1,6 +1,6 @@
 {
-  "last_session_id": "c6c00807-cda1-44d3-a822-347251119d39",
-  "last_event_key": "c6c00807-cda1-44d3-a822-347251119d39:transcript:acd4ce5c43fc76116db1fde21dc5e2775c2212a13848456d6c4f266490633870",
+  "last_session_id": "e6ac8ebe-5040-4362-a8e3-54b354f85181",
+  "last_event_key": "e6ac8ebe-5040-4362-a8e3-54b354f85181:transcript:b594ac979bcdaa3b178ac0feac8c111f7cab8d8713f4f5eb71f4b9bdf5c57752",
   "last_prompted_session_id": "",
   "last_reason": "short-session",
   "last_prompted_at": "",
@@ -8,5 +8,5 @@
   "last_actionable_message_count": 0,
   "deep_interview_lock_active": false,
   "deep_interview_lock_source": "/run/media/fellypemelo/c9a80862-8eea-4c5c-9fd2-21fd91615c57/Programas/Open-ChatBot/.omg/state/deep-interview.json",
-  "updated_at": "2026-05-08T01:42:14.244Z"
+  "updated_at": "2026-05-08T10:52:10.046Z"
 }

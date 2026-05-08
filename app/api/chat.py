@@ -66,9 +66,11 @@ async def process_ai_response(agent_id: int, ai_output: Dict[str, Any], db: Sess
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     try:
+        print(f"Chat request for character {request.character_id}")
         # 1. Fetch Character and State
         character = db.query(Character).filter(Character.id == request.character_id).first()
         if not character:
+            print("Creating default character")
             # Create a default character (Gemi) if none exists
             character = Character(
                 id=1, 
@@ -85,11 +87,13 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             db.commit()
             db.refresh(state)
         else:
+            print(f"Found character {character.name}")
             state = character.state
 
         # 2. Synchronize Physical State (Hunger, Energy, etc.)
         from app.core.world import WorldEngine
         from datetime import datetime
+        print("Updating needs...")
         world = WorldEngine()
         state.stats = world.update_needs(state.stats, datetime.now())
         db.commit()
@@ -102,18 +106,30 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         }
 
         # 3. Assemble Prompt
+        print("Building prompt...")
         prompt = await brain.build_prompt(request.message, character, state_data)
         
         # 4. Request Inference
+        print("Requesting inference...")
         result = await llama.complete(prompt, grammar=ACTION_GRAMMAR)
-        content = result.get("content", "{}")
+        content = result.get("content", "{}").strip()
+        print(f"AI Output: {content}")
         
+        # Try to find JSON if there's surrounding text
+        if not content.startswith("{"):
+            import re
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+
         try:
             ai_data = json.loads(content)
         except json.JSONDecodeError:
+            print(f"JSON Decode Error for: {content}")
             return ChatResponse(reply=content)
 
         # 5. Process Autonomous Actions
+        print("Processing AI response...")
         await process_ai_response(character.id, ai_data, db)
 
         return ChatResponse(
@@ -122,4 +138,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             actions=ai_data.get("actions", [])
         )
     except Exception as e:
+        print(f"CRITICAL ERROR in /chat: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

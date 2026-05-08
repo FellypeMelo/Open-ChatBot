@@ -20,10 +20,11 @@ class VectorStore:
             metadatas=[metadata] if metadata else None
         )
 
-    async def query_memory(self, query_text: str, n_results: int = 5):
+    async def query_memory(self, query_text: str, n_results: int = 5, metadata_filter: Optional[Dict[str, Any]] = None):
         query_embedding = await self.llm_client.embed(query_text)
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=n_results
+            n_results=n_results,
+            where=metadata_filter
         )
         return results

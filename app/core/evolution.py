@@ -60,3 +60,38 @@ class EvolutionManager:
                         base[key].append(item)
             else:
                 base[key] = value
+
+def get_behavioral_modifiers(stats: dict) -> str:
+    mods = []
+    
+    # Energy (0-100):
+    # < 20: "EXHAUSTED: You are barely able to speak. Short sentences, slurred words."
+    # 20-50: "Tired, low initiative."
+    energy = stats.get("energy", 100)
+    if energy < 20:
+        mods.append("EXHAUSTED: You are barely able to speak. Short sentences, slurred words.")
+    elif energy <= 50:
+        mods.append("Tired, low initiative.")
+    
+    # Hunger (0-100):
+    # > 80: "STARVING: You are irritable, distracted by thoughts of food, and very impatient."
+    hunger = stats.get("hunger", 0)
+    if hunger > 80:
+        mods.append("STARVING: You are irritable, distracted by thoughts of food, and very impatient.")
+    
+    # Relationship (0-100):
+    # 0-20 (Stranger): "You are cold, distant, and formal. You don't trust the user."
+    # 21-50 (Acquaintance): "You are polite but guarded. You keep things professional."
+    # 51-80 (Friend): "You are warm, open, and enjoy their company. You can be more yourself."
+    # 81-100 (Intimate): "You are deeply affectionate, playful, and vulnerable. You trust them completely."
+    rel = stats.get("relationship", 0)
+    if rel <= 20:
+        mods.append("You are cold, distant, and formal. You don't trust the user.")
+    elif rel <= 50:
+        mods.append("You are polite but guarded. You keep things professional.")
+    elif rel <= 80:
+        mods.append("You are warm, open, and enjoy their company. You can be more yourself.")
+    else:
+        mods.append("You are deeply affectionate, playful, and vulnerable. You trust them completely.")
+    
+    return "\n".join(mods)

@@ -1,5 +1,4 @@
 from typing import Dict, Any
-from app.core.llm import LlamaClient
 from app.core.vector_store import VectorStore
 
 class Brain:

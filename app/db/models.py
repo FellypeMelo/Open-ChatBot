@@ -9,7 +9,12 @@ def get_default_stats():
         "happiness": 100,
         "social": 100,
         "is_sleeping": False,
-        "last_update": datetime.now().isoformat()
+        "last_update": datetime.now().isoformat(),
+        "relationship": {
+            "score": 50,
+            "dynamic_preferences": ["teasing", "playful"],
+            "user_sentiment": "Neutral"
+        }
     }
 
 class AgentState(Base):

@@ -94,23 +94,24 @@ Emotions persist unless something changes them. They influence initiative, patie
 ---
 
 # RESPONSE FORMAT
-You MUST always output valid structured JSON.
+You MUST always output valid structured JSON. The response is a sequence of chronological blocks.
 ```json
-{{
-  "thought": "Private internal thoughts and emotional processing.",
-  "actions": [
-    "Physical actions, movements, or environmental interactions."
-  ],
-  "message": "Spoken dialogue directed toward the user."
-}}
+{
+  "sequence": [
+    { "type": "thought", "content": "Internal thought process or emotional reaction." },
+    { "type": "action", "content": "Physical movement, body language, or environmental interaction." },
+    { "type": "speech", "content": "Direct dialogue to the user." }
+  ]
+}
 ```
 
 ---
 
 # OUTPUT RULES
-## THOUGHT FIELD: Genuine internal reactions. Never robotic.
-## ACTIONS FIELD: Physical behavior, body language, movement, object interaction.
-## MESSAGE FIELD: ONLY spoken dialogue. No narration, no markdown, no labels.
+## SEQUENCE: A chronological list of blocks. You can have multiple of each type in any order that makes narrative sense.
+## THOUGHT type: Private internal processing.
+## ACTION type: Physical behavior, body language, movement.
+## SPEECH type: ONLY spoken dialogue. No narration.
 
 ---
 
@@ -127,7 +128,7 @@ class Brain:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
 
-    async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any]) -> str:
+    async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any], user: Any = None) -> str:
         """
         Assembles the 5-layer high-fidelity prompt for the Living Entity Framework v5.
         """
@@ -151,6 +152,13 @@ class Brain:
             for tag in character.tags:
                 tag_instructions.append(f"- {tag.label.upper()}: {tag.instruction}")
         
+        # Inject Stat-based behavior
+        if state and "stats" in state:
+            from app.core.evolution import get_behavioral_modifiers
+            stat_mods = get_behavioral_modifiers(state["stats"])
+            if stat_mods:
+                tag_instructions.append(f"\nDYNAMIC BIOLOGICAL MODIFIERS:\n{stat_mods}")
+
         tags_str = "\n".join(tag_instructions) if tag_instructions else "No behavioral modifiers active."
 
         # 4. LAYER 4: DYNAMIC STATE (Bio + Social)
@@ -175,6 +183,11 @@ class Brain:
         else:
             state_str = "No active state variables."
 
+        # Inject User Info
+        user_info = ""
+        if user:
+            user_info = f"\nINTERACTING WITH USER: {user.name} ({user.gender})"
+
         # 5. ASSEMBLE ALL LAYERS
         prompt = f"""{MASTER_PROMPT}
 
@@ -191,7 +204,7 @@ class Brain:
 ---
 
 # LAYER 4: DYNAMIC SENSORY & PHYSICAL STATE #
-{state_str}
+{state_str}{user_info}
 
 ---
 

@@ -72,11 +72,13 @@ class WorldEngine:
         # Clamp energy between 0 and 100
         new_energy = max(0, min(100, new_energy))
         
-        return {
+        updated = stats.copy()
+        updated.update({
             "energy": int(new_energy),
             "last_update": current_time.isoformat(),
             "is_sleeping": was_sleeping
-        }
+        })
+        return updated
 
     def update_needs(self, stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any]:
         """

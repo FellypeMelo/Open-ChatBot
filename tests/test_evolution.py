@@ -46,3 +46,13 @@ def test_get_behavioral_modifiers_multiple():
     assert "STARVING" in mods
     assert "cold, distant" in mods
     assert len(mods.split("\n")) == 3
+
+def test_get_behavioral_modifiers_relationship_dict():
+    stats = {"relationship": {"score": 10}}
+    mods = get_behavioral_modifiers(stats)
+    assert "You are cold, distant, and formal. You don't trust the user." in mods
+
+def test_get_behavioral_modifiers_relationship_none():
+    stats = {"relationship": None}
+    mods = get_behavioral_modifiers(stats)
+    assert "You are cold, distant, and formal. You don't trust the user." in mods

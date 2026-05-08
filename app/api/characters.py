@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 from app.db.database import get_db
@@ -31,12 +31,14 @@ class TagSchema(BaseModel):
 class CharacterCreate(BaseModel):
     name: str
     description: str
+    short_description: str = ""
     tag_ids: List[int] = []
 
 class CharacterResponse(BaseModel):
     id: int
     name: str
     description: str
+    short_description: Optional[str] = ""
     is_active: bool
     tags: List[TagSchema] = []
 
@@ -45,7 +47,11 @@ class CharacterResponse(BaseModel):
 
 @router.post("/", response_model=CharacterResponse)
 def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
-    new_char = Character(name=char.name, description=char.description)
+    new_char = Character(
+        name=char.name, 
+        description=char.description,
+        short_description=char.short_description
+    )
     
     # Associate tags
     if char.tag_ids:

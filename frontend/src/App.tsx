@@ -12,7 +12,15 @@ interface Character {
   id: number
   name: string
   description: string
+  short_description?: string
   tags: Tag[]
+}
+
+interface User {
+  id: number
+  name: string
+  gender: string
+  is_active: boolean
 }
 
 interface Message {
@@ -31,15 +39,51 @@ function App() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [showCharModal, setShowCharModal] = useState(false)
+  const [showUserModal, setShowUserModal] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+  const [stats, setStats] = useState<any>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   // Character Form State
   const [newCharName, setNewCharName] = useState('')
   const [newCharDesc, setNewCharDesc] = useState('')
+  const [newCharShortDesc, setNewCharShortDesc] = useState('')
+
+  // User Form State
+  const [userName, setUserName] = useState('')
+  const [userGender, setUserGender] = useState('Male')
 
   useEffect(() => {
     fetchCharacters()
+    fetchUser()
   }, [])
+
+  const fetchUser = async () => {
+    try {
+      const response = await fetch('/users/me')
+      const data = await response.json()
+      setUser(data)
+      setUserName(data.name)
+      setUserGender(data.gender)
+    } catch (err) {
+      console.error('Failed to fetch user', err)
+    }
+  }
+
+  const updateUser = async () => {
+    try {
+      const response = await fetch('/users/me', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: userName, gender: userGender })
+      })
+      const data = await response.json()
+      setUser(data)
+      setShowUserModal(false)
+    } catch (err) {
+      console.error('Failed to update user', err)
+    }
+  }
 
   const fetchCharacters = async () => {
     try {
@@ -60,7 +104,11 @@ function App() {
       const response = await fetch('/characters/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newCharName, description: newCharDesc })
+        body: JSON.stringify({ 
+          name: newCharName, 
+          description: newCharDesc,
+          short_description: newCharShortDesc
+        })
       })
       const data = await response.json()
       setCharacters(prev => [...prev, data])
@@ -68,6 +116,7 @@ function App() {
       setShowCharModal(false)
       setNewCharName('')
       setNewCharDesc('')
+      setNewCharShortDesc('')
     } catch (err) {
       console.error('Failed to create character', err)
     }
@@ -109,6 +158,9 @@ function App() {
         timestamp: new Date() 
       }
       setMessages(prev => [...prev, assistantMessage])
+      if (data.stats) {
+        setStats(data.stats)
+      }
     } catch (error) {
       console.error('Error:', error)
       setMessages(prev => [...prev, { role: 'assistant', content: 'Erro ao comunicar com IA.', timestamp: new Date() }])
@@ -147,14 +199,26 @@ function App() {
             >
               <span className="font-semibold">{char.name}</span>
               <span className={`text-xs truncate ${selectedCharId === char.id ? 'text-emerald-100' : 'text-zinc-500'}`}>
-                {char.description}
+                {char.short_description || char.description}
               </span>
             </button>
           ))}
         </div>
         
         {/* Global Systems Link */}
-        <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur">
+        <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 backdrop-blur space-y-2">
+          <button 
+            onClick={() => setShowUserModal(true)}
+            className="w-full flex items-center justify-between p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors border border-transparent hover:border-zinc-700"
+          >
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] font-bold text-emerald-500">
+                {user?.name?.[0] || 'U'}
+              </div>
+              <span>{user?.name || 'Perfil'}</span>
+            </div>
+            <span className="text-[10px] opacity-50">{user?.gender}</span>
+          </button>
           <button className="w-full flex items-center gap-2 p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 text-sm transition-colors">
             <TagIcon size={16} /> Gerenciar Tags
           </button>
@@ -186,22 +250,22 @@ function App() {
 
           {/* Quick HUD */}
           <div className="flex gap-4">
-            <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center" title={`Energy: ${stats?.energy ?? 100}%`}>
               <Zap size={16} className="text-amber-500" />
               <div className="h-1 w-12 bg-zinc-800 rounded-full mt-1 overflow-hidden">
-                <div className="h-full bg-amber-500 w-full" />
+                <div className="h-full bg-amber-500 transition-all duration-500" style={{ width: `${stats?.energy ?? 100}%` }} />
               </div>
             </div>
-            <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center" title={`Hunger: ${stats?.hunger ?? 0}%`}>
               <Pizza size={16} className="text-rose-500" />
               <div className="h-1 w-12 bg-zinc-800 rounded-full mt-1 overflow-hidden">
-                <div className="h-full bg-rose-500 w-1/4" />
+                <div className="h-full bg-rose-500 transition-all duration-500" style={{ width: `${stats?.hunger ?? 0}%` }} />
               </div>
             </div>
-            <div className="flex flex-col items-center">
+            <div className="flex flex-col items-center" title={`Relationship: ${stats?.relationship?.score ?? 50}%`}>
               <Heart size={16} className="text-emerald-500" />
               <div className="h-1 w-12 bg-zinc-800 rounded-full mt-1 overflow-hidden">
-                <div className="h-full bg-emerald-500 w-1/2" />
+                <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${stats?.relationship?.score ?? 50}%` }} />
               </div>
             </div>
           </div>
@@ -293,13 +357,23 @@ function App() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Descrição / Backstory</label>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Descrição Curta</label>
+                <input 
+                  type="text" 
+                  value={newCharShortDesc}
+                  onChange={e => setNewCharShortDesc(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
+                  placeholder="Ex: Uma assistente calma e prestativa."
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">História / Personalidade (Backstory)</label>
                 <textarea 
                   rows={4}
                   value={newCharDesc}
                   onChange={e => setNewCharDesc(e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors resize-none"
-                  placeholder="Descreva a história e personalidade dela..."
+                  placeholder="Descreva a história e personalidade dela em detalhes..."
                 />
               </div>
             </div>
@@ -315,6 +389,54 @@ function App() {
                 className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold transition-all"
               >
                 Criar Entidade
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Profile Modal */}
+      {showUserModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-bold mb-6 text-white text-center">Seu Perfil</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Seu Nome</label>
+                <input 
+                  type="text" 
+                  value={userName}
+                  onChange={e => setUserName(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
+                  placeholder="Como a entidade deve te chamar?"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Gênero</label>
+                <select 
+                  value={userGender}
+                  onChange={e => setUserGender(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors appearance-none"
+                >
+                  <option value="Male">Masculino</option>
+                  <option value="Female">Feminino</option>
+                  <option value="Non-binary">Não-binário</option>
+                  <option value="Unknown">Prefiro não dizer</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-8">
+              <button 
+                onClick={() => setShowUserModal(false)}
+                className="flex-1 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 font-bold transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={updateUser}
+                className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold transition-all"
+              >
+                Salvar Perfil
               </button>
             </div>
           </div>

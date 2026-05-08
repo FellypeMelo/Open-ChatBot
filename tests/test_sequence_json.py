@@ -43,12 +43,12 @@ def client(db_session):
         yield c
     app.dependency_overrides.clear()
 
-def test_chat_endpoint(client, db_session):
+def test_chat_sequence_json(client, db_session):
     # Setup: Create character, user, and state in mock DB
     char = Character(id=1, name="Gemi", description="Test")
     db_session.add(char)
     
-    user = User(name="TestUser", gender="Male", is_active=True)
+    user = User(name="TestUser", gender="Non-binary", is_active=True)
     db_session.add(user)
     
     db_session.commit()
@@ -64,8 +64,9 @@ def test_chat_endpoint(client, db_session):
         
         ai_response_content = json.dumps({
             "sequence": [
-                {"type": "thought", "content": "I should reply hello."},
-                {"type": "speech", "content": "Hello there!"}
+                {"type": "thought", "content": "The user said hello."},
+                {"type": "action", "content": "Waves playfully."},
+                {"type": "speech", "content": "Hi there, TestUser!"}
             ]
         })
         mock_complete.return_value = {"content": ai_response_content}
@@ -74,6 +75,27 @@ def test_chat_endpoint(client, db_session):
         
         assert response.status_code == 200
         data = response.json()
-        assert data["reply"] == "Hello there!"
-        assert data["thought"] == "I should reply hello."
-        assert len(data["sequence"]) == 2
+        assert data["reply"] == "Hi there, TestUser!"
+        assert data["thought"] == "The user said hello."
+        assert "Waves playfully." in data["actions"]
+        assert len(data["sequence"]) == 3
+        assert data["sequence"][0]["type"] == "thought"
+
+def test_build_prompt_user_info(db_session):
+    from app.core.bridge import Brain
+    from app.core.vector_store import VectorStore
+    
+    mock_vector_store = MagicMock(spec=VectorStore)
+    mock_vector_store.query_memory.return_value = {"documents": []}
+    
+    brain = Brain(vector_store=mock_vector_store)
+    
+    char = Character(id=1, name="Gemi", description="Test")
+    user = User(name="Alice", gender="Female")
+    state_data = {"stats": {"energy": 100, "hunger": 0, "happiness": 100, "social": 100}}
+    
+    import asyncio
+    prompt = asyncio.run(brain.build_prompt("Hi", char, state_data, user=user))
+    
+    assert "INTERACTING WITH USER: Alice (Female)" in prompt
+    assert "DYNAMIC BIOLOGICAL MODIFIERS:" in prompt

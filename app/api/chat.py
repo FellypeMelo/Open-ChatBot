@@ -17,15 +17,10 @@ brain = Brain(vector_store=vector_store)
 
 # GBNF Grammar for the expected JSON structure
 ACTION_GRAMMAR = r'''
-root ::= object
-object ::= "{" space (thought_item ",")? space (actions_item ",")? space message_item space "}"
-thought_item ::= "\"thought\"" ":" space string
-actions_item ::= "\"actions\"" ":" space "[" space (action ("," space action)*)? space "]"
-message_item ::= "\"message\"" ":" space string
-
-action ::= "{" space type_item "," space payload_item space "}"
-type_item ::= "\"type\"" ":" space ("\"move\"" | "\"set_mood\"")
-payload_item ::= ("\"location\"" ":" space string) | ("\"mood\"" ":" space string)
+root ::= "{" space "\"sequence\"" ":" space "[" space (block ("," space block)*)? space "]" space "}"
+block ::= "{" space type_field "," space content_field space "}"
+type_field ::= "\"type\"" ":" space ("\"thought\"" | "\"action\"" | "\"speech\"")
+content_field ::= "\"content\"" ":" space string
 
 string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])* "\""
 space ::= [ \t\n\r]*
@@ -39,6 +34,8 @@ class ChatResponse(BaseModel):
     reply: str
     thought: str = ""
     actions: List[str] = []
+    sequence: List[Dict[str, str]] = []
+    stats: Dict[str, Any] = {}
 
 async def process_ai_response(agent_id: int, ai_output: Dict[str, Any], db: Session):
     """
@@ -48,18 +45,15 @@ async def process_ai_response(agent_id: int, ai_output: Dict[str, Any], db: Sess
     if not agent:
         return
 
-    actions = ai_output.get("actions", [])
-    for action in actions:
-        # Action can be a string (from Master Prompt Actions Field) or a structured dict
-        # The Master Prompt says "ACTIONS FIELD: Physical behavior, body language, movement..."
-        # But our logic previously used structured dicts.
-        # Let's keep it flexible: if it's a dict, parse it. If it's a string, it's body language (ignore for DB logic).
-        if isinstance(action, dict):
-            action_type = action.get("type")
-            if action_type == "move":
-                agent.location = action.get("location", agent.location)
-            elif action_type == "set_mood":
-                agent.mood = action.get("mood", agent.mood)
+    # In the new sequence format, actions are in the sequence list
+    sequence = ai_output.get("sequence", [])
+    for block in sequence:
+        if block.get("type") == "action":
+            content = block.get("content", "")
+            # Basic movement/mood parsing from action string if needed
+            # For now, we just keep the existing logic if it was structured, 
+            # but the new format is narrative.
+            pass
     
     db.commit()
 
@@ -67,6 +61,17 @@ async def process_ai_response(agent_id: int, ai_output: Dict[str, Any], db: Sess
 async def chat(request: ChatRequest, db: Session = Depends(get_db)):
     try:
         print(f"Chat request for character {request.character_id}")
+        
+        # 0. Fetch User
+        from app.db.models import User
+        user = db.query(User).filter(User.is_active == True).first()
+        if not user:
+            # Create a default user if none exists
+            user = User(name="User", gender="Unknown")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
         # 1. Fetch Character and State
         character = db.query(Character).filter(Character.id == request.character_id).first()
         if not character:
@@ -89,6 +94,12 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         else:
             print(f"Found character {character.name}")
             state = character.state
+            if not state:
+                print("Creating default state for existing character")
+                state = AgentState(character_id=character.id)
+                db.add(state)
+                db.commit()
+                db.refresh(state)
 
         # 2. Synchronize Physical State (Hunger, Energy, etc.)
         from app.core.world import WorldEngine
@@ -107,7 +118,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
 
         # 3. Assemble Prompt
         print("Building prompt...")
-        prompt = await brain.build_prompt(request.message, character, state_data)
+        prompt = await brain.build_prompt(request.message, character, state_data, user=user)
         
         # 4. Request Inference
         print("Requesting inference...")
@@ -115,27 +126,60 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         content = result.get("content", "{}").strip()
         print(f"AI Output: {content}")
         
-        # Try to find JSON if there's surrounding text
-        if not content.startswith("{"):
-            import re
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                content = json_match.group(0)
-
         try:
             ai_data = json.loads(content)
         except json.JSONDecodeError:
-            print(f"JSON Decode Error for: {content}")
-            return ChatResponse(reply=content)
+            # Try harder to find valid JSON
+            import re
+            # Find all potential JSON objects
+            json_blocks = re.findall(r"\{.*\}", content, re.DOTALL)
+            ai_data = None
+            if json_blocks:
+                # Try from the largest to smallest or first to last
+                for block in json_blocks:
+                    try:
+                        # Clean up common markdown mess
+                        cleaned = block.strip()
+                        # If it ends with extra braces or markdown, try to truncate
+                        # This is a bit hacky but AI sometimes outputs: { ... } extra text
+                        # We'll try to find the balancing brace
+                        stack = 0
+                        end_idx = -1
+                        for i, char in enumerate(cleaned):
+                            if char == '{': stack += 1
+                            elif char == '}':
+                                stack -= 1
+                                if stack == 0:
+                                    end_idx = i
+                                    break
+                        if end_idx != -1:
+                            cleaned = cleaned[:end_idx+1]
+                        
+                        ai_data = json.loads(cleaned)
+                        if ai_data: break
+                    except:
+                        continue
+            
+            if not ai_data:
+                print(f"FAILED to parse AI output as JSON: {content}")
+                return ChatResponse(reply=content, stats=state.stats)
 
         # 5. Process Autonomous Actions
         print("Processing AI response...")
         await process_ai_response(character.id, ai_data, db)
 
+        # Extract reply, thought, and actions from sequence
+        sequence = ai_data.get("sequence", [])
+        reply = " ".join([b["content"] for b in sequence if b.get("type") == "speech"])
+        thought = " ".join([b["content"] for b in sequence if b.get("type") == "thought"])
+        actions = [b["content"] for b in sequence if b.get("type") == "action"]
+
         return ChatResponse(
-            reply=ai_data.get("message", "I didn't quite catch that."),
-            thought=ai_data.get("thought", ""),
-            actions=ai_data.get("actions", [])
+            reply=reply if reply else "...",
+            thought=thought,
+            actions=actions,
+            sequence=sequence,
+            stats=state.stats
         )
     except Exception as e:
         print(f"CRITICAL ERROR in /chat: {type(e).__name__}: {e}")

@@ -84,7 +84,14 @@ def get_behavioral_modifiers(stats: dict) -> str:
     # 21-50 (Acquaintance): "You are polite but guarded. You keep things professional."
     # 51-80 (Friend): "You are warm, open, and enjoy their company. You can be more yourself."
     # 81-100 (Intimate): "You are deeply affectionate, playful, and vulnerable. You trust them completely."
-    rel = stats.get("relationship", 0)
+    relationship_data = stats.get("relationship")
+    if isinstance(relationship_data, dict):
+        rel = relationship_data.get("score", 0)
+    elif isinstance(relationship_data, (int, float)):
+        rel = relationship_data
+    else:
+        rel = 0
+        
     if rel <= 20:
         mods.append("You are cold, distant, and formal. You don't trust the user.")
     elif rel <= 50:

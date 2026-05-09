@@ -147,22 +147,22 @@ class Brain:
 
 ---
 
-# LAYER 2: CHARACTER IDENTITY #
+# CHARACTER IDENTITY #
 {identity_str}
 
 ---
 
-# LAYER 3: BEHAVIORAL MODIFIERS (TAGS) #
+# BEHAVIORAL MODIFIERS #
 {tags_str}
 
 ---
 
-# LAYER 4: DYNAMIC SENSORY & PHYSICAL STATE #
+# STATE & ENVIRONMENT #
 {state_str}{user_info}
 
 ---
 
-# LAYER 5: SENSORY INPUT (MEMORIES & INTERACTION) #
+# CONTEXT & HISTORY #
 RELEVANT MEMORIES (Recall):
 {context}
 
@@ -200,6 +200,6 @@ Output: *She lets out a slow breath, her shoulders dropping as the carefully con
 [Do you gently push her to open up, or do you respect her space and change the subject to something lighter?]
 
 ### RESPONSE ###
-Write your response below as natural narrative prose — no JSON, no special formatting beyond *actions* and "dialogue".
-Response:"""
+Begin writing your response directly. Start with *action* or "dialogue". Do not plan, comment, or explain — just write the narrative. STOP when the response is complete.
+"""
         return prompt

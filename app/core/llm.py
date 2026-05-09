@@ -24,7 +24,9 @@ class LlamaClient:
             "top_p": 0.95,
             "top_k": 40,
             "repeat_penalty": 1.08,
+            "frequency_penalty": 0.15,
             "min_p": 0.05,
+            "stop": ["\n# ", "\n---", "\n\n\n"],
         }
         if grammar:
             payload["grammar"] = grammar

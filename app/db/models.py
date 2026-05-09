@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, Table
+from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, Table, DateTime
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 from datetime import datetime
@@ -31,6 +31,7 @@ class Character(Base):
     description = Column(Text)
     short_description = Column(Text)
     persona_prompt = Column(Text)
+    lust = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
 
     # Relationships
@@ -66,3 +67,15 @@ class AgentState(Base):
                     "user_sentiment": "Neutral"
                 }
             }
+
+class Message(Base):
+    __tablename__ = "messages"
+    id = Column(Integer, primary_key=True, index=True)
+    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    role = Column(String) # 'user' or 'assistant'
+    content = Column(Text) # Raw message or sequence JSON
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    character = relationship("Character")
+    user = relationship("User")

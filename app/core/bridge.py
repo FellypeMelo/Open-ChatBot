@@ -200,6 +200,6 @@ Output: *She lets out a slow breath, her shoulders dropping as the carefully con
 [Do you gently push her to open up, or do you respect her space and change the subject to something lighter?]
 
 ### RESPONSE ###
-Begin writing your response directly. Start with *action* or "dialogue". Do not plan, comment, or explain — just write the narrative. STOP when the response is complete.
+Begin writing your response directly. Start with *action* or "dialogue". Do not echo or repeat the user's message. Do not plan, comment, or explain — just write the narrative. STOP when the response is complete.
 """
         return prompt

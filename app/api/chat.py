@@ -1,7 +1,9 @@
+import json
 import logging
 import time
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
@@ -213,3 +215,102 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         import logging
         logging.exception(f"CRITICAL ERROR in /chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
+    from app.db.models import User, Message
+
+    user = db.query(User).filter(User.is_active == True).first()
+    if not user:
+        user = User(name="User", gender="Unknown")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    user_msg = Message(
+        character_id=request.character_id,
+        user_id=user.id,
+        role="user",
+        content=request.message
+    )
+    db.add(user_msg)
+    db.commit()
+
+    history = db.query(Message).filter(
+        Message.character_id == request.character_id,
+        Message.id != user_msg.id
+    ).order_by(Message.timestamp.desc()).limit(10).all()
+    history.reverse()
+
+    character = db.query(Character).filter(Character.id == request.character_id).first()
+    if not character:
+        character = Character(
+            id=1,
+            name="Gemi",
+            description="A playful and feisty entity who enjoys testing boundaries."
+        )
+        db.add(character)
+        db.commit()
+        db.refresh(character)
+
+        state = AgentState(character_id=character.id)
+        db.add(state)
+        db.commit()
+        db.refresh(state)
+    else:
+        state = character.state
+        if not state:
+            state = AgentState(character_id=character.id)
+            db.add(state)
+            db.commit()
+            db.refresh(state)
+
+    from app.core.world import WorldEngine
+    from app.core.evolution import ensure_stats_integrity
+    world = WorldEngine()
+
+    state.stats = ensure_stats_integrity(state.stats)
+    state.stats = world.update_needs(state.stats, datetime.now())
+    db.commit()
+
+    state_data = {
+        "location": state.location,
+        "mood": state.mood,
+        "clothes": state.clothes,
+        "stats": state.stats
+    }
+
+    prompt = await brain.build_prompt(request.message, character, state_data, user=user, history=history)
+
+    async def generate():
+        import asyncio
+        from app.db.database import SessionLocal
+        full_reply = ""
+        try:
+            async for token in llama.complete_stream(prompt, grammar=None):
+                full_reply += token
+                yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception as e:
+            logger.exception(f"Stream error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            if full_reply.strip():
+                session = SessionLocal()
+                try:
+                    ai_msg = Message(
+                        character_id=character.id,
+                        user_id=user.id,
+                        role="assistant",
+                        content=full_reply
+                    )
+                    session.add(ai_msg)
+                    session.commit()
+                finally:
+                    session.close()
+
+                asyncio.create_task(run_consciousness_layer(character.id, request.message, full_reply))
+
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

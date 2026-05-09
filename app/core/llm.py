@@ -23,8 +23,8 @@ class LlamaClient:
             "temperature": 0.92,
             "top_p": 0.95,
             "top_k": 40,
-            "repeat_penalty": 1.08,
-            "frequency_penalty": 0.15,
+            "repeat_penalty": settings.REPEAT_PENALTY,
+            "repeat_last_n": settings.REPEAT_LAST_N,
             "min_p": 0.05,
             "stop": ["\n# ", "\n---", "\n\n\n"],
         }
@@ -49,6 +49,35 @@ class LlamaClient:
             if isinstance(e, HTTPException):
                 raise
             raise HTTPException(status_code=500, detail=str(e))
+
+    async def complete_stream(self, prompt: str, grammar: str = None):
+        """Async generator that yields tokens from llama.cpp SSE stream."""
+        payload = {
+            "prompt": prompt,
+            "n_predict": settings.N_PREDICT,
+            "stream": True,
+            "temperature": 0.92,
+            "top_p": 0.95,
+            "top_k": 40,
+            "repeat_penalty": settings.REPEAT_PENALTY,
+            "repeat_last_n": settings.REPEAT_LAST_N,
+            "min_p": 0.05,
+            "stop": ["\n# ", "\n---", "\n\n\n"],
+        }
+        if grammar:
+            payload["grammar"] = grammar
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("POST", f"{self.url}/completion", json=payload) as response:
+                response.raise_for_status()
+                import json
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = json.loads(line[6:])
+                        token = data.get("content", "")
+                        yield token
+                        if data.get("stop"):
+                            return
 
     async def embed(self, text: str):
         try:

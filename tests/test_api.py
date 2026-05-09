@@ -1,5 +1,4 @@
 import pytest
-import json
 from unittest.mock import patch, AsyncMock
 from app.db.models import AgentState, Character, User
 
@@ -22,18 +21,15 @@ def test_chat_endpoint(client, db_session):
         
         mock_query.return_value = {"documents": [["some memory"]]}
         
-        ai_response_content = json.dumps({
-            "sequence": [
-                {"type": "thought", "content": "I should reply hello."},
-                {"type": "speech", "content": "Hello there!"}
-            ]
-        })
-        mock_complete.return_value = {"content": ai_response_content}
+        narrative = (
+            "*Gemi tilts her head, a playful smirk crossing her face.*\n\n"
+            "\"Hello there! Was wondering when you'd show up.\""
+        )
+        mock_complete.return_value = {"content": narrative}
         
         response = client.post("/chat", json={"message": "hello", "character_id": 1})
         
         assert response.status_code == 200
         data = response.json()
-        assert data["reply"] == "Hello there!"
-        assert data["thought"] == "I should reply hello."
-        assert len(data["sequence"]) == 2
+        assert "Hello there" in data["reply"]
+        assert "stats" in data

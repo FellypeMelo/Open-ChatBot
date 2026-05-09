@@ -72,7 +72,7 @@ def test_state_synchronization_in_api(client, db_session):
         
         mock_datetime.now.return_value = fixed_now
         mock_query.return_value = {}
-        mock_complete.return_value = {"content": '{"sequence": []}'}
+        mock_complete.return_value = {"content": "*Nods.* \"Hello.\""}
         
         response = client.post("/chat", json={"message": "hello", "character_id": 1})
         assert response.status_code == 200

@@ -79,10 +79,9 @@ def test_master_prompt_condensed():
 def test_critical_sections_preserved():
     """All critical sections must remain in the condensed prompt."""
     assert "OUTPUT FORMAT" in MASTER_PROMPT or "RESPONSE FORMAT" in MASTER_PROMPT
-    assert "sequence" in MASTER_PROMPT
-    assert "thought" in MASTER_PROMPT
-    assert "action" in MASTER_PROMPT
-    assert "speech" in MASTER_PROMPT
+    assert "*asterisks*" in MASTER_PROMPT
+    assert "narrative" in MASTER_PROMPT or "prose" in MASTER_PROMPT
+    assert "dialogue" in MASTER_PROMPT or "quotes" in MASTER_PROMPT
     assert "CRITICAL RULES" in MASTER_PROMPT or "CRITICAL IMMERSION RULES" in MASTER_PROMPT
     assert "in-character" in MASTER_PROMPT or "stay in-character" in MASTER_PROMPT
 

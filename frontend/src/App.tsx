@@ -7,7 +7,6 @@ import TagManagementView from './components/TagManagementView'
 import CharacterCreator from './components/CharacterCreator'
 import UserProfileModal from './components/UserProfileModal'
 import TagCreator from './components/TagCreator'
-import { type SequenceBlock } from './components/MessageRenderer'
 
 interface Tag {
   id: number
@@ -33,9 +32,6 @@ interface User {
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  thought?: string
-  actions?: string[]
-  sequence?: SequenceBlock[]
   timestamp?: Date
 }
 
@@ -255,9 +251,6 @@ function App() {
       const assistantMessage: Message = {
         role: 'assistant',
         content: data.reply,
-        thought: data.thought,
-        actions: data.actions,
-        sequence: data.sequence,
         timestamp: new Date()
       }
       setMessages((prev) => [...prev, assistantMessage])

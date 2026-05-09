@@ -8,7 +8,7 @@ def test_chat_with_missing_character(client, db_session):
          patch("app.api.chat.LlamaClient.complete") as mock_complete:
         
         mock_query.return_value = {}
-        mock_complete.return_value = {"content": '{"sequence": []}'}
+        mock_complete.return_value = {"content": "*Nods.* \"Hello there.\""}
         
         response = client.post("/chat", json={"message": "hi", "character_id": 999})
         assert response.status_code == 200 # Should fallback to default character creation
@@ -27,7 +27,7 @@ def test_chat_with_corrupted_stats(client, db_session):
          patch("app.api.chat.LlamaClient.complete") as mock_complete:
         
         mock_query.return_value = {}
-        mock_complete.return_value = {"content": '{"sequence": []}'}
+        mock_complete.return_value = {"content": "*Smiles.* \"Hey.\""}
         
         response = client.post("/chat", json={"message": "hi", "character_id": 5})
         assert response.status_code == 200
@@ -48,7 +48,7 @@ def test_user_creation_on_first_chat(client, db_session):
          patch("app.api.chat.LlamaClient.complete") as mock_complete:
         
         mock_query.return_value = {}
-        mock_complete.return_value = {"content": '{"sequence": []}'}
+        mock_complete.return_value = {"content": "*Waves.* \"Hi there!\""}
         
         response = client.post("/chat", json={"message": "hi", "character_id": 1})
         assert response.status_code == 200

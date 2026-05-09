@@ -1,5 +1,4 @@
 import pytest
-import json
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -43,7 +42,7 @@ def client(db_session):
         yield c
     app.dependency_overrides.clear()
 
-def test_chat_sequence_json(client, db_session):
+def test_chat_narrative_response(client, db_session):
     # Setup: Create character, user, and state in mock DB
     char = Character(id=1, name="Gemi", description="Test")
     db_session.add(char)
@@ -62,24 +61,22 @@ def test_chat_sequence_json(client, db_session):
         
         mock_query.return_value = {"documents": [["some memory"]]}
         
-        ai_response_content = json.dumps({
-            "sequence": [
-                {"type": "thought", "content": "The user said hello."},
-                {"type": "action", "content": "Waves playfully."},
-                {"type": "speech", "content": "Hi there, TestUser!"}
-            ]
-        })
-        mock_complete.return_value = {"content": ai_response_content}
+        narrative = (
+            "*Gemi looks up from her sketchbook, a slow smile spreading across her face.*\n\n"
+            "\"Well, well... look who finally decided to say hello.\"\n\n"
+            "*She sets down her pencil and leans forward, resting her chin on her hand.* "
+            "Her eyes study you with an amused glint.\n\n"
+            "\"I was starting to think you'd forgotten about me. Sit. Tell me everything.\""
+        )
+        mock_complete.return_value = {"content": narrative}
         
         response = client.post("/chat", json={"message": "hello", "character_id": 1})
         
         assert response.status_code == 200
         data = response.json()
-        assert data["reply"] == "Hi there, TestUser!"
-        assert data["thought"] == "The user said hello."
-        assert "Waves playfully." in data["actions"]
-        assert len(data["sequence"]) == 3
-        assert data["sequence"][0]["type"] == "thought"
+        assert "Gemi" in data["reply"]
+        assert "finally decided to say hello" in data["reply"]
+        assert "*Gemi looks up*" not in data["reply"]  # Only the raw content
 
 def test_build_prompt_user_info(db_session):
     from app.core.bridge import Brain

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Open Chat - Characters</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-surface": "#e5e2e1",
+                    "on-primary": "#2c3132",
+                    "on-tertiary-fixed": "#221a17",
+                    "primary-fixed-dim": "#c3c7c8",
+                    "error": "#ffb4ab",
+                    "inverse-primary": "#5a5f60",
+                    "tertiary": "#ffffff",
+                    "secondary-fixed": "#c9ebd5",
+                    "surface-container": "#201f1f",
+                    "surface-container-low": "#1c1b1b",
+                    "surface-dim": "#131313",
+                    "inverse-surface": "#e5e2e1",
+                    "secondary": "#adceb9",
+                    "background": "#131313",
+                    "on-tertiary": "#372e2b",
+                    "outline-variant": "#434748",
+                    "inverse-on-surface": "#313030",
+                    "primary-container": "#dfe3e4",
+                    "on-tertiary-fixed-variant": "#4f4541",
+                    "tertiary-fixed": "#efdfd9",
+                    "on-primary-fixed": "#181c1d",
+                    "tertiary-container": "#efdfd9",
+                    "surface": "#131313",
+                    "on-error": "#690005",
+                    "surface-tint": "#c3c7c8",
+                    "tertiary-fixed-dim": "#d2c3be",
+                    "surface-container-highest": "#353534",
+                    "surface-container-lowest": "#0e0e0e",
+                    "primary-fixed": "#dfe3e4",
+                    "on-secondary-container": "#9cbda8",
+                    "error-container": "#93000a",
+                    "on-surface-variant": "#c4c7c8",
+                    "primary": "#ffffff",
+                    "on-secondary": "#193627",
+                    "on-background": "#e5e2e1",
+                    "on-error-container": "#ffdad6",
+                    "on-primary-container": "#606566",
+                    "secondary-container": "#2f4d3d",
+                    "on-primary-fixed-variant": "#434849",
+                    "on-secondary-fixed": "#022113",
+                    "on-secondary-fixed-variant": "#2f4d3d",
+                    "surface-variant": "#353534",
+                    "on-tertiary-container": "#6d625d",
+                    "outline": "#8d9192",
+                    "surface-container-high": "#2a2a2a",
+                    "surface-bright": "#3a3939",
+                    "secondary-fixed-dim": "#adceb9"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "lg": "2.5rem",
+                    "xl": "4rem",
+                    "xs": "0.5rem",
+                    "md": "1.5rem",
+                    "container-max": "800px",
+                    "sm": "1rem",
+                    "unit": "4px"
+            },
+            "fontFamily": {
+                    "display": [
+                            "Inter"
+                    ],
+                    "headline-lg": [
+                            "Inter"
+                    ],
+                    "body-md": [
+                            "Inter"
+                    ],
+                    "body-lg": [
+                            "Inter"
+                    ],
+                    "label-sm": [
+                            "JetBrains Mono"
+                    ]
+            },
+            "fontSize": {
+                    "display": [
+                            "32px",
+                            {
+                                    "lineHeight": "40px",
+                                    "letterSpacing": "-0.02em",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "headline-lg": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "fontWeight": "500"
+                            }
+                    ],
+                    "body-md": [
+                            "16px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "body-lg": [
+                            "18px",
+                            {
+                                    "lineHeight": "28px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "label-sm": [
+                            "12px",
+                            {
+                                    "lineHeight": "16px",
+                                    "letterSpacing": "0.05em",
+                                    "fontWeight": "400"
+                            }
+                    ]
+            }
+    },
+        },
+      }
+    </script>
+</head>
+<body class="bg-background text-on-surface font-body-md text-body-md min-h-screen flex antialiased selection:bg-surface-variant selection:text-primary overflow-hidden">
+<!-- TopAppBar for Mobile (Hidden on md and up) -->
+<header class="md:hidden bg-background border-b border-outline-variant flex justify-between items-center w-full px-md h-16 fixed top-0 z-50">
+<div class="font-display text-headline-lg font-semibold text-primary">Open Chat</div>
+<div class="flex items-center gap-xs">
+<button aria-label="settings" class="text-on-surface hover:text-primary transition-colors p-xs">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button aria-label="history" class="text-on-surface hover:text-primary transition-colors p-xs">
+<span class="material-symbols-outlined">history</span>
+</button>
+</div>
+</header>
+<!-- SideNavBar (Hidden on mobile, visible on md and up) -->
+<nav class="hidden md:flex bg-surface-container-low text-on-surface border-r border-outline-variant h-screen w-64 flex-col py-md px-sm flex-shrink-0 z-40 fixed left-0 top-0">
+<!-- Brand Header -->
+<div class="flex items-center gap-sm px-2 mb-lg">
+<img alt="Chronicle Logo" class="w-8 h-8 rounded-full object-cover border border-outline-variant" data-alt="A minimalist, abstract geometric icon representing a stylized book or unfolding narrative, rendered in pure white against a pitch-black void. The design is extremely clean, using only thin, precise lines without any shading, gradients, or 3D effects. The aesthetic is sophisticated, technical, and high-end, fitting for a modern writer's tool." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAfI95hOI7vV35HtjGUYw_e_waz0TH1L6W7RqfA3JYnc85si_IwBoTmRM2fwMXgFAmp2uSac-Ua4KHlshIoJLrgCNmQhMXxouPuvbJr3IaG10z4LViH8Cym0Yb8-WPSI5bTpmToh4jIsPukSDaXAQV3RovWZUhjXX4EFsx4Q4McSg2HKB4iOBq9DoABmgj64ePL96-TIw_znFafDvucgQQkX4p5ltXexU77Xoim_iwMDH3gxqK_xXuwmeNaSh_XUYovs4GSpRW9Izo"/>
+<div>
+<h1 class="font-display text-headline-lg font-bold text-primary tracking-tight">Open Chat</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mt-1">Writers Room</p>
+</div>
+</div>
+<!-- Navigation Links -->
+<ul class="flex-1 flex flex-col gap-unit">
+<li>
+<a class="flex items-center gap-sm px-2 py-2 rounded text-on-surface-variant pl-2 hover:bg-surface-container transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">book</span>
+<span class="font-body-md text-body-md">Library</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-2 py-2 rounded text-on-surface-variant pl-2 hover:bg-surface-container transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">chat_bubble</span>
+<span class="font-body-md text-body-md">Active Stories</span>
+</a>
+</li>
+<li>
+<!-- Active State -->
+<a class="flex items-center gap-sm px-2 py-2 rounded text-primary border-l-2 border-primary pl-2 bg-surface-container scale-[0.99] duration-150 group" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">person</span>
+<span class="font-body-md text-body-md font-medium">Characters</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-sm px-2 py-2 rounded text-on-surface-variant pl-2 hover:bg-surface-container transition-all group" href="#">
+<span class="material-symbols-outlined group-hover:text-primary transition-colors">inventory_2</span>
+<span class="font-body-md text-body-md">Archives</span>
+</a>
+</li>
+</ul>
+<!-- CTA Button at Bottom -->
+<div class="mt-auto pt-md">
+<button class="w-full py-2 px-4 border border-outline-variant text-primary rounded font-body-md text-body-md hover:border-outline hover:bg-surface-container transition-all flex justify-center items-center gap-xs">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                New Story
+            </button>
+</div>
+</nav>
+<!-- Main Content Canvas -->
+<main class="flex-1 md:ml-64 mt-16 md:mt-0 p-sm md:p-lg h-screen overflow-y-auto">
+<div class="max-w-container-max mx-auto h-full flex flex-col">
+<!-- Page Header -->
+<header class="mb-lg flex justify-between items-end border-b border-surface-variant pb-md">
+<div>
+<h2 class="font-display text-display text-primary tracking-tight">Characters</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">Manage your AI personas and character profiles.</p>
+</div>
+<button class="px-4 py-2 border border-outline-variant text-primary rounded font-body-md text-body-md hover:border-outline hover:bg-surface-container transition-all flex items-center gap-xs">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                    New Character
+                </button>
+</header>
+<!-- Character List Canvas -->
+<div class="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+<!-- Search/Filter Input (Minimalist) -->
+<div class="mb-md relative">
+<span class="material-symbols-outlined absolute left-0 bottom-2 text-on-surface-variant text-[20px]">search</span>
+<input class="w-full bg-transparent border-0 border-b border-surface-variant pl-8 pb-2 text-primary focus:ring-0 focus:border-outline-variant transition-colors font-body-md text-body-md placeholder:text-surface-variant" placeholder="Search characters..." type="text"/>
+</div>
+<!-- Characters Grid/List -->
+<div class="flex flex-col gap-2">
+<!-- Character Item (Selected State) -->
+<div class="group flex items-center justify-between p-sm border border-outline-variant rounded bg-surface-container transition-all cursor-pointer">
+<div class="flex items-center gap-md">
+<img alt="Elora Vance" class="w-12 h-12 rounded-full object-cover border border-outline-variant grayscale" data-alt="A stark, high-contrast black and white portrait of a young woman with intense, piercing eyes looking directly at the camera. The background is pure void black. Lighting is dramatic, highlighting her facial structure with deep shadows and bright, almost blown-out highlights on her skin. The mood is serious, enigmatic, and fits a high-end, minimalist aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB5MZajZsHJxFsUh2C0nGG62O13aqPadqwfsW9SJz0iTk21cZwaZNNqa5P0YCHGbG8tquYISq5URcGXEHmx5gvnX36I1INNESbrVGbo40qcJzJJ4Cgauo_lhCwyeSA5jNe68A-6SKqBrSs9bH9nLw9VHvIZNn3slE_fWZoJEtJvTvJat9HSH1Barze-jceuXupwY6hhy_-6UnLbvQbfcaBV3sKat8vU8gLzd3MWePIfV_hQmUS1HUWvOfcWA8nI6mkYO77vMKcT94Q"/>
+<div>
+<h3 class="font-body-lg text-body-lg text-primary font-medium">Elora Vance</h3>
+<p class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mt-1">Cybernetics Specialist</p>
+</div>
+</div>
+<div class="flex items-center gap-xs opacity-100 transition-opacity">
+<button aria-label="Edit" class="p-xs text-on-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button aria-label="Chat" class="p-xs text-on-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">chat</span>
+</button>
+</div>
+</div>
+<!-- Character Item (Unselected) -->
+<div class="group flex items-center justify-between p-sm border border-transparent rounded hover:border-surface-variant hover:bg-surface-container-low transition-all cursor-pointer">
+<div class="flex items-center gap-md">
+<img alt="Marcus Thorne" class="w-12 h-12 rounded-full object-cover border border-surface-variant grayscale opacity-70 group-hover:opacity-100 transition-opacity" data-alt="A moody, low-key black and white portrait of a rugged man with a beard, looking slightly away from the lens. The background is completely dark, isolating the subject. Lighting is side-lit, creating deep, textured shadows across his face. The atmosphere is tense and narrative-driven, adhering strictly to a high-contrast minimalist style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD2_vpVh-SqVMcMCi296sTLmQ-2pZWq4i5OLXrEo4_WPHnRLGlZJLa2U4meFjLPLG8smyKHk208j1Sch1Fu3ipPmxmbU_OO-zykrEH6t_TexaBCIQpMSA-M5RYUjBiSxGbdvjBdAsVqW04My6ozaneeYvvP20437ikbgcf7s8L-sQx2fA4WSHI4eDQp1p08clsZW1IxA3_lXCFDGSOgJItAknzbe7bJ-kxfnfTFl-d64KEJix3SPPwD9afKxTAFG7XA64V6-gZyn_I"/>
+<div>
+<h3 class="font-body-lg text-body-lg text-on-surface group-hover:text-primary transition-colors">Marcus Thorne</h3>
+<p class="font-label-sm text-label-sm text-surface-variant group-hover:text-on-surface-variant uppercase tracking-widest mt-1 transition-colors">Private Investigator</p>
+</div>
+</div>
+<div class="flex items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+<button aria-label="Edit" class="p-xs text-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button aria-label="Chat" class="p-xs text-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">chat</span>
+</button>
+</div>
+</div>
+<!-- Character Item (Unselected) -->
+<div class="group flex items-center justify-between p-sm border border-transparent rounded hover:border-surface-variant hover:bg-surface-container-low transition-all cursor-pointer">
+<div class="flex items-center gap-md">
+<div class="w-12 h-12 rounded-full border border-surface-variant bg-surface-container-highest flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity">
+<span class="font-label-sm text-label-sm text-on-surface-variant">SV</span>
+</div>
+<div>
+<h3 class="font-body-lg text-body-lg text-on-surface group-hover:text-primary transition-colors">Silas Vane</h3>
+<p class="font-label-sm text-label-sm text-surface-variant group-hover:text-on-surface-variant uppercase tracking-widest mt-1 transition-colors">Rogue Synthesizer</p>
+</div>
+</div>
+<div class="flex items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+<button aria-label="Edit" class="p-xs text-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button aria-label="Chat" class="p-xs text-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">chat</span>
+</button>
+</div>
+</div>
+<!-- Character Item (Unselected) -->
+<div class="group flex items-center justify-between p-sm border border-transparent rounded hover:border-surface-variant hover:bg-surface-container-low transition-all cursor-pointer">
+<div class="flex items-center gap-md">
+<img alt="Kaelen Rey" class="w-12 h-12 rounded-full object-cover border border-surface-variant grayscale opacity-70 group-hover:opacity-100 transition-opacity" data-alt="A minimalist, high-contrast monochrome portrait of a striking individual with sharp features. The subject is engulfed in deep, absolute black shadow on one side, while the other side is illuminated by harsh, cold white light. No background details are visible, emphasizing a sleek, futuristic, and somber narrative aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD-g8NsDeRasCk_oHQTl3ywuWdfR2RbBR9XG27AJ0dUwQ9QJ0CGVQQxtICsTXzlBvpJaJ68heTXZnrjNqLJ4ht6FcDGzbrqqcbCOdPP5DGJ6ZyLbSn1sd5AYGJYWzNYrftq-P3UqQRV5v4Vk2a0TJoNEUKO4hqLzC2-Vvg9mZRQq3bNeJmnDEjT34qpIpyGXOSaLsEzoyHG29p5Nb3T7hwVRIblzzKEMXMn_WMxzqvtyrN5kTWAI4JbEcTsLLZbFStCNbukr-bhGfA"/>
+<div>
+<h3 class="font-body-lg text-body-lg text-on-surface group-hover:text-primary transition-colors">Kaelen Rey</h3>
+<p class="font-label-sm text-label-sm text-surface-variant group-hover:text-on-surface-variant uppercase tracking-widest mt-1 transition-colors">Archivist</p>
+</div>
+</div>
+<div class="flex items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+<button aria-label="Edit" class="p-xs text-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">edit</span>
+</button>
+<button aria-label="Chat" class="p-xs text-surface-variant hover:text-primary transition-colors rounded hover:bg-surface-bright">
+<span class="material-symbols-outlined text-[20px]">chat</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Minimal Footer/Status area -->
+<footer class="mt-auto pt-md border-t border-surface-variant flex justify-between items-center text-surface-variant font-label-sm text-label-sm uppercase tracking-widest">
+<span>4 Characters</span>
+<span>Sync Active</span>
+</footer>
+</div>
+</main>
+<!-- Custom Scrollbar Styling (Inline for pure HTML requirement) -->
+<style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #2a2a2a; /* surface-container-high approx */
+            border-radius: 2px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #434748; /* outline-variant approx */
+        }
+    </style>
+</body></html>

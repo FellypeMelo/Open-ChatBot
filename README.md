@@ -19,6 +19,8 @@ chmod +x run.sh
 run.bat
 ```
 
+*Nota: o script `run.sh` / `run.bat` agora também executa `pnpm build` dentro de `frontend` antes de iniciar o backend, garantindo que a pasta `static/` contenha os arquivos mais recentes do frontend.
+
 *Nota: Certifique-se de que o Intel oneAPI está instalado nos locais padrão ou ajuste os caminhos nos scripts.*
 
 ### Servidores Individuais

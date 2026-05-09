@@ -1,23 +1,29 @@
 # Python
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 .venv/
 .env
 *.db
 chroma_db/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Node/React
-node_modules/
-dist/
-static/
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/coverage/
+**/static/
+!static/index.html
 
 # Binaries/Models
 llama-b8984/
 models/
 *.gguf
 
-# Tests
-.pytest_cache/
-.coverage
-htmlcov/
+# Tools
+.omg/
+**/.omg/
+session.log

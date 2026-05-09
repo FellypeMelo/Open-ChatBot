@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Open Chat - Character Creation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-surface": "#e5e2e1",
+                        "on-primary": "#2c3132",
+                        "on-tertiary-fixed": "#221a17",
+                        "primary-fixed-dim": "#c3c7c8",
+                        "error": "#ffb4ab",
+                        "inverse-primary": "#5a5f60",
+                        "tertiary": "#ffffff",
+                        "secondary-fixed": "#c9ebd5",
+                        "surface-container": "#201f1f",
+                        "surface-container-low": "#1c1b1b",
+                        "surface-dim": "#131313",
+                        "inverse-surface": "#e5e2e1",
+                        "secondary": "#adceb9",
+                        "background": "#131313",
+                        "on-tertiary": "#372e2b",
+                        "outline-variant": "#434748",
+                        "inverse-on-surface": "#313030",
+                        "primary-container": "#dfe3e4",
+                        "on-tertiary-fixed-variant": "#4f4541",
+                        "tertiary-fixed": "#efdfd9",
+                        "on-primary-fixed": "#181c1d",
+                        "tertiary-container": "#efdfd9",
+                        "surface": "#131313",
+                        "on-error": "#690005",
+                        "surface-tint": "#c3c7c8",
+                        "tertiary-fixed-dim": "#d2c3be",
+                        "surface-container-highest": "#353534",
+                        "surface-container-lowest": "#0e0e0e",
+                        "primary-fixed": "#dfe3e4",
+                        "on-secondary-container": "#9cbda8",
+                        "error-container": "#93000a",
+                        "on-surface-variant": "#c4c7c8",
+                        "primary": "#ffffff",
+                        "on-secondary": "#193627",
+                        "on-background": "#e5e2e1",
+                        "on-error-container": "#ffdad6",
+                        "on-primary-container": "#606566",
+                        "secondary-container": "#2f4d3d",
+                        "on-primary-fixed-variant": "#434849",
+                        "on-secondary-fixed": "#022113",
+                        "on-secondary-fixed-variant": "#2f4d3d",
+                        "surface-variant": "#353534",
+                        "on-tertiary-container": "#6d625d",
+                        "outline": "#8d9192",
+                        "surface-container-high": "#2a2a2a",
+                        "surface-bright": "#3a3939",
+                        "secondary-fixed-dim": "#adceb9"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "lg": "2.5rem",
+                        "xl": "4rem",
+                        "xs": "0.5rem",
+                        "md": "1.5rem",
+                        "container-max": "800px",
+                        "sm": "1rem",
+                        "unit": "4px"
+                    },
+                    "fontFamily": {
+                        "display": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "label-sm": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "display": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "headline-lg": ["24px", { "lineHeight": "32px", "fontWeight": "500" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: #000000; color: #e5e2e1; }
+        /* Custom scrollbar for dark mode */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #131313; }
+        ::-webkit-scrollbar-thumb { background: #353534; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #434748; }
+        
+        /* Input focus transitions */
+        .input-line {
+            border-bottom-color: #1A1A1A;
+            transition: border-color 0.2s ease;
+        }
+        .input-line:focus {
+            border-bottom-color: #333333;
+            outline: none;
+            box-shadow: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-sm md:p-md antialiased selection:bg-surface-variant selection:text-primary">
+<!-- Modal Overlay Container -->
+<div class="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-sm z-40 flex items-center justify-center p-sm md:p-md">
+<!-- Modal Content (Level 2 Overlay) -->
+<div class="w-full max-w-[600px] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50">
+<!-- Header -->
+<div class="flex justify-between items-start w-full">
+<div class="flex flex-col gap-xs">
+<h2 class="font-headline-lg text-headline-lg text-primary tracking-tight">Create Character</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">Define the core attributes and narrative stance.</p>
+</div>
+<button aria-label="Close modal" class="text-on-surface-variant hover:text-primary transition-colors p-xs" type="button">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">close</span>
+</button>
+</div>
+<!-- Form -->
+<form class="flex flex-col gap-lg w-full">
+<!-- Avatar / Visual Identity (Minimalist approach) -->
+<div class="flex items-center gap-md">
+<div class="w-16 h-16 bg-surface border border-outline-variant flex items-center justify-center hover:border-primary transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors">add_photo_alternate</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Visual Identity</span>
+<span class="font-body-md text-body-md text-on-surface-variant opacity-70">Upload or generate an avatar</span>
+</div>
+</div>
+<!-- Input Group: Name -->
+<div class="flex flex-col gap-xs">
+<label class="font-label-sm text-label-sm text-[#71717A] uppercase" for="char_name">Designation / Name</label>
+<input class="input-line w-full bg-transparent border-0 border-b pb-xs font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30" id="char_name" placeholder="e.g. Architect, Elara, Kaelen" type="text"/>
+</div>
+<!-- Input Group: Personality -->
+<div class="flex flex-col gap-xs">
+<div class="flex justify-between items-baseline">
+<label class="font-label-sm text-label-sm text-[#71717A] uppercase" for="char_personality">Core Personality</label>
+<span class="font-label-sm text-label-sm text-on-surface-variant/50">Keywords separated by commas</span>
+</div>
+<textarea class="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none" id="char_personality" placeholder="analytical, cold, secretly protective, eloquent" rows="3"></textarea>
+</div><!-- Input Group: Tags -->
+<div class="flex flex-col gap-xs">
+<div class="flex justify-between items-baseline">
+<label class="font-label-sm text-label-sm text-[#71717A] uppercase" for="char_tags">Character Tags</label>
+<span class="font-label-sm text-label-sm text-on-surface-variant/50">Add traits or categories</span>
+</div>
+<div class="flex flex-wrap gap-xs py-xs min-h-[40px] border-b border-[#1A1A1A]">
+<!-- Tag Chips -->
+<div class="flex items-center gap-1 bg-surface-container-low border border-outline-variant px-2 py-0.5 rounded-sm">
+<span class="font-label-sm text-[10px] text-on-surface-variant">Dominant</span>
+<button class="hover:text-primary transition-colors flex items-center" type="button">
+<span class="material-symbols-outlined text-[14px]">close</span>
+</button>
+</div>
+<div class="flex items-center gap-1 bg-surface-container-low border border-outline-variant px-2 py-0.5 rounded-sm">
+<span class="font-label-sm text-[10px] text-on-surface-variant">Submissive</span>
+<button class="hover:text-primary transition-colors flex items-center" type="button">
+<span class="material-symbols-outlined text-[14px]">close</span>
+</button>
+</div>
+<!-- Tag Input -->
+<input class="flex-1 bg-transparent border-0 p-0 font-body-md text-body-md text-primary placeholder-on-surface-variant/30 focus:ring-0 min-w-[100px]" id="char_tags" placeholder="Add tag..." type="text"/>
+</div>
+</div>
+<!-- Input Group: Scenario / Context -->
+<div class="flex flex-col gap-xs">
+<label class="font-label-sm text-label-sm text-[#71717A] uppercase" for="char_scenario">Initial Scenario</label>
+<textarea class="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none" id="char_scenario" placeholder="The user has just breached the mainframe. The character is waiting in the digital void..." rows="4"></textarea>
+</div>
+<!-- Visibility Chips -->
+<!-- Actions -->
+<div class="flex justify-end items-center gap-md pt-md border-t border-[#1A1A1A] mt-sm">
+<button class="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors" type="button">
+                        Cancel
+                    </button>
+<button class="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors" type="submit">
+                        Initialize
+                    </button>
+</div>
+</form>
+</div>
+</div>
+</body></html>

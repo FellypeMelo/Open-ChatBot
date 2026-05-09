@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Narrative Chat Interface</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&amp;family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&amp;family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-surface": "#e5e2e1",
+                      "on-primary": "#2c3132",
+                      "on-tertiary-fixed": "#221a17",
+                      "primary-fixed-dim": "#c3c7c8",
+                      "error": "#ffb4ab",
+                      "inverse-primary": "#5a5f60",
+                      "tertiary": "#ffffff",
+                      "secondary-fixed": "#c9ebd5",
+                      "surface-container": "#201f1f",
+                      "surface-container-low": "#1c1b1b",
+                      "surface-dim": "#131313",
+                      "inverse-surface": "#e5e2e1",
+                      "secondary": "#adceb9",
+                      "background": "#131313",
+                      "on-tertiary": "#372e2b",
+                      "outline-variant": "#434748",
+                      "inverse-on-surface": "#313030",
+                      "primary-container": "#dfe3e4",
+                      "on-tertiary-fixed-variant": "#4f4541",
+                      "tertiary-fixed": "#efdfd9",
+                      "on-primary-fixed": "#181c1d",
+                      "tertiary-container": "#efdfd9",
+                      "surface": "#131313",
+                      "on-error": "#690005",
+                      "surface-tint": "#c3c7c8",
+                      "tertiary-fixed-dim": "#d2c3be",
+                      "surface-container-highest": "#353534",
+                      "surface-container-lowest": "#0e0e0e",
+                      "primary-fixed": "#dfe3e4",
+                      "on-secondary-container": "#9cbda8",
+                      "error-container": "#93000a",
+                      "on-surface-variant": "#c4c7c8",
+                      "primary": "#ffffff",
+                      "on-secondary": "#193627",
+                      "on-background": "#e5e2e1",
+                      "on-error-container": "#ffdad6",
+                      "on-primary-container": "#606566",
+                      "secondary-container": "#2f4d3d",
+                      "on-primary-fixed-variant": "#434849",
+                      "on-secondary-fixed": "#022113",
+                      "on-secondary-fixed-variant": "#2f4d3d",
+                      "surface-variant": "#353534",
+                      "on-tertiary-container": "#6d625d",
+                      "outline": "#8d9192",
+                      "surface-container-high": "#2a2a2a",
+                      "surface-bright": "#3a3939",
+                      "secondary-fixed-dim": "#adceb9"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0rem",
+                      "lg": "0rem",
+                      "xl": "0rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "lg": "2.5rem",
+                      "xl": "4rem",
+                      "xs": "0.5rem",
+                      "md": "1.5rem",
+                      "container-max": "800px",
+                      "sm": "1rem",
+                      "unit": "4px"
+              },
+              "fontFamily": {
+                      "display": [
+                              "Playfair Display", "serif"
+                      ],
+                      "headline-lg": [
+                              "Playfair Display", "serif"
+                      ],
+                      "body-md": [
+                              "Crimson Text", "serif"
+                      ],
+                      "body-lg": [
+                              "Crimson Text", "serif"
+                      ],
+                      "label-sm": [
+                              "JetBrains Mono", "monospace"
+                      ]
+              },
+              "fontSize": {
+                      "display": [
+                              "36px",
+                              {
+                                      "lineHeight": "48px",
+                                      "letterSpacing": "-0.01em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-lg": [
+                              "28px",
+                              {
+                                      "lineHeight": "36px",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "body-md": [
+                              "18px",
+                              {
+                                      "lineHeight": "28px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-lg": [
+                              "22px",
+                              {
+                                      "lineHeight": "36px",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-sm": [
+                              "13px",
+                              {
+                                      "lineHeight": "18px",
+                                      "letterSpacing": "0.08em",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+            },
+          },
+        }</script>
+<style>
+        body {
+            background-color: #000000;
+        }
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #000000; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1A1A1A; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #333333; 
+        }
+    </style>
+</head>
+<body class="text-on-surface h-screen flex flex-col overflow-hidden antialiased">
+<!-- TopAppBar -->
+<header class="bg-background dark:bg-background border-outline-variant dark:border-outline-variant flex-none z-10 w-full">
+<div class="flex justify-between items-center w-full px-md h-16 max-w-container-max mx-auto">
+<div class="flex items-center gap-sm">
+<a class="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center h-10 w-10" href="#">
+<span class="material-symbols-outlined">arrow_back</span>
+</a>
+<div class="flex flex-col">
+<h1 class="font-display text-headline-lg font-semibold text-primary dark:text-primary">Open Chat</h1>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Archivist of the Lost Library</span>
+</div>
+</div>
+<div class="flex items-center gap-sm">
+<button class="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center h-10 w-10 rounded-full">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center h-10 w-10 rounded-full">
+<span class="material-symbols-outlined">history</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Chat Canvas -->
+<main class="flex-1 overflow-y-auto w-full flex flex-col items-center">
+<div class="w-full max-w-container-max px-sm md:px-md py-xl flex flex-col gap-lg">
+<!-- Context Divider -->
+<div class="w-full flex items-center justify-center gap-md py-sm opacity-50">
+<div class="h-px bg-outline-variant flex-1"></div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">The Archives - Midnight</span>
+<div class="h-px bg-outline-variant flex-1"></div>
+</div>
+<!-- AI Message 1 -->
+<div class="flex flex-col gap-xs w-full pl-0 pr-xl">
+<div class="flex items-center gap-xs mb-1">
+<div class="w-8 h-8 rounded-full bg-surface-container overflow-hidden flex items-center justify-center border border-outline-variant">
+<img alt="Elias" class="w-full h-full object-cover" data-alt="A moody, low-key portrait of a scholarly older man with a neat beard, wearing a dark tweed jacket in a dimly lit library. High contrast lighting accentuates his features against a pitch black background. Ultra-minimalist dark aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCtaCH-ud1KYg_rCBD0G_ToAE5rOtp6YLxOWjyA_xgFR0MzNXL-er5Qtebqg4_THXWnm_vhesfmTyc3wIrmcXHEuWD9EzKYns9eum42_M9KTyLoTMns1cYNN_GKANz4UlQXRWWStwHMTJXllB6Ef5SL6ECVT00lMRO-uST61dZ4Zjqg4u9P9QM3OObWwHdRomSefvvOOlGV-wdYTVgicBr1ph6X6y51429AFsipwpbL0jfch2jWQgnYvxcgbmViPt71IKuaoBk0bdI"/>
+</div>
+<span class="font-display text-body-md font-semibold text-primary">Elias Thorne</span>
+</div>
+<div class="font-body-lg text-body-lg text-on-surface leading-relaxed border-outline-variant/30 py-1">
+<p>The dust here hasn't been disturbed in centuries. Look closely at the bindings on that shelf—they aren't leather. They're something... older.</p>
+<p class="mt-4 italic text-on-surface-variant">He traces a gloved finger along a spine, pulling away a thick layer of grey ash.</p>
+<p class="mt-4">I wouldn't touch them without protection if I were you. The knowledge inside tends to bleed into the skin.</p>
+</div>
+</div>
+<!-- User Message 1 -->
+<div class="flex flex-col gap-xs w-full items-end pl-xl pr-0 mt-md">
+<div class="flex items-center gap-xs mb-1">
+<span class="font-display text-body-md font-semibold text-on-surface-variant">You</span>
+</div>
+<div class="font-body-lg text-body-lg text-primary leading-relaxed py-sm rounded-lg border-outline-variant/50">
+<p>I didn't come here for the safe books, Elias. Show me the Codex. We both know that's why the Council sent me.</p>
+</div>
+</div>
+<!-- AI Message 2 -->
+<div class="flex flex-col gap-xs w-full pl-0 pr-xl mt-md">
+<div class="flex items-center gap-xs mb-1">
+<div class="w-8 h-8 rounded-full bg-surface-container overflow-hidden flex items-center justify-center border border-outline-variant">
+<img alt="Elias" class="w-full h-full object-cover" data-alt="A moody, low-key portrait of a scholarly older man with a neat beard, wearing a dark tweed jacket in a dimly lit library. High contrast lighting accentuates his features against a pitch black background. Ultra-minimalist dark aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBnn2Xkzzb3yMx6BITZipsq6G8utEDxO405YLKMLQ2Ts5mDU2Wjg03uiWrRvXq82PeOV6DNrU19K0UwgXly08M4WTwv3fEBFEILF07ap1BCmtc5flp69E50P6KAJz5-e0xZ8m0bw6pb4u_4ct2ecyokZWa_Wu2gM2G01WLS8ahCXXdReo0wtsUWAQWeNwKOBtYUuOMva0MDkPIj-XfpSIhgIWsXJlL2QLguUrDVjGzJNglZ8_UNfiQrILeX_n42KHRBJTdh3fTfx3A"/>
+</div>
+<span class="font-display text-body-md font-semibold text-primary">Elias Thorne</span>
+</div>
+<div class="font-body-lg text-body-lg text-on-surface leading-relaxed border-outline-variant/30 py-1">
+<p class="italic text-on-surface-variant">He stops, his hand hovering over a particularly thick tome. Slowly, he turns to face you, the weak candlelight catching a sudden sharpness in his eyes.</p>
+<p class="mt-4">The Council knows nothing of what they ask. The Codex is not a book you simply 'read'. It is an anchor. It holds the things in the dark at bay.</p>
+<p class="mt-4">If you open it, you invite them in.</p>
+</div>
+</div>
+<!-- Typing Indicator (Subtle) -->
+<div class="flex flex-col gap-xs w-full pl-0 pr-xl mt-md opacity-50">
+<div class="font-label-sm text-label-sm text-on-surface-variant">
+                    Elias is writing...
+                </div>
+</div>
+</div>
+</main>
+<!-- Bottom Input Area -->
+<div class="bg-background w-full flex-none pb-lg pt-sm px-sm md:px-md border-t border-outline-variant/10">
+<div class="max-w-container-max mx-auto relative">
+<div class="bg-surface-container-low border-outline-variant rounded-xl flex items-end p-sm focus-within:border-outline focus-within:bg-surface-container transition-all">
+<textarea class="w-full bg-transparent border-none focus:ring-0 text-on-surface font-body-md text-body-md resize-none min-h-[24px] max-h-[200px] py-0 overflow-y-auto" placeholder="Write your response..." rows="1" style="scrollbar-width: none;"></textarea>
+<div class="flex gap-xs ml-sm">
+<button class="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center h-8 w-8 rounded-full">
+<span class="material-symbols-outlined" style="font-size: 20px;">add_circle</span>
+</button>
+<button class="bg-on-surface text-background hover:bg-primary transition-colors flex items-center justify-center h-8 w-8 rounded-full shadow-sm">
+<span class="material-symbols-outlined" data-weight="fill" style="font-size: 18px;">arrow_upward</span>
+</button>
+</div>
+</div>
+<div class="text-center mt-xs">
+<span class="font-label-sm text-label-sm text-on-surface-variant/50">Shift + Enter for new line. AI can make mistakes.</span>
+</div>
+</div>
+</div>
+</body></html>

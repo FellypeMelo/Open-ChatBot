@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     outDir: '../static',
     emptyOutDir: true,
@@ -13,6 +14,8 @@ export default defineConfig({
       '/chat': 'http://localhost:8000',
       '/characters': 'http://localhost:8000',
       '/users': 'http://localhost:8000',
+      '/tags': 'http://localhost:8000',
+      '/stats': 'http://localhost:8000',
     }
   },
   test: {

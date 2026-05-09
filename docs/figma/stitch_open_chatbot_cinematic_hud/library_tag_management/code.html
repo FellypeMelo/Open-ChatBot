@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Tag Management - Narrative</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-highest": "#353534",
+                        "surface-variant": "#353534",
+                        "on-tertiary-container": "#6d625d",
+                        "surface-tint": "#c3c7c8",
+                        "surface": "#131313",
+                        "error-container": "#93000a",
+                        "outline-variant": "#434748",
+                        "on-tertiary-fixed": "#221a17",
+                        "on-primary-fixed-variant": "#434849",
+                        "tertiary-fixed-dim": "#d2c3be",
+                        "inverse-on-surface": "#313030",
+                        "on-background": "#e5e2e1",
+                        "on-error-container": "#ffdad6",
+                        "surface-container-low": "#1c1b1b",
+                        "on-primary-fixed": "#181c1d",
+                        "primary-container": "#dfe3e4",
+                        "on-tertiary-fixed-variant": "#4f4541",
+                        "on-surface": "#e5e2e1",
+                        "on-secondary-fixed": "#022113",
+                        "secondary-fixed-dim": "#adceb9",
+                        "on-secondary-container": "#9cbda8",
+                        "primary-fixed": "#dfe3e4",
+                        "tertiary-fixed": "#efdfd9",
+                        "error": "#ffb4ab",
+                        "tertiary-container": "#efdfd9",
+                        "surface-container-high": "#2a2a2a",
+                        "background": "#131313",
+                        "outline": "#8d9192",
+                        "surface-container-lowest": "#0e0e0e",
+                        "secondary": "#adceb9",
+                        "secondary-container": "#2f4d3d",
+                        "surface-container": "#201f1f",
+                        "on-surface-variant": "#c4c7c8",
+                        "on-secondary": "#193627",
+                        "on-error": "#690005",
+                        "surface-bright": "#3a3939",
+                        "on-secondary-fixed-variant": "#2f4d3d",
+                        "tertiary": "#ffffff",
+                        "primary": "#ffffff",
+                        "surface-dim": "#131313",
+                        "inverse-surface": "#e5e2e1",
+                        "on-tertiary": "#372e2b",
+                        "primary-fixed-dim": "#c3c7c8",
+                        "on-primary-container": "#606566",
+                        "inverse-primary": "#5a5f60",
+                        "on-primary": "#2c3132",
+                        "secondary-fixed": "#c9ebd5"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "unit": "4px",
+                        "xs": "0.5rem",
+                        "sm": "1rem",
+                        "container-max": "800px",
+                        "lg": "2.5rem",
+                        "xl": "4rem",
+                        "md": "1.5rem"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "display": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "label-sm": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "display": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-lg": ["24px", { "lineHeight": "32px", "fontWeight": "500" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-surface h-screen overflow-hidden flex font-body-md">
+<!-- SideNavBar (from JSON) -->
+<aside class="bg-surface-container-low text-on-surface border-r border-outline-variant h-full w-64 flex flex-col py-md px-sm hidden md:flex shrink-0">
+<div class="mb-xl px-xs">
+<h1 class="font-display text-headline-lg font-bold text-primary">Chronicle</h1>
+<p class="font-body-md text-body-md font-normal text-on-surface-variant">Writers Room</p>
+</div>
+<button class="bg-primary text-on-primary rounded-DEFAULT py-xs px-sm mb-lg font-body-md text-body-md flex items-center justify-center gap-xs hover:bg-inverse-primary transition-colors border border-transparent">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
+            New Story
+        </button>
+<nav class="flex-1 space-y-xs font-body-md text-body-md font-normal">
+<!-- Active state intent match for "Settings/Management" -> Archives as closest fit, though Library works too. Choosing Archives for a management screen -->
+<a class="flex items-center gap-sm py-xs px-xs rounded-DEFAULT text-on-surface-variant hover:bg-surface-container transition-all pl-2" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">book</span>
+<span>Library</span>
+</a>
+<a class="flex items-center gap-sm py-xs px-xs rounded-DEFAULT text-on-surface-variant hover:bg-surface-container transition-all pl-2" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">chat_bubble</span>
+<span>Active Stories</span>
+</a>
+<a class="flex items-center gap-sm py-xs px-xs rounded-DEFAULT text-on-surface-variant hover:bg-surface-container transition-all pl-2" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">person</span>
+<span>Characters</span>
+</a>
+<!-- Highlighted as it manages system-wide metadata -->
+<a class="flex items-center gap-sm py-xs px-xs rounded-DEFAULT text-primary border-l-2 border-primary pl-2 scale-[0.99] duration-150 bg-surface-container" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">inventory_2</span>
+<span>Archives</span>
+</a>
+</nav>
+<div class="mt-auto pt-sm border-t border-outline-variant flex items-center gap-sm px-xs cursor-pointer hover:opacity-80 transition-opacity">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center overflow-hidden shrink-0">
+<span class="material-symbols-outlined text-on-surface-variant text-sm">person</span>
+</div>
+<div class="flex-1 min-w-0">
+<p class="font-body-md text-body-md truncate">User Profile</p>
+</div>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col h-full overflow-y-auto bg-background">
+<!-- Header area for main canvas -->
+<header class="w-full px-md h-16 max-w-container-max mx-auto flex justify-between items-center shrink-0 mt-md">
+<div>
+<h2 class="font-display text-display font-semibold text-primary">Tag Management</h2>
+<p class="font-label-sm text-label-sm text-on-surface-variant mt-1 uppercase tracking-wider">System Taxonomy</p>
+</div>
+<div class="flex gap-sm">
+<div class="relative hidden sm:block">
+<span class="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+<input class="bg-surface-container-low border-b border-outline-variant focus:border-outline focus:outline-none text-on-surface pl-8 pr-3 py-xs font-body-md text-body-md w-48 placeholder-on-surface-variant transition-colors bg-transparent h-full pb-1 focus:ring-0" placeholder="Filter tags..." type="text"/>
+</div>
+<button class="bg-transparent border border-outline-variant text-on-surface rounded-DEFAULT px-sm py-xs font-body-md text-body-md hover:border-outline hover:text-primary transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                    Create New Tag
+                </button>
+</div>
+</header>
+<!-- Content Canvas -->
+<div class="flex-1 w-full max-w-container-max mx-auto px-md py-lg space-y-xl">
+<!-- Structural grouping for tags -->
+<section>
+<div class="mb-sm border-b border-surface-container-high pb-xs flex justify-between items-end">
+<h3 class="font-body-lg text-body-lg text-on-surface">Personality Traits</h3>
+<span class="font-label-sm text-label-sm text-on-surface-variant">12 items</span>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+<!-- Tag Card -->
+<div class="group border border-surface-container-high hover:border-outline-variant rounded-DEFAULT p-sm transition-colors cursor-pointer flex flex-col gap-2 relative bg-background">
+<div class="flex justify-between items-start">
+<span class="font-label-sm text-label-sm text-on-surface border border-outline-variant rounded-DEFAULT px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-outline transition-colors">Dominant</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-on-surface-variant hover:text-on-surface">
+<span class="material-symbols-outlined text-[18px]">edit</span>
+</button>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant pt-2">Assertive, controlling narrative style. Takes charge in conversational dynamics.</p>
+<div class="flex gap-2 mt-auto pt-3 border-t border-surface-container-lowest">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Used: 42x</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-surface-tint"></div> Global</span>
+</div>
+</div>
+<!-- Tag Card -->
+<div class="group border border-surface-container-high hover:border-outline-variant rounded-DEFAULT p-sm transition-colors cursor-pointer flex flex-col gap-2 relative bg-background">
+<div class="flex justify-between items-start">
+<span class="font-label-sm text-label-sm text-on-surface border border-outline-variant rounded-DEFAULT px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-outline transition-colors">Submissive</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-on-surface-variant hover:text-on-surface">
+<span class="material-symbols-outlined text-[18px]">edit</span>
+</button>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant pt-2">Yielding, responsive narrative style. Follows lead in conversational dynamics.</p>
+<div class="flex gap-2 mt-auto pt-3 border-t border-surface-container-lowest">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Used: 38x</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-surface-tint"></div> Global</span>
+</div>
+</div>
+<!-- Tag Card -->
+<div class="group border border-surface-container-high hover:border-outline-variant rounded-DEFAULT p-sm transition-colors cursor-pointer flex flex-col gap-2 relative bg-background">
+<div class="flex justify-between items-start">
+<span class="font-label-sm text-label-sm text-on-surface border border-outline-variant rounded-DEFAULT px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-outline transition-colors">Stoic</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-on-surface-variant hover:text-on-surface">
+<span class="material-symbols-outlined text-[18px]">edit</span>
+</button>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant pt-2">Emotionally reserved, analytical responses. Prioritizes logic over feeling.</p>
+<div class="flex gap-2 mt-auto pt-3 border-t border-surface-container-lowest">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Used: 15x</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-outline-variant"></div> Personal</span>
+</div>
+</div>
+<!-- Tag Card -->
+<div class="group border border-surface-container-high hover:border-outline-variant rounded-DEFAULT p-sm transition-colors cursor-pointer flex flex-col gap-2 relative bg-background">
+<div class="flex justify-between items-start">
+<span class="font-label-sm text-label-sm text-on-surface border border-outline-variant rounded-DEFAULT px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-outline transition-colors">Chaotic</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-on-surface-variant hover:text-on-surface">
+<span class="material-symbols-outlined text-[18px]">edit</span>
+</button>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant pt-2">Unpredictable, erratic narrative flow. Introduces sudden shifts in tone or subject.</p>
+<div class="flex gap-2 mt-auto pt-3 border-t border-surface-container-lowest">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Used: 8x</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-outline-variant"></div> Personal</span>
+</div>
+</div>
+</div>
+</section>
+<section>
+<div class="mb-sm border-b border-surface-container-high pb-xs flex justify-between items-end">
+<h3 class="font-body-lg text-body-lg text-on-surface">Genre / Setting</h3>
+<span class="font-label-sm text-label-sm text-on-surface-variant">3 items</span>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+<!-- Tag Card -->
+<div class="group border border-surface-container-high hover:border-outline-variant rounded-DEFAULT p-sm transition-colors cursor-pointer flex flex-col gap-2 relative bg-background">
+<div class="flex justify-between items-start">
+<span class="font-label-sm text-label-sm text-on-surface border border-outline-variant rounded-DEFAULT px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-outline transition-colors">Cyberpunk</span>
+<button class="opacity-0 group-hover:opacity-100 transition-opacity text-on-surface-variant hover:text-on-surface">
+<span class="material-symbols-outlined text-[18px]">edit</span>
+</button>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant pt-2">High tech, low life. Neon, cybernetics, corporate dystopia.</p>
+<div class="flex gap-2 mt-auto pt-3 border-t border-surface-container-lowest">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Used: 112x</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><div class="w-1.5 h-1.5 rounded-full bg-surface-tint"></div> Global</span>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</body></html>

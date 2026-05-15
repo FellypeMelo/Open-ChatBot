@@ -11,9 +11,8 @@ from typing import List, Dict, Any
 from app.core.llm import LlamaClient
 from app.core.bridge import Brain
 from app.core.vector_store import VectorStore
-from app.core.reflector import Reflector
-from app.core.evolution import EvolutionManager
-from app.db.database import get_db
+from app.core.engine import update_needs, evolve_character
+from app.db.database import get_db, SessionLocal
 from app.db.models import AgentState, Character, User, Message
 from app.core.config import settings
 
@@ -22,37 +21,23 @@ router = APIRouter()
 llama = LlamaClient()
 vector_store = VectorStore(llm_client=llama)
 brain = Brain(vector_store=vector_store)
-reflector = Reflector(llm=llama)
-
 
 async def run_consciousness_layer(character_id: int, user_message: str, ai_response: str):
-    """
-    Background task to handle memory storage and character evolution.
-    """
+    """Background task for memory and evolution."""
     try:
-        from app.db.database import SessionLocal
         db = SessionLocal()
         try:
-            # 1. Store interaction in memory
-            memory_text = f"User: {user_message}\nAI: {ai_response}"
-            await vector_store.add_memory(memory_text, metadata={"character_id": character_id})
+            # 1. Store memory
+            await vector_store.add_memory(f"User: {user_message}\nAI: {ai_response}", metadata={"character_id": character_id})
             
-            # 2. Trigger Reflection
-            messages = [
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": ai_response}
-            ]
-            reflection = await reflector.reflect(messages)
-            
-            # 3. Evolve Character
-            evolution = EvolutionManager(db)
-            evolution.evolve(character_id, reflection)
+            # 2. Reflect & Evolve
+            messages = [{"role": "user", "content": user_message}, {"role": "assistant", "content": ai_response}]
+            reflection = await brain.reflect(messages)
+            evolve_character(db, character_id, reflection)
         finally:
             db.close()
-        
     except Exception as e:
-        logger.exception(f"Error in consciousness layer: {e}")
-
+        logger.exception(f"Consciousness layer error: {e}")
 
 class ChatRequest(BaseModel):
     message: str
@@ -65,252 +50,90 @@ class ChatResponse(BaseModel):
 
 @router.get("/history/{character_id}", response_model=List[Dict[str, Any]])
 async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
-    """
-    Fetches the last 50 messages for a character.
-    """
-    from app.db.models import Message
     messages = db.query(Message).filter(Message.character_id == character_id).order_by(Message.timestamp.desc()).limit(50).all()
-    messages.reverse() # Back to chronological order
-    
-    history = []
-    for msg in messages:
-        history.append({
-            "role": msg.role,
-            "content": msg.content,
-            "timestamp": msg.timestamp
-        })
-    return history
+    return [{"role": m.role, "content": m.content, "timestamp": m.timestamp} for m in reversed(messages)]
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    start_total = time.perf_counter()
+    start = time.perf_counter()
     try:
-        # 0. Fetch User
-        t0 = time.perf_counter()
-        from app.db.models import User
-        user = db.query(User).filter(User.is_active == True).first()
-        if not user:
-            # Create a default user if none exists
-            user = User(name="User", gender="Unknown")
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-        dur_user = time.perf_counter() - t0
+        # 1. Fetch Entities (using defaults if needed)
+        user = db.query(User).filter(User.is_active == True).first() or User(name="User", gender="Unknown")
+        if not user.id: db.add(user); db.flush()
 
-        # Save user message to history
-        user_msg = Message(
-            character_id=request.character_id,
-            user_id=user.id,
-            role="user",
-            content=request.message
-        )
-        db.add(user_msg)
-        db.commit()
-
-        # Fetch recent history for prompt context (last 10 messages)
-        history = db.query(Message).filter(
-            Message.character_id == request.character_id,
-            Message.id != user_msg.id
-        ).order_by(Message.timestamp.desc()).limit(10).all()
-        history.reverse()
-
-        # 1. Fetch Character and State
-        t1 = time.perf_counter()
-        character = db.query(Character).filter(Character.id == request.character_id).first()
-        if not character:
-            character = Character(
-                id=1, 
-                name="Gemi", 
-                description="A playful and feisty entity who enjoys testing boundaries."
-            )
-            db.add(character)
-            db.commit()
-            db.refresh(character)
-            
-            state = AgentState(character_id=character.id)
-            db.add(state)
-            db.commit()
-            db.refresh(state)
-        else:
-            state = character.state
-            if not state:
-                state = AgentState(character_id=character.id)
-                db.add(state)
-                db.commit()
-                db.refresh(state)
-        dur_char = time.perf_counter() - t1
-
-        # 2. Synchronize Physical State (Hunger, Energy, etc.)
-        t2 = time.perf_counter()
-        from app.core.world import WorldEngine
-        from app.core.evolution import ensure_stats_integrity
-        world = WorldEngine()
+        character = db.query(Character).filter(Character.id == request.character_id).first() or Character.get_default(db)
+        if not character.id: db.add(character); db.flush()
         
-        state.stats = ensure_stats_integrity(state.stats)
-        state.stats = world.update_needs(state.stats, datetime.now())
-        db.commit()
+        state = character.state or AgentState(character_id=character.id)
+        if not state.id: db.add(state); db.flush()
 
-        state_data = {
-            "location": state.location,
-            "mood": state.mood,
-            "clothes": state.clothes,
-            "stats": state.stats
-        }
-        dur_world = time.perf_counter() - t2
+        # 2. Update Physical Needs & History
+        state.stats = update_needs(state.stats, datetime.now())
+        db.add(Message(character_id=character.id, user_id=user.id, role="user", content=request.message))
 
-        # 3. Assemble Prompt
-        t3 = time.perf_counter()
-        prompt = await brain.build_prompt(request.message, character, state_data, user=user, history=history)
-        dur_brain = time.perf_counter() - t3
-        
-        # 4. Request Inference
-        t4 = time.perf_counter()
-        result = await llama.complete(prompt, grammar=None)
-        dur_llm = time.perf_counter() - t4
-        
-        reply = result.get("content", "").strip()
-        logger.debug(f"RAW LLM CONTENT: {reply}")
-        
-        # Save AI response to history
-        ai_msg = Message(
-            character_id=character.id,
-            user_id=user.id,
-            role="assistant",
-            content=reply
-        )
-        db.add(ai_msg)
-        db.commit()
+        # 3. Assemble Context & History
+        # Get history (excluding current user message)
+        hist_msgs = db.query(Message).filter(Message.character_id == character.id).order_by(Message.timestamp.desc()).limit(11).all()
+        history = list(reversed(hist_msgs[1:]))
 
-        # 5. Trigger Consciousness Layer in Background
+        prompt = await brain.build_prompt(request.message, character, {"location": state.location, "mood": state.mood, "stats": state.stats}, user=user, history=history)
+        
+        # 4. LLM Completion
+        result = await llama.complete(prompt)
+        reply = result.get("content", "...").strip()
+
+        # 5. Persist AI Response
+        db.add(Message(character_id=character.id, user_id=user.id, role="assistant", content=reply))
+        db.commit() # Single commit for all changes
+        
         background_tasks.add_task(run_consciousness_layer, character.id, request.message, reply)
 
-        total_dur = time.perf_counter() - start_total
-        latency_map = {}
-        if settings.DEBUG_LATENCY:
-            latency_map = {
-                "user": dur_user,
-                "char": dur_char,
-                "world": dur_world,
-                "brain": dur_brain,
-                "llm": dur_llm,
-                "total": total_dur
-            }
-
-        logger.debug(
-            f"LATENCY BREAKDOWN [{request.character_id}]: "
-            f"User: {dur_user:.3f}s | "
-            f"Char: {dur_char:.3f}s | "
-            f"World: {dur_world:.3f}s | "
-            f"Brain(RAG): {dur_brain:.3f}s | "
-            f"LLM: {dur_llm:.3f}s | "
-            f"TOTAL: {total_dur:.3f}s"
-        )
-
-        return ChatResponse(
-            reply=reply if reply else "...",
-            stats=state.stats,
-            latency=latency_map
-        )
+        latency = {"total": time.perf_counter() - start} if settings.DEBUG_LATENCY else {}
+        return ChatResponse(reply=reply, stats=state.stats, latency=latency)
     except Exception as e:
-        import logging
-        logging.exception(f"CRITICAL ERROR in /chat: {e}")
+        db.rollback()
+        logger.exception(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest, db: Session = Depends(get_db)):
-    from app.db.models import User, Message
+async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.is_active == True).first() or User(name="User", gender="Unknown")
+    if not user.id: db.add(user); db.flush()
 
-    user = db.query(User).filter(User.is_active == True).first()
-    if not user:
-        user = User(name="User", gender="Unknown")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+    character = db.query(Character).filter(Character.id == request.character_id).first() or Character(name="Gemi", description="Playful entity.")
+    if not character.id: db.add(character); db.flush()
 
-    user_msg = Message(
-        character_id=request.character_id,
-        user_id=user.id,
-        role="user",
-        content=request.message
-    )
-    db.add(user_msg)
+    state = character.state or AgentState(character_id=character.id)
+    if not state.id: db.add(state); db.flush()
+
+    state.stats = update_needs(state.stats, datetime.now())
+    db.add(Message(character_id=character.id, user_id=user.id, role="user", content=request.message))
     db.commit()
 
-    history = db.query(Message).filter(
-        Message.character_id == request.character_id,
-        Message.id != user_msg.id
-    ).order_by(Message.timestamp.desc()).limit(10).all()
-    history.reverse()
-
-    character = db.query(Character).filter(Character.id == request.character_id).first()
-    if not character:
-        character = Character(
-            id=1,
-            name="Gemi",
-            description="A playful and feisty entity who enjoys testing boundaries."
-        )
-        db.add(character)
-        db.commit()
-        db.refresh(character)
-
-        state = AgentState(character_id=character.id)
-        db.add(state)
-        db.commit()
-        db.refresh(state)
-    else:
-        state = character.state
-        if not state:
-            state = AgentState(character_id=character.id)
-            db.add(state)
-            db.commit()
-            db.refresh(state)
-
-    from app.core.world import WorldEngine
-    from app.core.evolution import ensure_stats_integrity
-    world = WorldEngine()
-
-    state.stats = ensure_stats_integrity(state.stats)
-    state.stats = world.update_needs(state.stats, datetime.now())
-    db.commit()
-
-    state_data = {
-        "location": state.location,
-        "mood": state.mood,
-        "clothes": state.clothes,
-        "stats": state.stats
-    }
-
-    prompt = await brain.build_prompt(request.message, character, state_data, user=user, history=history)
+    history = db.query(Message).filter(Message.character_id == character.id).order_by(Message.timestamp.desc()).limit(11).all()
+    prompt = await brain.build_prompt(request.message, character, {"location": state.location, "mood": state.mood, "stats": state.stats}, user=user, history=reversed(history[1:]))
 
     async def generate():
-        import asyncio
-        from app.db.database import SessionLocal
         full_reply = ""
-        try:
-            async for token in llama.complete_stream(prompt, grammar=None):
-                full_reply += token
-                yield f"data: {json.dumps({'token': token})}\n\n"
-        except Exception as e:
-            logger.exception(f"Stream error: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        finally:
-            if full_reply.strip():
-                session = SessionLocal()
-                try:
-                    ai_msg = Message(
-                        character_id=character.id,
-                        user_id=user.id,
-                        role="assistant",
-                        content=full_reply
-                    )
-                    session.add(ai_msg)
-                    session.commit()
-                finally:
-                    session.close()
-
-                asyncio.create_task(run_consciousness_layer(character.id, request.message, full_reply))
-
+        async for token in llama.complete_stream(prompt):
+            full_reply += token
+            yield f"data: {json.dumps({'token': token})}\n\n"
+        
+        if full_reply.strip():
+            inner_db = SessionLocal()
+            try:
+                inner_db.add(Message(character_id=character.id, user_id=user.id, role="assistant", content=full_reply))
+                inner_db.commit()
+                background_tasks.add_task(run_consciousness_layer, character.id, request.message, full_reply)
+                
+                # Refresh character to get updated stats (from the consciousness layer if it ran sync, 
+                # but usually we want the current physical drain state at minimum)
+                inner_db.refresh(character)
+                final_stats = character.state.stats if character.state else {}
+                yield f"data: {json.dumps({'done': True, 'stats': final_stats})}\n\n"
+            finally:
+                inner_db.close()
+        else:
             yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

@@ -9,9 +9,8 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, userName, onProfileClick }) => {
   const navItems = [
-    { id: 'library', label: 'Library', icon: 'book' },
+    { id: 'characters', label: 'Library', icon: 'book' },
     { id: 'chat', label: 'Active Stories', icon: 'chat_bubble' },
-    { id: 'characters', label: 'Characters', icon: 'person' },
     { id: 'archives', label: 'Archives', icon: 'inventory_2' },
   ]
 
@@ -56,18 +55,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, userName, onPro
         ))}
       </ul>
 
-      {/* CTA Button at Bottom */}
-      <div className="mt-auto pt-md">
-        <button className="w-full py-2 px-4 border border-outline-variant text-primary rounded font-body-md text-body-md hover:border-outline hover:bg-surface-container transition-all flex justify-center items-center gap-xs">
-          <span className="material-symbols-outlined text-[18px]">add</span>
-          New Story
-        </button>
-      </div>
-
       {/* Profile area */}
       <div 
         onClick={onProfileClick}
-        className="mt-4 pt-sm border-t border-outline-variant flex items-center gap-sm px-xs cursor-pointer hover:opacity-80 transition-opacity"
+        className="mt-auto pt-sm border-t border-outline-variant flex items-center gap-sm px-xs cursor-pointer hover:opacity-80 transition-opacity"
       >
         <div className="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center overflow-hidden shrink-0">
           <span className="material-symbols-outlined text-on-surface-variant text-sm">person</span>

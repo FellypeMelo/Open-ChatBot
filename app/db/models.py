@@ -31,17 +31,20 @@ class Character(Base):
     description = Column(Text)
     short_description = Column(Text)
     persona_prompt = Column(Text)
-    lust = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
 
     # Relationships
     tags = relationship("Tag", secondary=character_tags, backref="characters")
     state = relationship("AgentState", back_populates="character", uselist=False, cascade="all, delete-orphan")
 
+    @classmethod
+    def get_default(cls, db):
+        return db.query(cls).first() or cls(name="Gemi", description="Playful entity.")
+
 class AgentState(Base):
     __tablename__ = "agent_states"
     id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), unique=True)
+    character_id = Column(Integer, ForeignKey("characters.id"), unique=True, index=True)
     location = Column(String, default="Living Room")
     mood = Column(String, default="Neutral")
     clothes = Column(String, default="Casual")
@@ -54,6 +57,7 @@ class AgentState(Base):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.stats:
+            from datetime import datetime
             self.stats = {
                 "energy": 100,
                 "hunger": 0,

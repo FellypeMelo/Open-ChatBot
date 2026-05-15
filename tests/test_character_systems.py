@@ -11,7 +11,6 @@ def test_character_crud(client, db_session):
     data = response.json()
     char_id = data["id"]
     assert data["name"] == "Luna"
-    assert data["lust"] == 0
 
     # 2. Read
     response = client.get(f"/characters/{char_id}")
@@ -26,13 +25,11 @@ def test_character_crud(client, db_session):
     # 4. Update
     response = client.put(f"/characters/{char_id}", json={
         "name": "Luna Updated",
-        "description": "A mysterious space traveler.",
-        "lust": 80
+        "description": "A mysterious space traveler."
     })
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Luna Updated"
-    assert data["lust"] == 80
 
     # 5. Delete
     response = client.delete(f"/characters/{char_id}")
@@ -40,40 +37,6 @@ def test_character_crud(client, db_session):
     
     response = client.get(f"/characters/{char_id}")
     assert response.status_code == 404
-
-def test_character_creation_with_lust(client, db_session):
-    """Character created with a lust value should persist it."""
-    response = client.post("/characters/", json={
-        "name": "Selene",
-        "description": "A seductive siren.",
-        "lust": 90
-    })
-    assert response.status_code == 200
-    data = response.json()
-    assert data["lust"] == 90
-
-    # Verify it persists on read
-    char_id = data["id"]
-    response = client.get(f"/characters/{char_id}")
-    assert response.json()["lust"] == 90
-
-def test_character_update_preserves_lust(client, db_session):
-    """Updating a character should preserve or update lust."""
-    response = client.post("/characters/", json={
-        "name": "Test",
-        "description": "Test character",
-        "lust": 50
-    })
-    char_id = response.json()["id"]
-
-    # Update with new lust value
-    response = client.put(f"/characters/{char_id}", json={
-        "name": "Test Updated",
-        "description": "Updated description",
-        "lust": 20
-    })
-    assert response.status_code == 200
-    assert response.json()["lust"] == 20
 
 def test_tag_assignment(client, db_session):
     # Setup: Create a tag
@@ -94,9 +57,9 @@ def test_tag_assignment(client, db_session):
     assert data["tags"][0]["label"] == "Playful"
 
 def test_auto_tag_generation(client, db_session):
-    # Mocking LLM suggestion (Profiler uses suggestions)
+    # Mocking LLM suggestion (Profiler is now in Brain)
     from unittest.mock import patch
-    with patch("app.core.profiler.Profiler.suggest_tags") as mock_suggest:
+    with patch("app.core.bridge.Brain.suggest_tags") as mock_suggest:
         mock_suggest.return_value = [1] # Assume tag 1 is suggested
         
         response = client.post("/characters/auto-tag", json={
@@ -104,3 +67,20 @@ def test_auto_tag_generation(client, db_session):
         })
         assert response.status_code == 200
         assert response.json() == [1]
+
+@pytest.mark.asyncio
+async def test_brain_reflection():
+    from app.core.bridge import Brain
+    from unittest.mock import AsyncMock, MagicMock
+    import json
+    
+    mock_vector = MagicMock()
+    mock_llm = AsyncMock()
+    brain = Brain(vector_store=mock_vector, llm_client=mock_llm)
+    
+    response_data = {"summary": "Pizza talk.", "facts": ["Likes pizza"], "traits": ["hungry"]}
+    mock_llm.complete.return_value = {"content": json.dumps(response_data)}
+    
+    result = await brain.reflect([{"role": "user", "content": "I like pizza"}])
+    assert result["summary"] == "Pizza talk."
+    assert "hungry" in result["traits"]

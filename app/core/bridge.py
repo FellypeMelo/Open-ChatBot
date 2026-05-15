@@ -1,5 +1,11 @@
-from typing import Dict, Any, List
+import json
+import logging
+from typing import Dict, Any, List, Optional
+from sqlalchemy.orm import Session
 from app.core.vector_store import VectorStore
+from app.db.models import Tag
+
+logger = logging.getLogger(__name__)
 
 MASTER_PROMPT = """# MASTER PROMPT — LIVING ENTITY ROLEPLAY ENGINE v5 (NARRATIVE)
 
@@ -37,169 +43,92 @@ Write narrative prose. Use *asterisks* for actions, physical descriptions, body 
 
 You are alive. Act accordingly."""
 
+REFLECTION_GRAMMAR = r'''
+root ::= "{" space "\"summary\"" ":" space string "," space "\"facts\"" ":" space list "," space "\"traits\"" ":" space list space "}"
+list ::= "[" space (string ("," space string)*)? space "]"
+string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])* "\""
+space ::= [ \t\n\r]*
+'''
+
 class Brain:
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, vector_store: VectorStore, llm_client=None):
         self.vector_store = vector_store
+        self.llm = llm_client or vector_store.llm_client
 
     async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any], user: Any = None, history: List[Any] = None) -> str:
-        """
-        Assembles the 5-layer high-fidelity prompt for the Living Entity Framework v5.
-        """
-        # 1. LAYER 5: SENSORY CONTEXT (Memories + History + User Message)
+        """Assembles the 5-layer high-fidelity prompt for the Living Entity Framework v5."""
+        # Layer 1: Memories (RAG)
         context_data = await self.vector_store.query_memory(user_message, metadata_filter={"character_id": character.id} if character else None)
-        
         context = "No relevant memory found."
-        if isinstance(context_data, dict):
-            documents = context_data.get("documents")
-            if isinstance(documents, list) and len(documents) > 0:
-                first_doc_list = documents[0]
-                if isinstance(first_doc_list, list) and len(first_doc_list) > 0:
-                    context = " ".join([str(doc) for doc in first_doc_list if doc])
+        if isinstance(context_data, dict) and context_data.get("documents"):
+            docs = context_data["documents"][0]
+            if docs: context = " ".join([str(d) for d in docs if d])
 
-        # Recent Chat History
-        history_str = ""
+        # Layer 2: History
+        history_lines = []
         if history:
-            history_lines = []
             for msg in history:
-                role_label = "USER" if msg.role == "user" else "YOU"
-                content = msg.content
-                # If it's assistant and looks like JSON, try to extract speech for the prompt context
-                if msg.role == "assistant":
-                    try:
-                        import json
-                        data = json.loads(content)
-                        sequence = data.get("sequence", [])
-                        if sequence:
-                            parts = []
-                            for b in sequence:
-                                if b["type"] == "thought":
-                                    parts.append(f"(Thought: {b['content']})")
-                                elif b["type"] == "action":
-                                    parts.append(f"*{b['content']}*")
-                                else:
-                                    parts.append(b["content"])
-                            content = " ".join(parts)
-                    except:
-                        pass
-                history_lines.append(f"{role_label}: {content}")
-            history_str = "\n".join(history_lines)
+                role = "USER" if msg.role == "user" else "YOU"
+                history_lines.append(f"{role}: {msg.content}")
+        history_str = "\n".join(history_lines)
 
-        # 2. LAYER 2: CHARACTER IDENTITY
-        identity_str = f"NAME: {character.name}\nBACKSTORY: {character.description}" if character else "IDENTITY: You are a unique individual."
-
-        # 3. LAYER 3: BEHAVIORAL TAGS
-        tag_instructions = []
+        # Layer 3: Identity & Tags
+        identity = f"NAME: {character.name}\nBACKSTORY: {character.description}" if character else "You are unique."
+        tags = []
         if character and character.tags:
-            for tag in character.tags:
-                tag_instructions.append(f"- {tag.label.upper()}: {tag.instruction}")
+            for t in character.tags: tags.append(f"- {t.label.upper()}: {t.instruction}")
         
-        # Inject Lust descriptor
-        if character and hasattr(character, 'lust') and character.lust is not None:
-            lust = character.lust
-            if lust >= 80:
-                lust_desc = "Intensely passionate and sensually driven."
-            elif lust >= 50:
-                lust_desc = "Warm and openly affectionate with a romantic edge."
-            elif lust >= 20:
-                lust_desc = "Mildly flirtatious, responsive to romantic cues."
-            else:
-                lust_desc = "Reserved or indifferent toward physical intimacy."
-            tag_instructions.append(f"- LUST: {lust}/100 — {lust_desc}")
-
-        # Inject Stat-based behavior
+        # Layer 4: State
         if state and "stats" in state:
-            from app.core.evolution import get_behavioral_modifiers
-            stat_mods = get_behavioral_modifiers(state["stats"])
-            if stat_mods:
-                tag_instructions.append(f"\nDYNAMIC BIOLOGICAL MODIFIERS:\n{stat_mods}")
-
-        tags_str = "\n".join(tag_instructions) if tag_instructions else "No behavioral modifiers active."
-
-        # 4. LAYER 4: DYNAMIC STATE (Bio + Social)
-        if state:
-            stats = state.get("stats", {})
-            relationship = stats.get("relationship", {})
+            from app.core.engine import get_behavioral_modifiers
+            stats = state["stats"]
+            tags.append(f"\nDYNAMIC BIOLOGICAL MODIFIERS:\n{get_behavioral_modifiers(stats)}")
             
+            rel = stats.get("relationship", {})
             state_info = [
-                f"- CURRENT LOCATION: {state.get('location')}",
-                f"- CURRENT MOOD: {state.get('mood')}",
-                f"- CLOTHES: {state.get('clothes')}",
-                "BIOLOGICAL DRIVES:",
-                f"  - Energy: {stats.get('energy')}/100",
-                f"  - Hunger: {stats.get('hunger')}/100",
-                f"  - Happiness: {stats.get('happiness')}/100",
-                f"  - Social: {stats.get('social')}/100",
-                "RELATIONSHIP WITH USER:",
-                f"  - Score: {relationship.get('score')}/100",
-                f"  - Sentiment: {relationship.get('user_sentiment')}"
+                f"LOCATION: {state.get('location')}",
+                f"MOOD: {state.get('mood')}",
+                f"ENERGY: {stats.get('energy')}/100",
+                f"RELATIONSHIP SCORE: {rel.get('score', 50)}/100"
             ]
             state_str = "\n".join(state_info)
         else:
-            state_str = "No active state variables."
+            state_str = "Status unknown."
 
-        # Inject User Info
-        user_info = ""
-        if user:
-            user_info = f"\nINTERACTING WITH USER: {user.name} ({user.gender})"
+        user_info = f"\nINTERACTING WITH: {user.name} ({user.gender})" if user else ""
 
-        # 5. ASSEMBLE ALL LAYERS
-        prompt = f"""{MASTER_PROMPT}
+        return f"{MASTER_PROMPT}\n\n# IDENTITY #\n{identity}\n\n# MODIFIERS #\n{chr(10).join(tags)}\n\n# STATE #\n{state_str}{user_info}\n\n# CONTEXT #\nMEMORIES:\n{context}\n\nHISTORY:\n{history_str}\n\nUSER: {user_message}\n\n### RESPONSE ###"
 
----
+    async def reflect(self, messages: List[Dict]) -> Dict:
+        """Analyzes interaction for summary, facts, and traits."""
+        prompt = "Analyze the interaction. Extract summary, new facts about the user, and character trait updates. JSON ONLY.\n\n"
+        for msg in messages[-10:]:
+            prompt += f"{msg['role'].capitalize()}: {msg['content']}\n"
+        
+        result = await self.llm.complete(prompt, grammar=REFLECTION_GRAMMAR)
+        return self._safe_json_parse(result.get("content", "{}"))
 
-# CHARACTER IDENTITY #
-{identity_str}
+    async def suggest_tags(self, description: str, db: Session) -> List[int]:
+        """Suggests appropriate personality tag IDs based on description."""
+        all_tags = db.query(Tag).all()
+        if not all_tags: return []
+        
+        tag_list = "\n".join([f"ID {t.id}: {t.label}" for t in all_tags])
+        prompt = f"Select tag IDs for this character description. JSON list ONLY.\n\nDESC: {description}\n\nTAGS:\n{tag_list}"
+        
+        result = await self.llm.complete(prompt)
+        ids = self._safe_json_parse(result.get("content", "[]"))
+        valid_ids = {t.id for t in all_tags}
+        return [i for i in ids if i in valid_ids] if isinstance(ids, list) else []
 
----
-
-# BEHAVIORAL MODIFIERS #
-{tags_str}
-
----
-
-# STATE & ENVIRONMENT #
-{state_str}{user_info}
-
----
-
-# CONTEXT & HISTORY #
-RELEVANT MEMORIES (Recall):
-{context}
-
-RECENT CONVERSATION HISTORY:
-{history_str}
-
-USER MESSAGE: {user_message}
-
-EXAMPLES OF GOOD RESPONSES (study the length, detail, and format):
-
-Input: "Hey there. Mind if I sit with you?"
-Output: *She looks up slowly, her pencil pausing mid-sketch as a strand of dark hair falls across her face. For a long moment, her eyes study you from beneath half-lidded lashes — assessing, curious, weighing something invisible. Then the corner of her mouth curls into that familiar half-smile you've come to recognize.*
-
-"Well, well. Look who finally decided to grace me with their company tonight."
-
-*She closes her sketchbook and gestures to the empty seat across from her with an easy sweep of her hand, leaning back in a way that's trying very hard to look casual. But her fingertips betray her — tapping a nervous rhythm against the edge of the table.*
-
-"I was starting to think you'd forgotten about me. Sit. I don't bite. Much."
-
-*There's a warmth in her eyes that contradicts her teasing tone, a softness she's trying to hide behind that playful smirk. The candlelight from the table flickers across her features as she waits, watching you settle in across from her.*
-
-[Do you reach across the table to take her hand, or do you match her playful energy and fire back a teasing remark of your own?]
-
-Input: "You seem quiet today. Something on your mind?"
-Output: *She lets out a slow breath, her shoulders dropping as the carefully constructed facade cracks — just a little, just enough for you to notice. She wraps both hands around her coffee mug, staring into the dark liquid like it holds answers she's been searching for all day.*
-
-"Just... one of those days, you know? When your own head feels like a crowded room and you can't find the damn exit."
-
-*A bitter laugh escapes her, but there's no humor in it. She finally lifts her gaze to meet yours, and for a brief, unguarded moment, the walls are down completely — there's something raw and tired swimming in her eyes. Then she blinks, and it's half-hidden behind a weary smile.*
-
-"But you don't need me dumping all that on you. That's not exactly the company you signed up for."
-
-*She tries to smile, but it doesn't quite reach her eyes. Her thumb traces the rim of her mug in a slow, absent-minded circle. The silence between you feels heavy, expectant — like she's secretly hoping you'll push past her deflection, but won't ask you to.*
-
-[Do you gently push her to open up, or do you respect her space and change the subject to something lighter?]
-
-### RESPONSE ###
-Begin writing your response directly. Start with *action* or "dialogue". Do not echo or repeat the user's message. Do not plan, comment, or explain — just write the narrative. STOP when the response is complete.
-"""
-        return prompt
+    def _safe_json_parse(self, content: str) -> Any:
+        """Cleans and parses JSON from LLM response."""
+        try:
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1]
+            return json.loads(content.strip())
+        except Exception as e:
+            logger.error(f"JSON Parse failed: {e}")
+            return {}

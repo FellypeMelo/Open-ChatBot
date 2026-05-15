@@ -11,29 +11,14 @@ interface CharacterData {
   name: string
   description: string
   tags: Tag[]
-  lust: number
 }
 
 interface CharacterCreatorProps {
   onClose: () => void
-  onCreate: (name: string, description: string, tagIds: number[]) => void
-  onUpdate: (id: number, name: string, description: string, tagIds: number[], lust: number) => void
+  onCreate: (name: string, description: string, tagIds: number[]) => Promise<void> | void
+  onUpdate: (id: number, name: string, description: string, tagIds: number[]) => Promise<void> | void
   tags: Tag[]
   editingCharacter?: CharacterData | null
-}
-
-const LUST_LABELS: { min: number; label: string }[] = [
-  { min: 80, label: 'Intense' },
-  { min: 50, label: 'Affectionate' },
-  { min: 20, label: 'Mild' },
-  { min: 0, label: 'Reserved' },
-]
-
-function getLustLabel(value: number): string {
-  for (const entry of LUST_LABELS) {
-    if (value >= entry.min) return entry.label
-  }
-  return 'Reserved'
 }
 
 const CharacterCreator: React.FC<CharacterCreatorProps> = ({
@@ -48,17 +33,19 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>(
     editingCharacter?.tags.map((t) => t.id) ?? []
   )
-  const [lust, setLust] = useState(editingCharacter?.lust ?? 0)
+  const [isSaving, setIsSaving] = useState(false)
 
   const isEditing = !!editingCharacter
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSaving(true)
     if (isEditing && editingCharacter) {
-      onUpdate(editingCharacter.id, name, description, selectedTagIds, lust)
+      await onUpdate(editingCharacter.id, name, description, selectedTagIds)
     } else {
-      onCreate(name, description, selectedTagIds)
+      await onCreate(name, description, selectedTagIds)
     }
+    setIsSaving(false)
   }
 
   const toggleTag = (tagId: number) => {
@@ -139,40 +126,23 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({
                 </div>
               )}
             </div>
-
-            <div className="flex flex-col gap-xs">
-              <div className="flex justify-between items-baseline">
-                <label className="font-label-sm text-label-sm text-[#71717A] uppercase">Lust</label>
-                <span className="font-body-sm text-body-sm text-primary">{lust} — {getLustLabel(lust)}</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={lust}
-                onChange={(e) => setLust(Number(e.target.value))}
-                className="w-full accent-primary"
-              />
-              <div className="flex justify-between text-label-sm text-on-surface-variant/50">
-                <span>Reserved</span>
-                <span>Intense</span>
-              </div>
-            </div>
           </div>
 
           <div className="flex justify-end items-center gap-md pt-md border-t border-[#1A1A1A] mt-sm">
             <button
               onClick={onClose}
-              className="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors"
+              disabled={isSaving}
+              className="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors disabled:opacity-50"
               type="button"
             >
               Cancel
             </button>
             <button
-              className="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors"
+              disabled={isSaving}
+              className="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors disabled:opacity-50 min-w-[120px]"
               type="submit"
             >
-              {isEditing ? 'Save Changes' : 'Initialize'}
+              {isSaving ? 'Saving...' : (isEditing ? 'Save Changes' : 'Initialize')}
             </button>
           </div>
         </form>

@@ -5,20 +5,21 @@ from pydantic import BaseModel
 
 from app.db.database import get_db
 from app.db.models import Character, AgentState, Tag
-
 from app.core.llm import LlamaClient
-from app.core.profiler import Profiler
+from app.core.bridge import Brain
+from app.core.vector_store import VectorStore
 
 router = APIRouter()
 llama = LlamaClient()
-profiler = Profiler(llama)
+vector_store = VectorStore(llm_client=llama)
+brain = Brain(vector_store=vector_store)
 
 class DescriptionRequest(BaseModel):
     description: str
 
 @router.post("/auto-tag", response_model=List[int])
 async def auto_tag_character(req: DescriptionRequest, db: Session = Depends(get_db)):
-    return await profiler.suggest_tags(req.description, db)
+    return await brain.suggest_tags(req.description, db)
 
 class TagSchema(BaseModel):
     id: int
@@ -28,17 +29,24 @@ class TagSchema(BaseModel):
     class Config:
         from_attributes = True
 
+class StateResponse(BaseModel):
+    location: str
+    mood: str
+    clothes: str
+    stats: dict
+
+    class Config:
+        from_attributes = True
+
 class CharacterCreate(BaseModel):
     name: str
     description: str
     tag_ids: List[int] = []
-    lust: int = 0
 
 class CharacterUpdate(BaseModel):
     name: str
     description: str
     tag_ids: List[int] = []
-    lust: int = 0
 
 class CharacterResponse(BaseModel):
     id: int
@@ -46,7 +54,7 @@ class CharacterResponse(BaseModel):
     description: str
     is_active: bool
     tags: List[TagSchema] = []
-    lust: int = 0
+    state: Optional[StateResponse] = None
 
     class Config:
         from_attributes = True
@@ -55,8 +63,7 @@ class CharacterResponse(BaseModel):
 def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
     new_char = Character(
         name=char.name,
-        description=char.description,
-        lust=char.lust
+        description=char.description
     )
     
     # Associate tags
@@ -83,7 +90,6 @@ def update_character(char_id: int, char: CharacterUpdate, db: Session = Depends(
     
     existing.name = char.name
     existing.description = char.description
-    existing.lust = char.lust
     
     if char.tag_ids is not None:
         tags = db.query(Tag).filter(Tag.id.in_(char.tag_ids)).all()

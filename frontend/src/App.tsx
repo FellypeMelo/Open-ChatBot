@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
-import LibraryView from './components/LibraryView'
 import CharactersView from './components/CharactersView'
 import ChatView from './components/ChatView'
 import TagManagementView from './components/TagManagementView'
 import CharacterCreator from './components/CharacterCreator'
 import UserProfileModal from './components/UserProfileModal'
 import TagCreator from './components/TagCreator'
+import ErrorBoundary from './components/ErrorBoundary'
 
 interface Tag {
   id: number
@@ -19,7 +19,15 @@ interface Character {
   name: string
   description: string
   tags: Tag[]
-  lust: number
+  state?: {
+    stats: {
+      energy: number
+      hunger: number
+      relationship: {
+        score: number
+      }
+    }
+  }
 }
 
 interface User {
@@ -35,31 +43,32 @@ interface Message {
   timestamp?: Date
 }
 
-interface Stats {
-  energy: number
-  hunger: number
-  relationship: {
-    score: number
-  }
-}
+type View = 'chat' | 'characters' | 'archives'
+type ModalType = 'character' | 'user' | 'tag' | null
 
-type View = 'library' | 'chat' | 'characters' | 'archives'
+interface Toast {
+  message: string
+  type: 'success' | 'error'
+}
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('characters')
+  const [activeModal, setActiveModal] = useState<ModalType>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [selectedCharId, setSelectedCharId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [showCharModal, setShowCharModal] = useState(false)
-  const [showUserModal, setShowUserModal] = useState(false)
-  const [showTagModal, setShowTagModal] = useState(false)
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null)
   const [user, setUser] = useState<User | null>(null)
-  const [, setStats] = useState<Stats | null>(null)
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
 
   const fetchUser = useCallback(async () => {
     try {
@@ -67,7 +76,7 @@ function App() {
       const data = await response.json()
       setUser(data)
     } catch (err) {
-      console.error('Failed to fetch user', err)
+      showToast('Failed to fetch user.', 'error')
     }
   }, [])
 
@@ -80,7 +89,7 @@ function App() {
         setSelectedCharId(data[0].id)
       }
     } catch (err) {
-      console.error('Failed to fetch characters', err)
+      showToast('Failed to fetch characters.', 'error')
     }
   }, [selectedCharId])
 
@@ -90,7 +99,7 @@ function App() {
       const data = await response.json()
       setTags(data)
     } catch (err) {
-      console.error('Failed to fetch tags', err)
+      showToast('Failed to fetch tags.', 'error')
     }
   }, [])
 
@@ -128,9 +137,10 @@ function App() {
       })
       const data = await response.json()
       setUser(data)
-      setShowUserModal(false)
+      setActiveModal(null)
+      showToast('Profile updated.')
     } catch (err) {
-      console.error('Failed to update user', err)
+      showToast('Failed to update profile.', 'error')
     }
   }
 
@@ -143,11 +153,12 @@ function App() {
       })
       const data = await response.json()
       setTags(prev => [...prev, data])
-      setShowTagModal(false)
+      setActiveModal(null)
       setEditingTag(null)
+      showToast('Tag created.')
       return data
     } catch (err) {
-      console.error('Failed to create tag', err)
+      showToast('Failed to create tag.', 'error')
       return null
     }
   }
@@ -161,10 +172,11 @@ function App() {
       })
       const data = await response.json()
       setTags((prev) => prev.map((tag) => (tag.id === id ? data : tag)))
-      setShowTagModal(false)
+      setActiveModal(null)
       setEditingTag(null)
+      showToast('Tag updated.')
     } catch (err) {
-      console.error('Failed to update tag', err)
+      showToast('Failed to update tag.', 'error')
     }
   }
 
@@ -172,8 +184,21 @@ function App() {
     try {
       await fetch(`/tags/${id}`, { method: 'DELETE' })
       setTags((prev) => prev.filter((tag) => tag.id !== id))
+      showToast('Tag deleted.')
     } catch (err) {
-      console.error('Failed to delete tag', err)
+      showToast('Failed to delete tag.', 'error')
+    }
+  }
+
+  const deleteCharacter = async (id: number) => {
+    if (!window.confirm('Delete this character? This action is permanent.')) return
+    try {
+      await fetch(`/characters/${id}`, { method: 'DELETE' })
+      setCharacters(prev => prev.filter(c => c.id !== id))
+      if (selectedCharId === id) setSelectedCharId(null)
+      showToast('Character deleted.')
+    } catch (err) {
+      showToast('Failed to delete character.', 'error')
     }
   }
 
@@ -195,9 +220,10 @@ function App() {
       const data = await response.json()
       setCharacters((prev) => [...prev, data])
       setSelectedCharId(data.id)
-      setShowCharModal(false)
+      setActiveModal(null)
+      showToast('Character initialized.')
     } catch (err) {
-      console.error('Failed to create character', err)
+      showToast('Failed to create character.', 'error')
     }
   }
 
@@ -205,8 +231,7 @@ function App() {
     id: number,
     name: string,
     description: string,
-    tagIds: number[],
-    lust: number
+    tagIds: number[]
   ) => {
     try {
       const response = await fetch(`/characters/${id}`, {
@@ -215,51 +240,78 @@ function App() {
         body: JSON.stringify({
           name,
           description,
-          tag_ids: tagIds,
-          lust
+          tag_ids: tagIds
         })
       })
       const data = await response.json()
       setCharacters((prev) => prev.map((c) => (c.id === id ? data : c)))
-      setShowCharModal(false)
+      setActiveModal(null)
       setEditingCharacter(null)
+      showToast('Changes saved.')
     } catch (err) {
-      console.error('Failed to update character', err)
+      showToast('Failed to update character.', 'error')
     }
   }
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || !selectedCharId) return
 
-    const userMessage: Message = { role: 'user', content: input, timestamp: new Date() }
-    setMessages((prev) => [...prev, userMessage])
+    const userMsg: Message = { role: 'user', content: input, timestamp: new Date() }
+    const assistantMsg: Message = { role: 'assistant', content: '', timestamp: new Date() }
+    
+    setMessages(prev => [...prev, userMsg, assistantMsg])
     setInput('')
     setIsLoading(true)
 
     try {
-      const response = await fetch('/chat', {
+      const response = await fetch('/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: input,
-          character_id: selectedCharId
-        })
+        body: JSON.stringify({ message: input, character_id: selectedCharId })
       })
 
-      const data = await response.json()
-      console.log('API Response:', data);
-      const assistantMessage: Message = {
-        role: 'assistant',
-        content: data.reply,
-        timestamp: new Date()
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      let fullContent = ''
+
+      if (!reader) throw new Error('Reader unavailable')
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split('\n')
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.token) {
+              fullContent += data.token
+              setMessages(prev => {
+                const next = [...prev]
+                const last = next[next.length - 1]
+                if (last && last.role === 'assistant') {
+                  last.content = fullContent
+                }
+                return next
+              })
+            }
+            if (data.done && data.stats) {
+              setCharacters(prev => prev.map(c => 
+                c.id === selectedCharId ? { ...c, state: { ...c.state, stats: data.stats } } : c
+              ))
+            }
+          } catch (e) {
+            console.error('SSE Error', e)
+          }
+        }
       }
-      setMessages((prev) => [...prev, assistantMessage])
-      if (data.stats) {
-        setStats(data.stats)
-      }
+      fetchCharacters() // Refresh stats
     } catch (error) {
-      console.error('Error:', error)
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Erro ao comunicar com IA.', timestamp: new Date() }])
+      showToast('Lost connection to AI.', 'error')
+      setMessages(prev => [...prev.slice(0, -1), { role: 'assistant', content: 'Connection error.', timestamp: new Date() }])
     } finally {
       setIsLoading(false)
     }
@@ -280,108 +332,117 @@ function App() {
   }, {})
 
   return (
-    <div className="flex h-screen w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased">
-      <Sidebar
-        currentView={currentView}
-        setView={(v) => setCurrentView(v as View)}
-        userName={user?.name}
-        onProfileClick={() => setShowUserModal(true)}
-      />
+    <ErrorBoundary>
+      <div className="flex h-screen w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased">
+        <Sidebar
+          currentView={currentView}
+          setView={(v) => setCurrentView(v as View)}
+          userName={user?.name}
+          onProfileClick={() => setActiveModal('user')}
+        />
 
-      <main className="flex-1 md:ml-64 h-screen overflow-hidden flex flex-col">
-        {currentView === 'library' && (
-          <LibraryView
-            characters={characters}
-            onOpenStory={handleStartChat}
-            onNewStory={() => setShowCharModal(true)}
-          />
-        )}
+        <main className="flex-1 md:ml-64 h-screen overflow-hidden flex flex-col">
+          {currentView === 'characters' && (
+            <CharactersView
+              characters={characters}
+              selectedCharId={selectedCharId}
+              setSelectedCharId={setSelectedCharId}
+              onNewCharacter={() => setActiveModal('character')}
+              onChat={handleStartChat}
+              onEdit={(id) => {
+                const char = characters.find((c) => c.id === id)
+                if (char) {
+                  setEditingCharacter(char)
+                  setActiveModal('character')
+                }
+              }}
+              onDelete={deleteCharacter}
+            />
+          )}
 
-        {currentView === 'characters' && (
-          <CharactersView
-            characters={characters}
-            selectedCharId={selectedCharId}
-            setSelectedCharId={setSelectedCharId}
-            onNewCharacter={() => setShowCharModal(true)}
-            onChat={handleStartChat}
-            onEdit={(id) => {
-              const char = characters.find((c) => c.id === id)
-              if (char) setEditingCharacter(char)
-            }}
-          />
-        )}
+          {currentView === 'chat' && (
+            <ChatView
+              activeChar={activeChar}
+              messages={messages}
+              input={input}
+              setInput={setInput}
+              onSend={handleSend}
+              isLoading={isLoading}
+            />
+          )}
 
-        {currentView === 'chat' && (
-          <ChatView
-            activeChar={activeChar}
-            messages={messages}
-            input={input}
-            setInput={setInput}
-            onSend={handleSend}
-            isLoading={isLoading}
-          />
-        )}
+          {currentView === 'archives' && (
+            <TagManagementView
+              tags={tags}
+              onCreateTag={() => {
+                setEditingTag(null)
+                setActiveModal('tag')
+              }}
+              onEditTag={(tag) => {
+                setEditingTag(tag)
+                setActiveModal('tag')
+              }}
+              onDeleteTag={deleteTag}
+              usage={tagUsage}
+            />
+          )}
+        </main>
 
-        {currentView === 'archives' && (
-          <TagManagementView
+        {/* Modals */}
+        {(activeModal === 'character' || editingCharacter) && (
+          <CharacterCreator
             tags={tags}
-            onCreateTag={() => {
-              setEditingTag(null)
-              setShowTagModal(true)
+            onClose={() => {
+              setActiveModal(null)
+              setEditingCharacter(null)
             }}
-            onEditTag={(tag) => {
-              setEditingTag(tag)
-              setShowTagModal(true)
-            }}
-            onDeleteTag={deleteTag}
-            usage={tagUsage}
+            onCreate={createCharacter}
+            onUpdate={updateCharacter}
+            editingCharacter={editingCharacter}
           />
         )}
-      </main>
+        {activeModal === 'user' && (
+          <UserProfileModal
+            user={user}
+            onClose={() => setActiveModal(null)}
+            onUpdate={updateUser}
+          />
+        )}
+        {activeModal === 'tag' && (
+          <TagCreator
+            onClose={() => {
+              setActiveModal(null)
+              setEditingTag(null)
+            }}
+            onSubmit={(label, instruction) => {
+              if (editingTag) {
+                return updateTag(editingTag.id, label, instruction)
+              }
+              return createTag(label, instruction)
+            }}
+            tag={editingTag}
+          />
+        )}
 
-      {/* Modals */}
-      {(showCharModal || editingCharacter) && (
-        <CharacterCreator
-          tags={tags}
-          onClose={() => {
-            setShowCharModal(false)
-            setEditingCharacter(null)
-          }}
-          onCreate={createCharacter}
-          onUpdate={updateCharacter}
-          editingCharacter={editingCharacter}
-        />
-      )}
-      {showUserModal && (
-        <UserProfileModal
-          user={user}
-          onClose={() => setShowUserModal(false)}
-          onUpdate={updateUser}
-        />
-      )}
-      {showTagModal && (
-        <TagCreator
-          onClose={() => {
-            setShowTagModal(false)
-            setEditingTag(null)
-          }}
-          onSubmit={(label, instruction) => {
-            if (editingTag) {
-              return updateTag(editingTag.id, label, instruction)
-            }
-            return createTag(label, instruction)
-          }}
-          tag={editingTag}
-        />
-      )}
+        {/* Toast */}
+        {toast && (
+          <div className={`fixed bottom-20 left-1/2 -translate-x-1/2 px-lg py-sm rounded border shadow-xl z-[60] animate-in fade-in slide-in-from-bottom-4 duration-300 ${
+            toast.type === 'error' 
+              ? 'bg-error-container text-error border-error/20' 
+              : 'bg-surface-container-high text-primary border-primary/20'
+          }`}>
+            <p className="font-label-md text-label-md font-medium">{toast.message}</p>
+          </div>
+        )}
 
-      <button
-        onClick={() => setShowUserModal(true)}
-        className="fixed bottom-4 right-4 p-2 bg-surface-container border border-outline-variant rounded-full text-on-surface-variant hover:text-primary transition-colors z-30"
-      >
-        <span className="material-symbols-outlined">settings</span>
-      </button>
-    </div>
+        <button
+          onClick={() => setActiveModal('user')}
+          className="fixed bottom-4 right-4 p-2 bg-surface-container border border-outline-variant rounded-full text-on-surface-variant hover:text-primary transition-colors z-30"
+        >
+          <span className="material-symbols-outlined">settings</span>
+        </button>
+      </div>
+    </ErrorBoundary>
   )
 }
 

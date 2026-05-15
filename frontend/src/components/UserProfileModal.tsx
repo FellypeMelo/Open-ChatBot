@@ -8,16 +8,19 @@ interface User {
 interface UserProfileModalProps {
   user: User | null
   onClose: () => void
-  onUpdate: (name: string, gender: string) => void
+  onUpdate: (name: string, gender: string) => Promise<void> | void
 }
 
 const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUpdate }) => {
   const [name, setName] = useState(user?.name || '')
   const [gender, setGender] = useState(user?.gender || 'Male')
+  const [isSaving, setIsSaving] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    onUpdate(name, gender)
+    setIsSaving(true)
+    await onUpdate(name, gender)
+    setIsSaving(false)
   }
 
   return (
@@ -70,16 +73,18 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
           <div className="flex justify-end items-center gap-md pt-md border-t border-[#1A1A1A] mt-sm">
             <button 
               onClick={onClose}
-              className="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors" 
+              disabled={isSaving}
+              className="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors disabled:opacity-50" 
               type="button"
             >
               Cancel
             </button>
             <button 
-              className="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors" 
+              disabled={isSaving}
+              className="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors disabled:opacity-50 min-w-[120px]" 
               type="submit"
             >
-              Update Profile
+              {isSaving ? 'Updating...' : 'Update Profile'}
             </button>
           </div>
         </form>

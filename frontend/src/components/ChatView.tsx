@@ -12,6 +12,15 @@ interface Character {
   name: string
   description: string
   tags: { id: number; label: string }[]
+  state?: {
+    stats: {
+      energy: number
+      hunger: number
+      relationship: {
+        score: number
+      }
+    }
+  }
 }
 
 interface ChatViewProps {
@@ -51,9 +60,30 @@ const ChatView: React.FC<ChatViewProps> = ({
               <h1 className="font-display text-headline-lg font-semibold text-primary">
                 {activeChar?.name || 'Open Chat'}
               </h1>
-              <span className="font-label-sm text-label-sm text-on-surface-variant">
-                {activeChar?.description.substring(0, 40) || 'Narrative Session'}...
-              </span>
+              {activeChar?.state?.stats ? (
+                <div className="flex items-center gap-3 mt-1">
+                  <div className="flex items-center gap-1" title="Energy">
+                    <span className="material-symbols-outlined text-[14px] text-on-surface-variant">bolt</span>
+                    <div className="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: `${activeChar.state.stats.energy}%` }}></div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1" title="Hunger">
+                    <span className="material-symbols-outlined text-[14px] text-on-surface-variant">restaurant</span>
+                    <div className="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                      <div className="h-full bg-surface-tint" style={{ width: `${activeChar.state.stats.hunger}%` }}></div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1" title="Relationship Score">
+                    <span className="material-symbols-outlined text-[14px] text-on-surface-variant">favorite</span>
+                    <span className="font-label-sm text-label-sm text-on-surface-variant">{activeChar.state.stats.relationship.score}%</span>
+                  </div>
+                </div>
+              ) : (
+                <span className="font-label-sm text-label-sm text-on-surface-variant">
+                  {activeChar?.description.substring(0, 40) || 'Narrative Session'}...
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-sm">

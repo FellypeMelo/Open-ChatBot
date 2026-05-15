@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { memo } from 'react';
 
 interface MessageRendererProps {
   content: string;
 }
 
-const MessageRenderer: React.FC<MessageRendererProps> = ({ content }) => {
+const MessageRenderer: React.FC<MessageRendererProps> = memo(({ content }) => {
   // Parse *text* into italicized <em> tags for actions/thoughts
   const parts = content.split(/(\*[^*]+\*)/g);
 
@@ -19,6 +19,6 @@ const MessageRenderer: React.FC<MessageRendererProps> = ({ content }) => {
       })}
     </div>
   );
-};
+});
 
 export default MessageRenderer;

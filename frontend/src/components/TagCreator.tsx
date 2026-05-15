@@ -81,17 +81,18 @@ const TagCreator: React.FC<TagCreatorProps> = ({ onClose, onSubmit, tag }) => {
           <div className="flex justify-end items-center gap-md pt-md border-t border-[#1A1A1A] mt-sm">
             <button
               onClick={onClose}
-              className="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors"
+              disabled={isSaving}
+              className="font-body-md text-body-md text-on-surface px-md py-xs border border-transparent hover:border-[#1A1A1A] transition-colors disabled:opacity-50"
               type="button"
             >
               Cancel
             </button>
             <button
-              className="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors"
+              className="font-body-md text-body-md font-medium bg-primary text-surface-container-lowest px-lg py-xs hover:bg-on-surface transition-colors disabled:opacity-50 min-w-[120px]"
               type="submit"
               disabled={isSaving}
             >
-              {tag ? 'Save Changes' : 'Create Tag'}
+              {isSaving ? 'Saving...' : (tag ? 'Save Changes' : 'Create Tag')}
             </button>
           </div>
         </form>

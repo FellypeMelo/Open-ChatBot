@@ -67,17 +67,16 @@ class LlamaClient:
         if grammar:
             payload["grammar"] = grammar
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream("POST", f"{self.url}/completion", json=payload) as response:
-                response.raise_for_status()
-                import json
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = json.loads(line[6:])
-                        token = data.get("content", "")
-                        yield token
-                        if data.get("stop"):
-                            return
+        async with self.client.stream("POST", f"{self.url}/completion", json=payload, timeout=300.0) as response:
+            response.raise_for_status()
+            import json
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = json.loads(line[6:])
+                    token = data.get("content", "")
+                    yield token
+                    if data.get("stop"):
+                        return
 
     async def embed(self, text: str):
         try:

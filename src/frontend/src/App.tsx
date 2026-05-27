@@ -8,6 +8,7 @@ import UserProfileModal from './components/UserProfileModal'
 import TagCreator from './components/TagCreator'
 import ErrorBoundary from './components/ErrorBoundary'
 import * as api from './services/api'
+import { MessageNode } from './hooks/useMessageTree'
 
 interface Tag {
   id: number
@@ -38,12 +39,6 @@ interface User {
   is_active: boolean
 }
 
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  timestamp?: Date
-}
-
 type View = 'chat' | 'characters' | 'archives'
 type ModalType = 'character' | 'user' | 'tag' | null
 
@@ -59,7 +54,7 @@ function App() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [selectedCharId, setSelectedCharId] = useState<number | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<MessageNode[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
@@ -110,10 +105,7 @@ function App() {
   const fetchHistory = useCallback(async (charId: number) => {
     try {
       const data = await api.fetchHistory(charId)
-      setMessages(data.map((m: any) => ({
-        ...m,
-        timestamp: new Date(m.timestamp)
-      })))
+      setMessages(data)
     } catch (err) {
       console.error('Failed to fetch history', err)
     }
@@ -217,13 +209,32 @@ function App() {
     }
   }
 
-  const handleSend = async () => {
+  const handleSend = async (explicitParentId?: number) => {
     if (!input.trim() || isLoading || !selectedCharId) return
 
-    const userMsg: Message = { role: 'user', content: input, timestamp: new Date() }
-    const assistantMsg: Message = { role: 'assistant', content: '', timestamp: new Date() }
+    const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
+
+    // Temporary IDs for UI feedback
+    const userMsgId = Date.now()
+    const assistantMsgId = userMsgId + 1
+
+    const userMsg: MessageNode = { 
+      id: userMsgId,
+      parent_id: parentId,
+      role: 'user', 
+      content: input, 
+      variant_index: 0 
+    }
+    const assistantMsg: MessageNode = { 
+      id: assistantMsgId,
+      parent_id: userMsgId,
+      role: 'assistant', 
+      content: '', 
+      variant_index: 0 
+    }
     
     setMessages(prev => [...prev, userMsg, assistantMsg])
+    const currentInput = input
     setInput('')
     setIsLoading(true)
 
@@ -231,54 +242,95 @@ function App() {
       const response = await fetch('/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input, character_id: selectedCharId })
+        body: JSON.stringify({ 
+          message: currentInput, 
+          character_id: selectedCharId,
+          parent_id: parentId
+        })
       })
+      await handleStreamResponse(response)
+    } catch (error) {
+      showToast('Lost connection to AI.', 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      let fullContent = ''
+  const handleRegenerate = async (parentId: number) => {
+    if (isLoading || !selectedCharId) return
 
-      if (!reader) throw new Error('Reader unavailable')
+    const assistantMsgId = Date.now()
+    const assistantMsg: MessageNode = { 
+      id: assistantMsgId,
+      parent_id: parentId,
+      role: 'assistant', 
+      content: '', 
+      variant_index: 0 // Will be corrected by fetchHistory
+    }
+    
+    setMessages(prev => [...prev, assistantMsg])
+    setIsLoading(true)
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+    try {
+      const response = await fetch('/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          character_id: selectedCharId,
+          parent_id: parentId
+        })
+      })
+      await handleStreamResponse(response)
+    } catch (error) {
+      showToast('Lost connection to AI.', 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
-        const chunk = decoder.decode(value, { stream: true })
-        const lines = chunk.split('\n')
+  const handleStreamResponse = async (response: Response) => {
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    let fullContent = ''
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.token) {
-              fullContent += data.token
-              setMessages(prev => {
-                const next = [...prev]
-                const last = next[next.length - 1]
-                if (last && last.role === 'assistant') {
-                  last.content = fullContent
-                }
-                return next
-              })
-            }
-            if (data.done && data.stats) {
+    if (!reader) throw new Error('Reader unavailable')
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = decoder.decode(value, { stream: true })
+      const lines = chunk.split('\n')
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const data = JSON.parse(line.slice(6))
+          if (data.token) {
+            fullContent += data.token
+            setMessages(prev => {
+              const next = [...prev]
+              const last = next[next.length - 1]
+              if (last && last.role === 'assistant') {
+                last.content = fullContent
+              }
+              return next
+            })
+          }
+          if (data.done) {
+            if (data.stats) {
               setCharacters(prev => prev.map(c => 
                 c.id === selectedCharId ? { ...c, state: { ...c.state, stats: data.stats } } : c
               ))
             }
-          } catch (e) {
-            console.error('SSE Error', e)
+            if (selectedCharId) fetchHistory(selectedCharId)
           }
+        } catch (e) {
+          console.error('SSE Error', e)
         }
       }
-      fetchCharacters() // Refresh stats
-    } catch (error) {
-      showToast('Lost connection to AI.', 'error')
-      setMessages(prev => [...prev.slice(0, -1), { role: 'assistant', content: 'Connection error.', timestamp: new Date() }])
-    } finally {
-      setIsLoading(false)
     }
+    fetchCharacters() // Refresh stats
   }
 
   const activeChar = characters.find((c) => c.id === selectedCharId) || null
@@ -331,6 +383,7 @@ function App() {
               input={input}
               setInput={setInput}
               onSend={handleSend}
+              onRegenerate={handleRegenerate}
               isLoading={isLoading}
             />
           )}

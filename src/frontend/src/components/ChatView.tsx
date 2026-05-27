@@ -1,11 +1,6 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useCallback } from 'react'
 import MessageRenderer from './MessageRenderer'
-
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-  timestamp?: Date
-}
+import { useMessageTree, MessageNode } from '../hooks/useMessageTree'
 
 interface Character {
   id: number
@@ -25,10 +20,11 @@ interface Character {
 
 interface ChatViewProps {
   activeChar: Character | null
-  messages: Message[]
+  messages: MessageNode[]
   input: string
   setInput: (val: string) => void
-  onSend: () => void
+  onSend: (parentId?: number) => void
+  onRegenerate: (parentId: number) => void
   isLoading: boolean
 }
 
@@ -38,9 +34,11 @@ const ChatView: React.FC<ChatViewProps> = ({
   input,
   setInput,
   onSend,
+  onRegenerate,
   isLoading
 }) => {
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const { activePath, nextVariant, prevVariant, getSiblings } = useMessageTree(messages)
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -48,7 +46,12 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [activePath])
+
+  const handleRegenerate = (node: MessageNode) => {
+    if (isLoading || node.parent_id === null) return
+    onRegenerate(node.parent_id)
+  }
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
@@ -109,34 +112,80 @@ const ChatView: React.FC<ChatViewProps> = ({
             <div className="h-px bg-outline-variant flex-1"></div>
           </div>
 
-          {messages.length === 0 && (
+          {activePath.length === 0 && (
             <div className="flex flex-col items-center justify-center py-20 opacity-30">
               <span className="material-symbols-outlined text-[64px] mb-4">menu_book</span>
               <p className="font-display text-body-lg italic">Begin the narrative...</p>
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex flex-col gap-xs w-full ${msg.role === 'user' ? 'items-end pl-xl pr-0 mt-md' : 'pl-0 pr-xl mt-md'}`}>
-              <div className="flex items-center gap-xs mb-1">
-                {msg.role === 'assistant' && (
-                  <div className="w-8 h-8 rounded-full bg-surface-container overflow-hidden flex items-center justify-center border border-outline-variant">
-                    <span className="material-symbols-outlined text-sm text-on-surface-variant">person</span>
+          {activePath.map((msg, i) => {
+            const siblings = getSiblings(msg.id);
+            const hasSiblings = siblings.length > 1;
+            const currentIndex = siblings.findIndex(s => s.id === msg.id);
+
+            return (
+              <div key={msg.id} className={`flex flex-col gap-xs w-full group ${msg.role === 'user' ? 'items-end pl-xl pr-0 mt-md' : 'pl-0 pr-xl mt-md'}`}>
+                <div className="flex items-center gap-xs mb-1">
+                  {msg.role === 'assistant' && (
+                    <div className="w-8 h-8 rounded-full bg-surface-container overflow-hidden flex items-center justify-center border border-outline-variant">
+                      <span className="material-symbols-outlined text-sm text-on-surface-variant">person</span>
+                    </div>
+                  )}
+                  <span className={`font-display text-body-md font-semibold ${msg.role === 'user' ? 'text-on-surface-variant' : 'text-primary'}`}>
+                    {msg.role === 'user' ? 'You' : activeChar?.name}
+                  </span>
+                  
+                  {msg.role === 'assistant' && hasSiblings && (
+                    <div className="flex items-center gap-1 ml-2 px-2 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => prevVariant(msg.id)}
+                        disabled={currentIndex === 0}
+                        className="text-on-surface-variant hover:text-primary disabled:opacity-30 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+                      </button>
+                      <span className="font-label-sm text-label-xs text-on-surface-variant select-none">
+                        {currentIndex + 1} / {siblings.length}
+                      </span>
+                      <button 
+                        onClick={() => nextVariant(msg.id)}
+                        disabled={currentIndex === siblings.length - 1}
+                        className="text-on-surface-variant hover:text-primary disabled:opacity-30 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative w-full">
+                  <div className={`font-body-lg text-body-lg leading-relaxed ${msg.role === 'user' ? 'text-primary' : 'text-on-surface'}`}>
+                    {msg.role === 'user' ? (
+                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                    ) : (
+                      <MessageRenderer content={msg.content} />
+                    )}
                   </div>
-                )}
-                <span className={`font-display text-body-md font-semibold ${msg.role === 'user' ? 'text-on-surface-variant' : 'text-primary'}`}>
-                  {msg.role === 'user' ? 'You' : activeChar?.name}
-                </span>
+
+                  {msg.role === 'assistant' && i === activePath.length - 1 && !isLoading && (
+                    <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={() => handleRegenerate(msg)}
+                        className="flex items-center gap-1 px-3 py-1 rounded-md bg-surface-container-high border border-outline-variant text-on-surface-variant hover:text-primary transition-all text-[12px] font-medium"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">refresh</span>
+                        Regenerate
+                      </button>
+                      <button className="flex items-center justify-center h-7 w-7 rounded-md bg-surface-container-high border border-outline-variant text-on-surface-variant hover:text-primary transition-all">
+                        <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className={`font-body-lg text-body-lg leading-relaxed ${msg.role === 'user' ? 'text-primary' : 'text-on-surface'}`}>
-                {msg.role === 'user' ? (
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                ) : (
-                  <MessageRenderer content={msg.content} />
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
           {isLoading && (
             <div className="flex flex-col gap-xs w-full pl-0 pr-xl mt-md opacity-50">
@@ -175,7 +224,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>add_circle</span>
               </button>
               <button 
-                onClick={onSend}
+                onClick={() => onSend()}
                 disabled={isLoading || !input.trim()}
                 className="bg-on-surface text-background hover:bg-primary disabled:opacity-50 transition-colors flex items-center justify-center h-8 w-8 rounded-full shadow-sm"
               >

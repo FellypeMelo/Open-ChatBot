@@ -90,3 +90,13 @@ class MessageNode(Base):
     children = relationship("MessageNode", backref=backref("parent", remote_side=[id]))
     character = relationship("Character")
     user = relationship("User")
+
+class LorebookEntry(Base):
+    __tablename__ = "lorebook_entries"
+    id = Column(Integer, primary_key=True, index=True)
+    keyword = Column(String, index=True)
+    content = Column(Text)
+    character_id = Column(Integer, ForeignKey("characters.id"), nullable=True, index=True)
+    is_global = Column(Boolean, default=False)
+
+    character = relationship("Character")

@@ -50,8 +50,8 @@ describe('App', () => {
 
   it('renders the main application structure', async () => {
     render(<App />)
-    expect(screen.getAllByText('Characters').length).toBeGreaterThan(0)
-    expect(screen.getByText('Manage your AI personas and character profiles.')).toBeInTheDocument()
+    expect(screen.getAllByText('Character Library').length).toBeGreaterThan(0)
+    expect(screen.getByText('Manage and select your AI personas')).toBeInTheDocument()
 
     // Wait for initial data fetch
     await waitFor(() => {

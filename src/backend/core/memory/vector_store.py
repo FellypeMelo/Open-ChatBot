@@ -10,6 +10,45 @@ class VectorStore:
         self.llm_client = llm_client
         self.client = chromadb.PersistentClient(path=path)
         self.collection = self.client.get_or_create_collection(name=collection_name)
+        self.lore_collection = self.client.get_or_create_collection(name="lorebooks")
+
+    async def add_lore(self, keyword: str, content: str, metadata: Optional[Dict[str, Any]] = None):
+        """Adds a lore entry indexed by keyword embedding."""
+        embedding = await self.llm_client.embed(keyword)
+        if embedding is None:
+            logger.warning(f"Could not add lore for {keyword}: embedding failed.")
+            return
+
+        entry_id = f"lore_{keyword}_{uuid.uuid4().hex[:8]}"
+        try:
+            self.lore_collection.add(
+                ids=[entry_id],
+                embeddings=[embedding],
+                documents=[content],
+                metadatas=[metadata] if metadata else None
+            )
+        except Exception as e:
+            logger.error(f"Error adding lore to vector store: {e}")
+
+    async def query_lore(self, keywords: List[str], n_results: int = 1, metadata_filter: Optional[Dict[str, Any]] = None):
+        """Queries lore based on multiple keyword embeddings."""
+        if not keywords: return {"documents": [[]]}
+        
+        # Combine keywords for a single query or query multiple times?
+        # Simple approach: embed the concatenated keywords
+        query_text = " ".join(keywords)
+        query_embedding = await self.llm_client.embed(query_text)
+        if query_embedding is None: return {"documents": [[]]}
+
+        try:
+            return self.lore_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where=metadata_filter
+            )
+        except Exception as e:
+            logger.error(f"Lore query error: {e}")
+            return {"documents": [[]]}
 
     async def add_memory(self, text: str, metadata: Optional[Dict[str, Any]] = None):
         embedding = await self.llm_client.embed(text)

@@ -56,13 +56,25 @@ class Brain:
         self.llm = llm_client or vector_store.llm_client
 
     async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any], user: Any = None, history: List[Any] = None) -> str:
-        """Assembles the 5-layer high-fidelity prompt for the Living Entity Framework v5."""
+        """Assembles the 6-layer high-fidelity prompt for the Living Entity Framework v5 (with Lore)."""
         # Layer 1: Memories (RAG)
         context_data = await self.vector_store.query_memory(user_message, metadata_filter={"character_id": character.id} if character else None)
         context = "No relevant memory found."
         if isinstance(context_data, dict) and context_data.get("documents"):
             docs = context_data["documents"][0]
             if docs: context = " ".join([str(d) for d in docs if d])
+
+        # Layer 1.5: Lorebooks (Keyword-triggered)
+        # Extract keywords (simple split + filter)
+        keywords = [w.strip(".,!?\"'").lower() for w in user_message.split() if len(w) > 3]
+        lore_context = ""
+        if keywords:
+            # Query global lore or character-specific lore
+            # We filter by character_id or is_global in vector store if metadata exists
+            # For now, we query and assume relevance
+            lore_results = await self.vector_store.query_lore(keywords, n_results=3)
+            if lore_results.get("documents") and lore_results["documents"][0]:
+                lore_context = "\nRELEVANT WORLD LORE:\n" + "\n".join([f"- {d}" for d in lore_results["documents"][0]])
 
         # Layer 2: History
         history_lines = []
@@ -97,7 +109,7 @@ class Brain:
 
         user_info = f"\nINTERACTING WITH: {user.name} ({user.gender})" if user else ""
 
-        return f"{MASTER_PROMPT}\n\n# IDENTITY #\n{identity}\n\n# MODIFIERS #\n{chr(10).join(tags)}\n\n# STATE #\n{state_str}{user_info}\n\n# CONTEXT #\nMEMORIES:\n{context}\n\nHISTORY:\n{history_str}\n\nUSER: {user_message}\n\n### RESPONSE ###"
+        return f"{MASTER_PROMPT}\n\n# IDENTITY #\n{identity}\n\n# MODIFIERS #\n{chr(10).join(tags)}\n\n# STATE #\n{state_str}{user_info}\n\n# CONTEXT #\nMEMORIES:\n{context}{lore_context}\n\nHISTORY:\n{history_str}\n\nUSER: {user_message}\n\n### RESPONSE ###"
 
     async def reflect(self, messages: List[Dict]) -> Dict:
         """Analyzes interaction for summary, facts, and traits."""

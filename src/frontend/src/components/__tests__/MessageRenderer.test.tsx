@@ -8,22 +8,43 @@ describe('MessageRenderer', () => {
     expect(screen.getByText('Hello world')).toBeInTheDocument()
   })
 
-  it('renders text with *italic* markers as styled <em> elements', () => {
-    render(<MessageRenderer content="*She looks up slowly.* Hello there!" />)
-    const em = screen.getByText('She looks up slowly.')
-    expect(em.tagName).toBe('EM')
-    expect(screen.getByText('Hello there!')).toBeInTheDocument()
+  it('renders text with *italic* markers as styled elements', () => {
+    render(<MessageRenderer content="*I hope they like this.* Hello there!" />)
+    const thought = screen.getByText('I hope they like this.')
+    expect(thought).toHaveClass('italic')
+    expect(thought).toHaveClass('text-on-surface-variant/70')
+    // Using a regex or function to match text that might have spaces/be split
+    expect(screen.getByText(/Hello there!/)).toBeInTheDocument()
   })
 
-  it('renders multiple italic segments', () => {
-    render(<MessageRenderer content={'*Thinks* "Says something" *Acts*'} />)
-    expect(screen.getByText('Thinks').tagName).toBe('EM')
-    expect(screen.getByText('Acts').tagName).toBe('EM')
-    expect(screen.getByText('"Says something"')).toBeInTheDocument()
+  it('renders text with **bold** markers as action elements', () => {
+    render(<MessageRenderer content="**She smiles warmly.** Hi!" />)
+    const action = screen.getByText('She smiles warmly.')
+    expect(action).toHaveClass('font-bold')
+    expect(action).toHaveClass('text-primary')
+    expect(screen.getByText(/Hi!/)).toBeInTheDocument()
+  })
+
+  it('renders mixed narrative markers correctly', () => {
+    render(<MessageRenderer content="*Thinking...* **Acting!** Talking." />)
+    const thought = screen.getByText('Thinking...')
+    const action = screen.getByText('Acting!')
+    const speech = screen.getByText(/Talking\./)
+
+    expect(thought).toHaveClass('italic')
+    expect(action).toHaveClass('font-bold')
+    expect(speech).toBeInTheDocument()
+  })
+
+  it('handles nested-like markers with ** taking precedence', () => {
+    render(<MessageRenderer content="**Bold *not* italic**" />)
+    const action = screen.getByText('Bold *not* italic')
+    expect(action).toHaveClass('font-bold')
   })
 
   it('handles empty content gracefully', () => {
-    render(<MessageRenderer content="" />)
-    expect(document.querySelector('.whitespace-pre-wrap')).toBeInTheDocument()
+    const { container } = render(<MessageRenderer content="" />)
+    // First child is the div wrapper
+    expect(container.firstChild).toHaveClass('whitespace-pre-wrap')
   })
 })

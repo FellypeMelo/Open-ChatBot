@@ -1,6 +1,7 @@
-import React, { useRef, useEffect, useCallback } from 'react'
+import React, { useRef, useEffect } from 'react'
 import MessageRenderer from './MessageRenderer'
 import { useMessageTree, MessageNode } from '../hooks/useMessageTree'
+import { useTokenQueue } from '../hooks/useTokenQueue'
 
 interface Character {
   id: number
@@ -39,6 +40,8 @@ const ChatView: React.FC<ChatViewProps> = ({
 }) => {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const { activePath, nextVariant, prevVariant, getSiblings } = useMessageTree(messages)
+  const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20)
+  const prevContentLength = useRef(0)
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -46,7 +49,27 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   useEffect(() => {
     scrollToBottom()
-  }, [activePath])
+  }, [activePath, displayedContent])
+
+  // Reset queue when starting to load a new message
+  useEffect(() => {
+    if (isLoading) {
+      reset()
+      prevContentLength.current = 0
+    }
+  }, [isLoading, reset])
+
+  // Enqueue new tokens as they arrive
+  useEffect(() => {
+    if (isLoading && activePath.length > 0) {
+      const lastMsg = activePath[activePath.length - 1]
+      if (lastMsg.role === 'assistant' && lastMsg.content.length > prevContentLength.current) {
+        const delta = lastMsg.content.substring(prevContentLength.current)
+        enqueue(delta)
+        prevContentLength.current = lastMsg.content.length
+      }
+    }
+  }, [activePath, isLoading, enqueue])
 
   const handleRegenerate = (node: MessageNode) => {
     if (isLoading || node.parent_id === null) return
@@ -123,6 +146,8 @@ const ChatView: React.FC<ChatViewProps> = ({
             const siblings = getSiblings(msg.id);
             const hasSiblings = siblings.length > 1;
             const currentIndex = siblings.findIndex(s => s.id === msg.id);
+            const isLastMessage = i === activePath.length - 1;
+            const isStreaming = isLastMessage && msg.role === 'assistant' && (isLoading || isDraining);
 
             return (
               <div key={msg.id} className={`flex flex-col gap-xs w-full group ${msg.role === 'user' ? 'items-end pl-xl pr-0 mt-md' : 'pl-0 pr-xl mt-md'}`}>
@@ -164,11 +189,11 @@ const ChatView: React.FC<ChatViewProps> = ({
                     {msg.role === 'user' ? (
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     ) : (
-                      <MessageRenderer content={msg.content} />
+                      <MessageRenderer content={isStreaming ? displayedContent : msg.content} />
                     )}
                   </div>
 
-                  {msg.role === 'assistant' && i === activePath.length - 1 && !isLoading && (
+                  {msg.role === 'assistant' && i === activePath.length - 1 && !isLoading && !isDraining && (
                     <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button 
                         onClick={() => handleRegenerate(msg)}

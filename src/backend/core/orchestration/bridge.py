@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from src.backend.core.memory.vector_store import VectorStore
 from src.backend.db.models import Tag
+from .evolution import get_tier_instructions, get_forced_modifiers
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +93,8 @@ class Brain:
         
         # Layer 4: State
         if state and "stats" in state:
-            from src.backend.core.engine.engine import get_behavioral_modifiers
             stats = state["stats"]
-            tags.append(f"\nDYNAMIC BIOLOGICAL MODIFIERS:\n{get_behavioral_modifiers(stats)}")
+            tags.append(f"\nDYNAMIC BIOLOGICAL MODIFIERS:\n{get_forced_modifiers(stats)}")
             
             rel = stats.get("relationship", {})
             state_info = [
@@ -109,12 +109,19 @@ class Brain:
 
         user_info = f"\nINTERACTING WITH: {user.name} ({user.gender})" if user else ""
 
-        return f"{MASTER_PROMPT}\n\n# IDENTITY #\n{identity}\n\n# MODIFIERS #\n{chr(10).join(tags)}\n\n# STATE #\n{state_str}{user_info}\n\n# CONTEXT #\nMEMORIES:\n{context}{lore_context}\n\nHISTORY:\n{history_str}\n\nUSER: {user_message}\n\n### RESPONSE ###"
+        social_dynamics = ""
+        if state and "stats" in state:
+            rel = state["stats"].get("relationship", {})
+            score = rel.get("score", 50)
+            nickname = rel.get("nickname") or (user.name if user else "Friend")
+            social_dynamics = f"\n\n# SOCIAL DYNAMICS #\n{get_tier_instructions(score, nickname)}"
 
-    async def reflect(self, messages: List[Dict]) -> Dict:
+        return f"{MASTER_PROMPT}\n\n# IDENTITY #\n{identity}\n\n# MODIFIERS #\n{chr(10).join(tags)}{social_dynamics}\n\n# STATE #\n{state_str}{user_info}\n\n# CONTEXT #\nMEMORIES:\n{context}{lore_context}\n\nHISTORY:\n{history_str}\n\nUSER: {user_message}\n\n### RESPONSE ###"
+
+    async def reflect(self, messages: List[Dict], window_size: int = 20) -> Dict:
         """Analyzes interaction for summary, facts, and traits."""
         prompt = "Analyze the interaction. Extract summary, new facts about the user, and character trait updates. JSON ONLY.\n\n"
-        for msg in messages[-10:]:
+        for msg in messages[-window_size:]:
             prompt += f"{msg['role'].capitalize()}: {msg['content']}\n"
         
         result = await self.llm.complete(prompt, grammar=REFLECTION_GRAMMAR)

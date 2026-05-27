@@ -86,8 +86,9 @@ def update_needs(stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any
 # --- Evolution & State Management ---
 
 def evolve_character(db: Session, character_id: int, reflection: dict):
-    """Apply reflections to the agent's permanent state."""
-    agent = db.query(AgentState).filter(AgentState.character_id == character_id).first()
+    """Apply reflections to the agent's permanent state with row-level locking."""
+    # Use with_for_update to prevent race conditions during background evolution
+    agent = db.query(AgentState).filter(AgentState.character_id == character_id).with_for_update().first()
     if not agent:
         return
 

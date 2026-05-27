@@ -46,6 +46,7 @@ class AgentState(Base):
     id = Column(Integer, primary_key=True, index=True)
     character_id = Column(Integer, ForeignKey("characters.id"), unique=True, index=True)
     current_message_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
+    interaction_count = Column(Integer, default=0)
     location = Column(String, default="Living Room")
     mood = Column(String, default="Neutral")
     clothes = Column(String, default="Casual")
@@ -58,6 +59,10 @@ class AgentState(Base):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        if self.location is None: self.location = "Living Room"
+        if self.clothes is None: self.clothes = "Casual"
+        if self.mood is None: self.mood = "Neutral"
+        if self.interaction_count is None: self.interaction_count = 0
         if not self.stats:
             self.stats = {
                 "energy": 100,
@@ -81,6 +86,7 @@ class MessageNode(Base):
     content = Column(Text) # Raw message or sequence JSON
     type = Column(String, default="speech") # 'thought', 'action', 'speech'
     variant_index = Column(Integer, default=0)
+    request_id = Column(String, index=True, nullable=True)
     character_id = Column(Integer, ForeignKey("characters.id"), index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))

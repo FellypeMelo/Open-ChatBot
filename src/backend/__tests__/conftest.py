@@ -23,10 +23,26 @@ def test_db_setup():
     yield engine
     
     # Cleanup after session
-    Base.metadata.drop_all(bind=engine)
+    try:
+        Base.metadata.drop_all(bind=engine)
+    except Exception:
+        pass
+        
     os.close(db_fd)
-    if os.path.exists(db_path):
-        os.unlink(db_path)
+    
+    # Use a small delay or try/except to handle Windows file locking
+    import time
+    max_retries = 3
+    for i in range(max_retries):
+        try:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+            break
+        except PermissionError:
+            if i < max_retries - 1:
+                time.sleep(0.1)
+            else:
+                print(f"Warning: Could not delete temporary database {db_path}")
 
 @pytest.fixture
 def db_session(test_db_setup):

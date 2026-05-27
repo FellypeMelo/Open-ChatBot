@@ -11,7 +11,15 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn()
 describe('App', () => {
   const mockUser = { id: 1, name: 'Test User', gender: 'Male', is_active: true }
   const mockCharacters = [
-    { id: 1, name: 'Luna', description: 'A calm bot', tags: [{ id: 1, label: 'calm' }] }
+    { 
+      id: 1, 
+      name: 'Luna', 
+      description: 'A calm bot', 
+      tags: [{ id: 1, label: 'calm' }],
+      state: {
+        stats: { energy: 100, hunger: 0, relationship: { score: 50 } }
+      }
+    }
   ]
 
   beforeEach(() => {
@@ -99,7 +107,7 @@ describe('App', () => {
 
     const nameInput = await screen.findByPlaceholderText(/e\.g\. Architect/)
     fireEvent.change(nameInput, { target: { value: 'Nova' } })
-    fireEvent.change(screen.getByPlaceholderText(/secretly protective/), { target: { value: 'New AI' } })
+    fireEvent.change(screen.getByPlaceholderText(/Describe the character/), { target: { value: 'New AI' } })
 
     const submitBtn = screen.getByText('Initialize')
     await act(async () => {
@@ -142,51 +150,23 @@ describe('App', () => {
 
   it('starts chat from character card', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
-      if (url === '/chat' && options?.method === 'POST') {
-        return Promise.resolve({
-          json: () => Promise.resolve({
-            reply: 'Hello user!',
-            thought: 'I am thinking',
-            actions: ['waves'],
-            stats: { energy: 90, hunger: 10, relationship: { score: 60 } }
-          }),
-          ok: true
-        } as any)
+      if (url === '/chat/stream' && options?.method === 'POST') {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode('data: {"token": "Hello user!"}\n\n'))
+            controller.enqueue(encoder.encode('data: {"done": true}\n\n'))
+            controller.close()
+          }
+        })
+        return Promise.resolve({ body: stream, ok: true } as any)
       }
       if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
       if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(mockCharacters), ok: true } as any)
       if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      if (String(url).startsWith('/history/')) return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
-    })
-
-    render(<App />)
-    await screen.findAllByText('Luna')
-
-    // Click the Chat button on the character card
-    const chatBtn = screen.getByRole('button', { name: 'Chat' })
-    fireEvent.click(chatBtn)
-
-    // Should now be in chat view
-    const input = await screen.findByPlaceholderText(/Speak with Luna/)
-    expect(input).toBeInTheDocument()
-
-    fireEvent.change(input, { target: { value: 'Hi Luna' } })
-
-    const sendButton = screen.getByText('arrow_upward').closest('button')!
-    fireEvent.click(sendButton)
-
-    expect(await screen.findByText('Hi Luna')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText(/Hello user/)).toBeInTheDocument())
-  })
-
-  it('handles chat error', async () => {
-    vi.mocked(fetch).mockImplementation((url) => {
-      if (url === '/chat') return Promise.reject(new Error('Network error'))
-      if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
-      if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(mockCharacters), ok: true } as any)
-      if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      if (String(url).startsWith('/history/')) return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
+      if (String(url).startsWith('/history/')) {
+          return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
+      }
       return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
     })
 
@@ -194,6 +174,46 @@ describe('App', () => {
     await screen.findAllByText('Luna')
 
     // Click the Chat button
+    const chatBtn = screen.getByRole('button', { name: 'Chat' })
+    fireEvent.click(chatBtn)
+
+    // Should now be in chat view
+    const input = await screen.findByPlaceholderText(/Speak with Luna/)
+    
+    // Type and send
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    })
+    
+    const sendButton = screen.getByText('arrow_upward').closest('button')!
+    await act(async () => {
+      fireEvent.click(sendButton)
+    })
+
+    // Wait for user message to appear in the narrative list
+    await waitFor(() => {
+      expect(screen.queryByText('Hi Luna')).not.toBeNull()
+    }, { timeout: 5000 })
+    
+    // Wait for assistant response
+    await waitFor(() => {
+      expect(screen.queryByText(/Hello user/)).not.toBeNull()
+    }, { timeout: 8000 })
+  })
+
+  it('handles chat error', async () => {
+    vi.mocked(fetch).mockImplementation((url) => {
+      if (url === '/chat/stream') return Promise.reject(new Error('Network error'))
+      if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
+      if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(mockCharacters), ok: true } as any)
+      if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
+      if (String(url).startsWith('/history/')) return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
+      return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
     await screen.findByPlaceholderText(/Speak with Luna/)
 
@@ -204,6 +224,6 @@ describe('App', () => {
       fireEvent.click(sendButton)
     })
 
-    expect(await screen.findByText(/Erro ao comunicar/)).toBeInTheDocument()
+    expect(await screen.findByText(/Lost connection/)).toBeInTheDocument()
   })
 })

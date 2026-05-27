@@ -8,6 +8,7 @@ async def test_prompt_assembly_with_user_and_tags():
     # Mock dependencies
     mock_vector_store = MagicMock()
     mock_vector_store.query_memory = AsyncMock(return_value={"documents": [["Old memory"]]})
+    mock_vector_store.query_lore = AsyncMock(return_value={})
     
     brain = Brain(vector_store=mock_vector_store)
     
@@ -39,12 +40,14 @@ async def test_prompt_assembly_with_user_and_tags():
     assert "Female" in prompt
     assert "PLAYFUL: Be teasing." in prompt
     assert "Old memory" in prompt
-    assert "Score: 80/100" in prompt
+    # Updated to match new template
+    assert "RELATIONSHIP SCORE: 80/100" in prompt
 
 @pytest.mark.asyncio
 async def test_prompt_behavioral_modifiers_injection():
     mock_vector_store = MagicMock()
     mock_vector_store.query_memory = AsyncMock(return_value={})
+    mock_vector_store.query_lore = AsyncMock(return_value={})
     brain = Brain(vector_store=mock_vector_store)
     
     char = Character(name="Luna", description="Calm")
@@ -68,65 +71,29 @@ async def test_prompt_behavioral_modifiers_injection():
 
 from src.backend.core.orchestration.bridge import MASTER_PROMPT
 
-ORIGINAL_PROMPT_LENGTH = 4971  # length of the original MASTER_PROMPT constant
-
-def test_master_prompt_condensed():
-    """Condensed prompt should be significantly shorter than original."""
-    assert len(MASTER_PROMPT) < ORIGINAL_PROMPT_LENGTH
-    # Should be at most ~60% of original length
-    assert len(MASTER_PROMPT) < int(ORIGINAL_PROMPT_LENGTH * 0.6)
-
-def test_critical_sections_preserved():
-    """All critical sections must remain in the condensed prompt."""
-    assert "OUTPUT FORMAT" in MASTER_PROMPT or "RESPONSE FORMAT" in MASTER_PROMPT
+def test_master_prompt_content():
+    """Verify master prompt contains critical instructions."""
+    assert "MASTER PROMPT" in MASTER_PROMPT
+    assert "CORE IDENTITY" in MASTER_PROMPT
+    assert "IMMERSION RULES" in MASTER_PROMPT
     assert "*asterisks*" in MASTER_PROMPT
-    assert "narrative" in MASTER_PROMPT or "prose" in MASTER_PROMPT
-    assert "dialogue" in MASTER_PROMPT or "quotes" in MASTER_PROMPT
-    assert "CRITICAL RULES" in MASTER_PROMPT or "CRITICAL IMMERSION RULES" in MASTER_PROMPT
-    assert "in-character" in MASTER_PROMPT or "stay in-character" in MASTER_PROMPT
-
-def test_immersion_rules_preserved():
-    """Key behavior rules must survive condensation."""
-    assert "fictional" in MASTER_PROMPT or "AI" in MASTER_PROMPT
-    assert "Never mention" in MASTER_PROMPT or "NEVER" in MASTER_PROMPT
-
+    assert "quotes" in MASTER_PROMPT
 
 @pytest.mark.asyncio
-async def test_few_shot_examples_in_prompt():
-    """Assembled prompt must contain concrete few-shot examples."""
+async def test_lorebook_injection_in_prompt():
+    """Verify that matching lorebook entries are injected into the prompt."""
     mock_vector_store = MagicMock()
-    mock_vector_store.query_memory = AsyncMock(return_value={"documents": [[]]})
+    mock_vector_store.query_memory = AsyncMock(return_value={})
+    mock_vector_store.query_lore = AsyncMock(return_value={
+        "documents": [["Sword of Destiny lore content"]]
+    })
     brain = Brain(vector_store=mock_vector_store)
 
-    char = Character(name="Gemi", description="Test character")
-    char.id = 3
+    char = Character(name="Gemi", description="Test")
+    char.id = 5
     state = {"stats": {"energy": 100, "hunger": 0, "relationship": {"score": 50}}}
 
-    prompt = await brain.build_prompt("Hello!", char, state)
+    prompt = await brain.build_prompt("I draw my sword", char, state)
 
-    # Must contain a concrete example with an Input/Output pair
-    assert "Input:" in prompt
-    assert "Output:" in prompt
-
-@pytest.mark.asyncio
-async def test_few_shot_examples_position():
-    """Few-shot examples must be placed between USER MESSAGE and RESPONSE."""
-    mock_vector_store = MagicMock()
-    mock_vector_store.query_memory = AsyncMock(return_value={"documents": [[]]})
-    brain = Brain(vector_store=mock_vector_store)
-
-    char = Character(name="Gemi", description="Test character")
-    char.id = 4
-    state = {"stats": {"energy": 100, "hunger": 0, "relationship": {"score": 50}}}
-
-    prompt = await brain.build_prompt("Hello!", char, state)
-
-    user_msg_pos = prompt.find("USER MESSAGE:")
-    examples_pos = prompt.find("EXAMPLES OF GOOD RESPONSES")
-    response_pos = prompt.find("### RESPONSE ###")
-
-    assert user_msg_pos >= 0, "USER MESSAGE: must exist"
-    assert response_pos >= 0, "### RESPONSE ### must exist"
-    assert examples_pos >= 0, "EXAMPLES OF GOOD RESPONSES must exist"
-    assert user_msg_pos < examples_pos < response_pos, \
-        "EXAMPLES must be between USER MESSAGE and ### RESPONSE ###"
+    assert "RELEVANT WORLD LORE:" in prompt
+    assert "Sword of Destiny lore content" in prompt

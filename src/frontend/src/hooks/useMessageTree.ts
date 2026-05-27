@@ -14,11 +14,11 @@ export function useMessageTree(nodes: MessageNode[]) {
   const childrenMap = useMemo(() => {
     const map = new Map<number | null, MessageNode[]>();
     nodes.forEach((node) => {
-      const parentId = node.parent_id;
-      if (!map.has(parentId)) {
-        map.set(parentId, []);
+      const pId = node.parent_id === undefined ? null : node.parent_id;
+      if (!map.has(pId)) {
+        map.set(pId, []);
       }
-      map.get(parentId)!.push(node);
+      map.get(pId)!.push(node);
     });
     // Sort children by variant_index
     map.forEach((children) => {

@@ -105,7 +105,12 @@ function App() {
   const fetchHistory = useCallback(async (charId: number) => {
     try {
       const data = await api.fetchHistory(charId)
-      setMessages(data)
+      // Only update if we are not currently loading a new response to avoid race conditions
+      setMessages(prev => {
+        // Simple heuristic: if we have local unsaved messages, don't overwrite with empty history
+        if (prev.length > 0 && data.length === 0) return prev;
+        return data;
+      })
     } catch (err) {
       console.error('Failed to fetch history', err)
     }
@@ -115,7 +120,7 @@ function App() {
     if (selectedCharId) {
       fetchHistory(selectedCharId)
     }
-  }, [selectedCharId, fetchHistory])
+  }, [selectedCharId]) // Only re-run when character changes
 
   const updateUser = async (name: string, gender: string) => {
     try {
@@ -214,8 +219,8 @@ function App() {
 
     const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
 
-    // Temporary IDs for UI feedback
-    const userMsgId = Date.now()
+    // Use a more robust temporary ID to avoid collisions and ensure stability in tests
+    const userMsgId = Math.floor(Math.random() * 1000000) + Date.now()
     const assistantMsgId = userMsgId + 1
 
     const userMsg: MessageNode = { 

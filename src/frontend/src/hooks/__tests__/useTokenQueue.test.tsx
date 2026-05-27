@@ -41,6 +41,11 @@ describe('useTokenQueue', () => {
       vi.advanceTimersByTime(100);
     });
     expect(result.current.displayedContent).toBe('ABC');
+    
+    // One more tick to clear the interval and stop draining
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
     expect(result.current.isDraining).toBe(false);
   });
 

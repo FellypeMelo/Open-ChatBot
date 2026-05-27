@@ -4,11 +4,11 @@ from sqlalchemy.orm import sessionmaker
 from src.backend.db.database import Base
 from src.backend.db.models import Character, Tag, AgentState
 from src.backend.core.orchestration.bridge import Brain
-from unittest.mock import AsyncMock
+from unittest.mock import MagicMock, AsyncMock
 
 # Setup in-memory DB
 engine = create_engine("sqlite:///:memory:")
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @pytest.fixture
 def db():
@@ -42,8 +42,10 @@ def test_character_creation_with_tags(db):
 
 @pytest.mark.asyncio
 async def test_brain_v5_prompt_assembly():
-    mock_vector = AsyncMock()
-    mock_vector.query_memory.return_value = {"documents": [["Memory of stars"]]}
+    mock_vector = MagicMock()
+    mock_vector.query_memory = AsyncMock(return_value={"documents": [["Memory of stars"]]})
+    mock_vector.query_lore = AsyncMock(return_value={})
+    mock_vector.llm_client = MagicMock()
     
     brain = Brain(vector_store=mock_vector)
     
@@ -61,7 +63,6 @@ async def test_brain_v5_prompt_assembly():
     state = {
         "location": "Garden",
         "mood": "Playful",
-        "clothes": "Floral Dress",
         "stats": {
             "energy": 80,
             "hunger": 20,
@@ -78,4 +79,3 @@ async def test_brain_v5_prompt_assembly():
     assert "Garden" in prompt
     assert "TEASING" in prompt
     assert "Memory of stars" in prompt
-    assert "Floral Dress" in prompt

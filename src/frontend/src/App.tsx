@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import CharactersView from './components/CharactersView'
 import ChatView from './components/ChatView'
 import TagManagementView from './components/TagManagementView'
+import LorebookView from './components/LorebookView'
 import CharacterCreator from './components/CharacterCreator'
 import UserProfileModal from './components/UserProfileModal'
 import TagCreator from './components/TagCreator'
@@ -22,6 +23,10 @@ interface Character {
   description: string
   tags: Tag[]
   state?: {
+    location: string
+    clothes: string
+    mood: string
+    interaction_count: number
     stats: {
       energy: number
       hunger: number
@@ -39,7 +44,7 @@ interface User {
   is_active: boolean
 }
 
-type View = 'chat' | 'characters' | 'archives'
+type View = 'chat' | 'characters' | 'archives' | 'library'
 type ModalType = 'character' | 'user' | 'tag' | null
 
 interface Toast {
@@ -323,10 +328,20 @@ function App() {
             })
           }
           if (data.done) {
-            if (data.stats) {
+            if (data.state) {
               setCharacters(prev => prev.map(c => 
-                c.id === selectedCharId ? { ...c, state: { ...c.state, stats: data.stats } } : c
+                c.id === selectedCharId ? { ...c, state: data.state } : c
               ))
+            }
+            if (data.request_id) {
+              setMessages(prev => {
+                const next = [...prev]
+                const last = next[next.length - 1]
+                if (last && last.role === 'assistant') {
+                  last.request_id = data.request_id
+                }
+                return next
+              })
             }
             if (selectedCharId) fetchHistory(selectedCharId)
           }
@@ -391,6 +406,10 @@ function App() {
               onRegenerate={handleRegenerate}
               isLoading={isLoading}
             />
+          )}
+
+          {currentView === 'library' && (
+            <LorebookView />
           )}
 
           {currentView === 'archives' && (

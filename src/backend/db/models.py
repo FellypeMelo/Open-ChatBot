@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, Table, DateTime
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from src.backend.db.database import Base
 from datetime import datetime
 
@@ -45,6 +45,7 @@ class AgentState(Base):
     __tablename__ = "agent_states"
     id = Column(Integer, primary_key=True, index=True)
     character_id = Column(Integer, ForeignKey("characters.id"), unique=True, index=True)
+    current_message_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
     location = Column(String, default="Living Room")
     mood = Column(String, default="Neutral")
     clothes = Column(String, default="Casual")
@@ -53,6 +54,7 @@ class AgentState(Base):
     stats = Column(JSON)
 
     character = relationship("Character", back_populates="state")
+    current_message = relationship("MessageNode", foreign_keys=[current_message_id])
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -72,14 +74,19 @@ class AgentState(Base):
                 }
             }
 
-class Message(Base):
-    __tablename__ = "messages"
+class MessageNode(Base):
+    __tablename__ = "message_nodes"
     id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    parent_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
     role = Column(String) # 'user' or 'assistant'
     content = Column(Text) # Raw message or sequence JSON
+    type = Column(String, default="speech") # 'thought', 'action', 'speech'
+    variant_index = Column(Integer, default=0)
+    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
+    # Relationships
+    children = relationship("MessageNode", backref=backref("parent", remote_side=[id]))
     character = relationship("Character")
     user = relationship("User")

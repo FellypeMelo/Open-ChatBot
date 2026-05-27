@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -72,7 +72,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         state = character.state or AgentState(character_id=character.id)
         if not state.id: db.add(state); db.flush()
 
-        state.stats = update_needs(state.stats, datetime.now())
+        state.stats = update_needs(state.stats, datetime.now(timezone.utc))
         
         effective_parent_id = request.parent_id if request.parent_id is not None else state.current_message_id
         user_message_content = request.message
@@ -141,7 +141,7 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, d
     state = character.state or AgentState(character_id=character.id)
     if not state.id: db.add(state); db.flush()
 
-    state.stats = update_needs(state.stats, datetime.now())
+    state.stats = update_needs(state.stats, datetime.now(timezone.utc))
     
     effective_parent_id = request.parent_id if request.parent_id is not None else state.current_message_id
     user_message_content = request.message

@@ -1,6 +1,6 @@
 import logging
 import copy
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from src.backend.db.models import AgentState
@@ -19,7 +19,7 @@ HAPPINESS_DECREASE_RATE = 2.0
 def get_time_context(current_time: Optional[datetime] = None) -> Dict[str, Any]:
     """Returns time string, day/night boolean, and suggested mood based on hour ranges."""
     if current_time is None:
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         
     hour = current_time.hour
     time_str = current_time.strftime("%H:%M")
@@ -49,6 +49,13 @@ def update_needs(stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any
         return stats
 
     last_update = datetime.fromisoformat(last_update_str)
+    
+    # Ensure both are aware for comparison
+    if last_update.tzinfo is None:
+        last_update = last_update.replace(tzinfo=timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+        
     duration = current_time - last_update
     hours_passed = duration.total_seconds() / 3600.0
 

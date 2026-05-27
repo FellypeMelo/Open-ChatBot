@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, Table, DateTime
 from sqlalchemy.orm import relationship, backref
 from src.backend.db.database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Junction table for Character <-> Tag (Many-to-Many)
 character_tags = Table(
@@ -59,14 +59,13 @@ class AgentState(Base):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.stats:
-            from datetime import datetime
             self.stats = {
                 "energy": 100,
                 "hunger": 0,
                 "happiness": 100,
                 "social": 100,
                 "is_sleeping": False,
-                "last_update": datetime.now().isoformat(),
+                "last_update": datetime.now(timezone.utc).isoformat(),
                 "relationship": {
                     "score": 50,
                     "dynamic_preferences": ["teasing", "playful"],
@@ -84,7 +83,7 @@ class MessageNode(Base):
     variant_index = Column(Integer, default=0)
     character_id = Column(Integer, ForeignKey("characters.id"), index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     children = relationship("MessageNode", backref=backref("parent", remote_side=[id]))

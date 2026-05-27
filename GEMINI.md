@@ -1,8 +1,16 @@
 
 # Open-ChatBot Project Guidelines
-Version: 1.0  
+Version: 1.1  
 Status: Foundational Engineering Specification  
 Scope: Entire Project Architecture, AI Systems, Frontend, Backend, Database, Prompting, State Systems, and Testing Infrastructure
+
+---
+
+# 0. Operational Environment Mandate
+*   **Operating System**: Windows (win32).
+*   **Shell**: PowerShell.
+*   **Execution Rule**: Always use PowerShell-compatible syntax for shell commands (e.g., `New-Item` instead of `touch`, `Remove-Item` instead of `rm`).
+*   **Pathing**: Use backslashes `\` or PowerShell-compatible forward slashes.
 
 ---
 

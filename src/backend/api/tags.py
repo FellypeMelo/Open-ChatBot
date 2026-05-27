@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from src.backend.db.database import get_db
 from src.backend.db.models import Tag
@@ -13,12 +13,11 @@ class TagCreate(BaseModel):
     instruction: str
 
 class TagResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     label: str
     instruction: str
-
-    class Config:
-        from_attributes = True
 
 @router.post("/", response_model=TagResponse)
 def create_tag(tag: TagCreate, db: Session = Depends(get_db)):

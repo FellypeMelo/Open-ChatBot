@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     LLAMA_SERVER_URL: str = "http://localhost:8080"
@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     REPEAT_PENALTY: float = 1.12
     REPEAT_LAST_N: int = 512
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
 settings = Settings()

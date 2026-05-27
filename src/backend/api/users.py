@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from src.backend.db.database import get_db
 from src.backend.db.models import User
@@ -8,13 +8,12 @@ from src.backend.db.models import User
 router = APIRouter()
 
 class UserSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     name: str
     gender: str
     is_active: bool
-
-    class Config:
-        from_attributes = True
 
 class UserUpdateSchema(BaseModel):
     name: Optional[str] = None

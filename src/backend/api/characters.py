@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from src.backend.db.database import get_db
 from src.backend.db.models import Character, AgentState, Tag
@@ -22,21 +22,19 @@ async def auto_tag_character(req: DescriptionRequest, db: Session = Depends(get_
     return await brain.suggest_tags(req.description, db)
 
 class TagSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     label: str
     instruction: str
 
-    class Config:
-        from_attributes = True
-
 class StateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     location: str
     mood: str
     clothes: str
     stats: dict
-
-    class Config:
-        from_attributes = True
 
 class CharacterCreate(BaseModel):
     name: str
@@ -49,15 +47,14 @@ class CharacterUpdate(BaseModel):
     tag_ids: List[int] = []
 
 class CharacterResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     name: str
     description: str
     is_active: bool
     tags: List[TagSchema] = []
     state: Optional[StateResponse] = None
-
-    class Config:
-        from_attributes = True
 
 @router.post("/", response_model=CharacterResponse)
 def create_character(char: CharacterCreate, db: Session = Depends(get_db)):

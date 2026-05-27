@@ -5,9 +5,10 @@ import { useState, useRef, useEffect, useCallback } from 'react';
  * at a steady, smoothed rate to create a fluid "typing" effect.
  * 
  * @param msPerToken The time in milliseconds between each token release.
+ * @param onTokenReleased Optional callback triggered every time a token is released.
  * @returns An object containing the displayed content, enqueue/reset functions, and streaming state.
  */
-export const useTokenQueue = (msPerToken: number = 25) => {
+export const useTokenQueue = (msPerToken: number = 25, onTokenReleased?: () => void) => {
   const [displayedContent, setDisplayedContent] = useState('');
   const [isDraining, setIsDraining] = useState(false);
   const bufferRef = useRef<string[]>([]);
@@ -22,6 +23,7 @@ export const useTokenQueue = (msPerToken: number = 25) => {
         const nextToken = bufferRef.current.shift();
         if (nextToken !== undefined) {
           setDisplayedContent(prev => prev + nextToken);
+          if (onTokenReleased) onTokenReleased();
         }
       } else {
         if (intervalRef.current !== null) {

@@ -2,6 +2,8 @@ import React, { useRef, useEffect } from 'react'
 import MessageRenderer from './MessageRenderer'
 import { useMessageTree, MessageNode } from '../hooks/useMessageTree'
 import { useTokenQueue } from '../hooks/useTokenQueue'
+import { useAtmosphere } from '../hooks/useAtmosphere'
+import { useAudio } from '../hooks/useAudio'
 
 interface Character {
   id: number
@@ -9,6 +11,10 @@ interface Character {
   description: string
   tags: { id: number; label: string }[]
   state?: {
+    location: string
+    clothes: string
+    mood: string
+    interaction_count: number
     stats: {
       energy: number
       hunger: number
@@ -39,12 +45,26 @@ const ChatView: React.FC<ChatViewProps> = ({
   isLoading
 }) => {
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
   const { activePath, nextVariant, prevVariant, getSiblings } = useMessageTree(messages)
-  const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20)
+  const { playTypewriterClick, resumeAudio } = useAudio()
+  const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20, playTypewriterClick)
+  const { blurAmount, textOpacity } = useAtmosphere(displayedContent)
   const prevContentLength = useRef(0)
+  const [isAtBottom, setIsAtBottom] = useState(true)
 
-  const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = (force = false) => {
+    if (force || isAtBottom) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }
+
+  // Track if user is at bottom
+  const handleScroll = (e: React.UIEvent<HTMLElement>) => {
+    const el = e.currentTarget
+    const offset = 100 // threshold
+    const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + offset
+    setIsAtBottom(atBottom)
   }
 
   useEffect(() => {
@@ -73,13 +93,34 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   const handleRegenerate = (node: MessageNode) => {
     if (isLoading || node.parent_id === null) return
+    resumeAudio()
     onRegenerate(node.parent_id)
   }
 
+  const handleSend = () => {
+    resumeAudio()
+    onSend()
+  }
+
+  const handleCopyID = (id: string) => {
+    navigator.clipboard.writeText(id)
+  }
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-background overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative">
+      {/* Cinematic Atmosphere Layers */}
+      <div 
+        className="absolute inset-0 pointer-events-none z-0 transition-all duration-700 ease-in-out"
+        style={{ 
+          backdropFilter: `blur(${blurAmount}px)`,
+          WebkitBackdropFilter: `blur(${blurAmount}px)`,
+        }}
+      />
+      <div className="absolute inset-0 pointer-events-none z-0 bg-gradient-to-b from-transparent via-transparent to-background/50" />
+      <div className="absolute inset-0 pointer-events-none z-0 shadow-[inset_0_0_150px_rgba(0,0,0,0.5)]" /> {/* Vignette */}
+
       {/* TopAppBar */}
-      <header className="bg-background border-b border-outline-variant/10 flex-none z-10 w-full">
+      <header className="bg-background/80 backdrop-blur-md border-b border-outline-variant/10 flex-none z-10 w-full transition-opacity duration-500" style={{ opacity: textOpacity }}>
         <div className="flex justify-between items-center w-full px-md h-16 max-w-container-max mx-auto">
           <div className="flex items-center gap-sm">
             <div className="flex flex-col">
@@ -87,25 +128,39 @@ const ChatView: React.FC<ChatViewProps> = ({
                 {activeChar?.name || 'Open Chat'}
               </h1>
               {activeChar?.state?.stats ? (
-                <div className="flex items-center gap-3 mt-1">
-                  <div className="flex items-center gap-1" title="Energy">
-                    <span className="material-symbols-outlined text-[14px] text-on-surface-variant">bolt</span>
-                    <div className="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
-                      <div className="h-full bg-primary" style={{ width: `${activeChar.state.stats.energy}%` }}></div>
+                <div className="flex flex-col gap-1 mt-1">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1" title="Energy">
+                      <span className="material-symbols-outlined text-[14px] text-on-surface-variant">bolt</span>
+                      <div className="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                        <div className="h-full bg-primary" style={{ width: `${activeChar.state.stats.energy}%` }}></div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1" title="Hunger">
-                    <span className="material-symbols-outlined text-[14px] text-on-surface-variant">restaurant</span>
-                    <div className="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
-                      <div className="h-full bg-surface-tint" style={{ width: `${activeChar.state.stats.hunger}%` }}></div>
+                    <div className="flex items-center gap-1" title="Hunger">
+                      <span className="material-symbols-outlined text-[14px] text-on-surface-variant">restaurant</span>
+                      <div className="w-12 h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                        <div className="h-full bg-surface-tint" style={{ width: `${activeChar.state.stats.hunger}%` }}></div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-1" title="Relationship Score">
-                    <span className="material-symbols-outlined text-[14px] text-on-surface-variant">favorite</span>
-                    <span className="font-label-sm text-label-sm text-on-surface-variant">{activeChar.state.stats.relationship.score}%</span>
-                  </div>
-                </div>
-              ) : (
+                    <div className="flex items-center gap-1" title="Relationship Score">
+                      <span className="material-symbols-outlined text-[14px] text-on-surface-variant">favorite</span>
+                      <span className="font-label-sm text-label-sm text-on-surface-variant">{activeChar.state.stats.relationship.score}%</span>
+                      </div>
+                      </div>
+                      <div 
+                      key={`${activeChar.state.location}-${activeChar.state.clothes}`}
+                      className="flex items-center gap-2 opacity-60 animate-flash"
+                      >
+                      <span className="font-label-sm text-label-xs text-on-surface-variant uppercase tracking-tighter">
+                      {activeChar.state.location} • {activeChar.state.clothes}
+                      </span>
+                      <span className="font-label-sm text-label-xs text-on-surface-variant/40">
+                      #{activeChar.state.interaction_count}
+                      </span>
+                      </div>
+                      </div>
+                      ) : (
+
                 <span className="font-label-sm text-label-sm text-on-surface-variant">
                   {activeChar?.description.substring(0, 40) || 'Narrative Session'}...
                 </span>
@@ -124,7 +179,12 @@ const ChatView: React.FC<ChatViewProps> = ({
       </header>
 
       {/* Main Chat Canvas */}
-      <main className="flex-1 overflow-y-auto w-full flex flex-col items-center custom-scrollbar">
+      <main 
+        ref={mainRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto w-full flex flex-col items-center custom-scrollbar z-[1] transition-opacity duration-500"
+        style={{ opacity: textOpacity }}
+      >
         <div className="w-full max-w-container-max px-sm md:px-md py-xl flex flex-col gap-lg">
           {/* Context Divider */}
           <div className="w-full flex items-center justify-center gap-md py-sm opacity-50">
@@ -153,7 +213,7 @@ const ChatView: React.FC<ChatViewProps> = ({
               <div key={msg.id} className={`flex flex-col gap-xs w-full group ${msg.role === 'user' ? 'items-end pl-xl pr-0 mt-md' : 'pl-0 pr-xl mt-md'}`}>
                 <div className="flex items-center gap-xs mb-1">
                   {msg.role === 'assistant' && (
-                    <div className="w-8 h-8 rounded-full bg-surface-container overflow-hidden flex items-center justify-center border border-outline-variant">
+                    <div className={`w-8 h-8 rounded-full bg-surface-container overflow-hidden flex items-center justify-center border border-outline-variant ${isStreaming ? 'animate-pulse-glow border-primary/50' : ''}`}>
                       <span className="material-symbols-outlined text-sm text-on-surface-variant">person</span>
                     </div>
                   )}
@@ -193,8 +253,8 @@ const ChatView: React.FC<ChatViewProps> = ({
                     )}
                   </div>
 
-                  {msg.role === 'assistant' && i === activePath.length - 1 && !isLoading && !isDraining && (
-                    <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {msg.role === 'assistant' && (
+                    <div className="flex gap-2 mt-2 items-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <button 
                         onClick={() => handleRegenerate(msg)}
                         className="flex items-center gap-1 px-3 py-1 rounded-md bg-surface-container-high border border-outline-variant text-on-surface-variant hover:text-primary transition-all text-[12px] font-medium"
@@ -202,9 +262,18 @@ const ChatView: React.FC<ChatViewProps> = ({
                         <span className="material-symbols-outlined text-[14px]">refresh</span>
                         Regenerate
                       </button>
-                      <button className="flex items-center justify-center h-7 w-7 rounded-md bg-surface-container-high border border-outline-variant text-on-surface-variant hover:text-primary transition-all">
+                      <button 
+                        onClick={() => handleCopyID(msg.request_id!)}
+                        className="flex items-center justify-center h-7 w-7 rounded-md bg-surface-container-high border border-outline-variant text-on-surface-variant hover:text-primary transition-all"
+                        title="Copy Request ID"
+                      >
                         <span className="material-symbols-outlined text-[14px]">content_copy</span>
                       </button>
+                      {msg.request_id && (
+                        <span className="font-label-sm text-[10px] text-on-surface-variant/30 select-all" title="Audit Request ID">
+                          {msg.request_id.split('-')[0]}...
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -224,7 +293,10 @@ const ChatView: React.FC<ChatViewProps> = ({
       </main>
 
       {/* Bottom Input Area */}
-      <div className="bg-background w-full flex-none pb-lg pt-sm px-sm md:px-md border-t border-outline-variant/10">
+      <div 
+        className="bg-background/80 backdrop-blur-md w-full flex-none pb-lg pt-sm px-sm md:px-md border-t border-outline-variant/10 z-10 transition-opacity duration-500"
+        style={{ opacity: textOpacity }}
+      >
         <div className="max-w-container-max mx-auto relative">
           <div className="bg-surface-container-low border border-outline-variant rounded-xl flex items-end p-sm focus-within:border-outline focus-within:bg-surface-container transition-all">
             <textarea 
@@ -233,7 +305,7 @@ const ChatView: React.FC<ChatViewProps> = ({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  onSend()
+                  handleSend()
                 }
               }}
               className="w-full bg-transparent border-none focus:ring-0 text-on-surface font-body-md text-body-md resize-none min-h-[24px] max-h-[200px] py-0 overflow-y-auto" 
@@ -249,7 +321,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>add_circle</span>
               </button>
               <button 
-                onClick={() => onSend()}
+                onClick={() => handleSend()}
                 disabled={isLoading || !input.trim()}
                 className="bg-on-surface text-background hover:bg-primary disabled:opacity-50 transition-colors flex items-center justify-center h-8 w-8 rounded-full shadow-sm"
               >

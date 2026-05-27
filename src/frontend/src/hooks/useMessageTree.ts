@@ -6,6 +6,7 @@ export interface MessageNode {
   role: 'user' | 'assistant';
   content: string;
   variant_index: number;
+  request_id?: string | null;
   timestamp?: string | Date;
 }
 

@@ -83,3 +83,25 @@ export const deleteCharacter = async (id: number) => {
   if (!response.ok) throw new Error('Failed to delete character')
   return response.ok
 }
+
+export const fetchLore = async () => {
+  const response = await fetch('/lore/')
+  if (!response.ok) throw new Error('Failed to fetch lore')
+  return response.json()
+}
+
+export const createLore = async (keyword: string, content: string, characterId?: number, isGlobal: boolean = false) => {
+  const response = await fetch('/lore/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keyword, content, character_id: characterId, is_global: isGlobal })
+  })
+  if (!response.ok) throw new Error('Failed to create lore')
+  return response.json()
+}
+
+export const deleteLore = async (id: number) => {
+  const response = await fetch(`/lore/${id}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Failed to delete lore')
+  return response.ok
+}

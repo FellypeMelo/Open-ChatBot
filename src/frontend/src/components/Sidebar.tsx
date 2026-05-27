@@ -9,9 +9,10 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, userName, onProfileClick }) => {
   const navItems = [
-    { id: 'characters', label: 'Library', icon: 'book' },
-    { id: 'chat', label: 'Active Stories', icon: 'chat_bubble' },
-    { id: 'archives', label: 'Archives', icon: 'inventory_2' },
+    { id: 'characters', label: 'Characters', icon: 'group' },
+    { id: 'chat', label: 'Direct Chat', icon: 'chat_bubble' },
+    { id: 'library', label: 'Lorebook', icon: 'menu_book' },
+    { id: 'archives', label: 'Knowledge Tags', icon: 'bookmarks' },
   ]
 
   return (

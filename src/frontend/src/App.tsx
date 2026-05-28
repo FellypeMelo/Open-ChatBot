@@ -6,10 +6,12 @@ import TagManagementView from './components/TagManagementView'
 import LorebookView from './components/LorebookView'
 import CharacterCreator from './components/CharacterCreator'
 import UserProfileModal from './components/UserProfileModal'
+import SettingsModal from './components/SettingsModal'
 import TagCreator from './components/TagCreator'
 import ErrorBoundary from './components/ErrorBoundary'
 import * as api from './services/api'
-import { MessageNode } from './hooks/useMessageTree'
+import type { MessageNode } from './hooks/useMessageTree'
+import { useSettings } from './hooks/useSettings'
 
 interface Tag {
   id: number
@@ -45,7 +47,7 @@ interface User {
 }
 
 type View = 'chat' | 'characters' | 'archives' | 'library'
-type ModalType = 'character' | 'user' | 'tag' | null
+type ModalType = 'character' | 'user' | 'tag' | 'settings' | null
 
 interface Toast {
   message: string
@@ -53,6 +55,7 @@ interface Toast {
 }
 
 function App() {
+  const { config } = useSettings()
   const [currentView, setCurrentView] = useState<View>('characters')
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -249,15 +252,7 @@ function App() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: currentInput, 
-          character_id: selectedCharId,
-          parent_id: parentId
-        })
-      })
+      const response = await api.sendMessageStream(currentInput, selectedCharId, parentId, config)
       await handleStreamResponse(response)
     } catch (error) {
       showToast('Lost connection to AI.', 'error')
@@ -282,14 +277,7 @@ function App() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          character_id: selectedCharId,
-          parent_id: parentId
-        })
-      })
+      const response = await api.sendMessageStream(null, selectedCharId, parentId, config)
       await handleStreamResponse(response)
     } catch (error) {
       showToast('Lost connection to AI.', 'error')
@@ -375,6 +363,7 @@ function App() {
           setView={(v) => setCurrentView(v as View)}
           userName={user?.name}
           onProfileClick={() => setActiveModal('user')}
+          onSettingsClick={() => setActiveModal('settings')}
         />
 
         <main className="flex-1 md:ml-64 h-screen overflow-hidden flex flex-col">
@@ -464,6 +453,11 @@ function App() {
             tag={editingTag}
           />
         )}
+        {activeModal === 'settings' && (
+          <SettingsModal
+            onClose={() => setActiveModal(null)}
+          />
+        )}
 
         {/* Toast */}
         {toast && (
@@ -475,13 +469,6 @@ function App() {
             <p className="font-label-md text-label-md font-medium">{toast.message}</p>
           </div>
         )}
-
-        <button
-          onClick={() => setActiveModal('user')}
-          className="fixed bottom-4 right-4 p-2 bg-surface-container border border-outline-variant rounded-full text-on-surface-variant hover:text-primary transition-colors z-30"
-        >
-          <span className="material-symbols-outlined">settings</span>
-        </button>
       </div>
     </ErrorBoundary>
   )

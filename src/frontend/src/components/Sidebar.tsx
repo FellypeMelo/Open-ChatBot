@@ -5,9 +5,10 @@ interface SidebarProps {
   setView: (view: string) => void
   userName?: string
   onProfileClick?: () => void
+  onSettingsClick?: () => void
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, userName, onProfileClick }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, userName, onProfileClick, onSettingsClick }) => {
   const navItems = [
     { id: 'characters', label: 'Characters', icon: 'group' },
     { id: 'chat', label: 'Direct Chat', icon: 'chat_bubble' },
@@ -57,16 +58,25 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, userName, onPro
       </ul>
 
       {/* Profile area */}
-      <div 
-        onClick={onProfileClick}
-        className="mt-auto pt-sm border-t border-outline-variant flex items-center gap-sm px-xs cursor-pointer hover:opacity-80 transition-opacity"
-      >
-        <div className="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center overflow-hidden shrink-0">
-          <span className="material-symbols-outlined text-on-surface-variant text-sm">person</span>
+      <div className="mt-auto pt-sm border-t border-outline-variant flex items-center gap-xs pr-xs">
+        <div 
+          onClick={onProfileClick}
+          className="flex-1 flex items-center gap-sm px-xs cursor-pointer hover:opacity-80 transition-opacity min-w-0"
+        >
+          <div className="w-8 h-8 rounded-full bg-surface-container-highest border border-outline-variant flex items-center justify-center overflow-hidden shrink-0">
+            <span className="material-symbols-outlined text-on-surface-variant text-sm">person</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-body-md text-body-md truncate">{userName || 'User Profile'}</p>
+          </div>
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="font-body-md text-body-md truncate">{userName || 'User Profile'}</p>
-        </div>
+        <button
+          onClick={onSettingsClick}
+          className="p-2 text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center"
+          title="Settings"
+        >
+          <span className="material-symbols-outlined text-md">settings</span>
+        </button>
       </div>
     </nav>
   )

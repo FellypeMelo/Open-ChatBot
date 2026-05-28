@@ -1,5 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
-import { useMessageTree, MessageNode } from '../useMessageTree';
+import { useMessageTree } from '../useMessageTree';
+import type { MessageNode } from '../useMessageTree';
 import { describe, it, expect } from 'vitest';
 
 describe('useMessageTree', () => {

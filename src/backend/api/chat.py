@@ -71,10 +71,15 @@ async def run_consciousness_layer(character_id: int, user_message: str, ai_respo
     except Exception as e:
         logger.exception(f"Consciousness layer error: {e}")
 
+class LLMConfig(BaseModel):
+    base_url: Optional[str] = None
+    model_name: Optional[str] = None
+
 class ChatRequest(BaseModel):
     message: Optional[str] = None
     character_id: int = 1
     parent_id: Optional[int] = None
+    config: Optional[LLMConfig] = None
 
 class ChatResponse(BaseModel):
     reply: str
@@ -144,7 +149,13 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
 
         prompt = await brain.build_prompt(user_message_content or "", character, {"location": state.location, "mood": state.mood, "stats": state.stats}, user=user, history=history[:-1] if request.message else history)
         
-        result = await llama.complete(prompt)
+        # Extract config for dynamic LLM routing
+        config = request.config or LLMConfig()
+        result = await llama.complete(
+            prompt, 
+            url=config.base_url, 
+            model=config.model_name
+        )
         reply = result.get("content", "...").strip()
 
         # RN-003: Formatting Validation
@@ -232,10 +243,17 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, d
 
     prompt = await brain.build_prompt(user_message_content or "", character, {"location": state.location, "mood": state.mood, "stats": state.stats}, user=user, history=history[:-1] if request.message else history)
 
+    # Extract config for dynamic LLM routing
+    config = request.config or LLMConfig()
+
     async def generate():
         full_reply = ""
         try:
-            async for token in llama.complete_stream(prompt):
+            async for token in llama.complete_stream(
+                prompt, 
+                url=config.base_url, 
+                model=config.model_name
+            ):
                 full_reply += token
                 yield f"data: {json.dumps({'token': token})}\n\n"
             

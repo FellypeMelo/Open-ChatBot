@@ -84,6 +84,31 @@ export const deleteCharacter = async (id: number) => {
   return response.ok
 }
 
+export interface LLMConfig {
+  base_url?: string;
+  model_name?: string;
+}
+
+export const sendMessage = async (message: string | null, characterId: number, parentId: number | null, config?: LLMConfig) => {
+  const response = await fetch('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, character_id: characterId, parent_id: parentId, config })
+  })
+  if (!response.ok) throw new Error('Failed to send message')
+  return response.json()
+}
+
+export const sendMessageStream = async (message: string | null, characterId: number, parentId: number | null, config?: LLMConfig) => {
+  const response = await fetch('/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, character_id: characterId, parent_id: parentId, config })
+  })
+  if (!response.ok) throw new Error('Failed to start stream')
+  return response
+}
+
 export const fetchLore = async () => {
   const response = await fetch('/lore/')
   if (!response.ok) throw new Error('Failed to fetch lore')

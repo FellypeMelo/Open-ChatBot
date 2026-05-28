@@ -16,7 +16,7 @@ class LlamaClient:
     async def close(self):
         await self.client.aclose()
 
-    async def complete(self, prompt: str, grammar: str = None):
+    async def complete(self, prompt: str, grammar: str = None, url: str = None, model: str = None):
         payload = {
             "prompt": prompt,
             "n_predict": settings.N_PREDICT,
@@ -30,11 +30,14 @@ class LlamaClient:
         }
         if grammar:
             payload["grammar"] = grammar
+        if model:
+            payload["model"] = model
         
+        target_url = url or self.url
         t0 = time.perf_counter()
         try:
-            logger.info(f"LLM REQ: prompt_len={len(prompt)}")
-            response = await self.client.post(f"{self.url}/completion", json=payload)
+            logger.info(f"LLM REQ: prompt_len={len(prompt)} target={target_url}")
+            response = await self.client.post(f"{target_url}/completion", json=payload)
             response.raise_for_status()
             dur = time.perf_counter() - t0
             res_data = response.json()
@@ -50,7 +53,7 @@ class LlamaClient:
                 raise
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def complete_stream(self, prompt: str, grammar: str = None):
+    async def complete_stream(self, prompt: str, grammar: str = None, url: str = None, model: str = None):
         """Async generator that yields tokens from llama.cpp SSE stream."""
         payload = {
             "prompt": prompt,
@@ -66,8 +69,11 @@ class LlamaClient:
         }
         if grammar:
             payload["grammar"] = grammar
+        if model:
+            payload["model"] = model
 
-        async with self.client.stream("POST", f"{self.url}/completion", json=payload, timeout=300.0) as response:
+        target_url = url or self.url
+        async with self.client.stream("POST", f"{target_url}/completion", json=payload, timeout=300.0) as response:
             response.raise_for_status()
             import json
             async for line in response.aiter_lines():
@@ -78,13 +84,19 @@ class LlamaClient:
                     if data.get("stop"):
                         return
 
-    async def embed(self, text: str):
+    async def embed(self, text: str, url: str = None, model: str = None):
         try:
             t0 = time.perf_counter()
             logger.info(f"Generating embedding for text: {text[:50]}...")
+            
+            payload = {"content": text}
+            if model:
+                payload["model"] = model
+                
+            target_url = url or self.embedding_url
             response = await self.client.post(
-                f"{self.embedding_url}/embedding", 
-                json={"content": text},
+                f"{target_url}/embedding", 
+                json=payload,
                 timeout=60.0 # Specific timeout for embedding
             )
             dur = time.perf_counter() - t0

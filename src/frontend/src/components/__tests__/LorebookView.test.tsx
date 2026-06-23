@@ -27,9 +27,9 @@ describe('LorebookView', () => {
     render(<LorebookView />);
     
     expect(screen.getByText('Lorebook & Knowledge')).toBeInTheDocument();
-    expect(api.fetchLore).toHaveBeenCalled();
 
     await waitFor(() => {
+      expect(api.fetchLore).toHaveBeenCalled();
       expect(screen.getByText('Silver Dragon')).toBeInTheDocument();
       expect(screen.getByText('Excalibur')).toBeInTheDocument();
     });

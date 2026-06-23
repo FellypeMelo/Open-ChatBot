@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 
 interface Tag {
   id: number
@@ -17,10 +17,12 @@ const TagCreator: React.FC<TagCreatorProps> = ({ onClose, onSubmit, tag }) => {
   const [instruction, setInstruction] = useState(tag?.instruction ?? '')
   const [isSaving, setIsSaving] = useState(false)
 
-  useEffect(() => {
+  const [prevTag, setPrevTag] = useState(tag)
+  if (tag !== prevTag) {
+    setPrevTag(tag)
     setLabel(tag?.label ?? '')
     setInstruction(tag?.instruction ?? '')
-  }, [tag])
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

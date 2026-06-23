@@ -28,7 +28,17 @@ const LorebookView: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchLore();
+    let active = true;
+    const init = async () => {
+      await Promise.resolve();
+      if (active) {
+        await fetchLore();
+      }
+    };
+    init();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

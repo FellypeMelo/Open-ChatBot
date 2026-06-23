@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import MessageRenderer from './MessageRenderer'
 import { useMessageTree } from '../hooks/useMessageTree'
 import type { MessageNode } from '../hooks/useMessageTree'
@@ -54,7 +54,7 @@ interface ChatViewProps {
   onSend: (parentId?: number) => void
   onRegenerate: (parentId: number) => void
   isLoading: boolean
-  onUpdateState: (charId: number, stateUpdate: any) => Promise<void>
+  onUpdateState: (charId: number, stateUpdate: Record<string, unknown>) => Promise<void>
   onClearChat: () => void
   onSendAction: (actionId: string, parentId?: number) => Promise<void>
 }
@@ -85,24 +85,31 @@ const ChatView: React.FC<ChatViewProps> = ({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [drawerTab, setDrawerTab] = useState<'actions' | 'gifts'>('actions')
 
-  const fetchJournalData = async () => {
-    if (!activeChar) return
-    setIsJournalLoading(true)
-    try {
-      const data = await fetchJournal(activeChar.id)
-      setJournalEntries(data)
-    } catch (err) {
-      console.error('Failed to load journal entries', err)
-    } finally {
-      setIsJournalLoading(false)
-    }
-  }
-
   useEffect(() => {
-    if (currentTab === 'journal') {
-      fetchJournalData()
+    let active = true
+    const loadJournalData = async () => {
+      if (currentTab !== 'journal' || !activeChar) return
+      await Promise.resolve()
+      if (!active) return
+      setIsJournalLoading(true)
+      try {
+        const data = await fetchJournal(activeChar.id)
+        if (active) {
+          setJournalEntries(data)
+        }
+      } catch (err) {
+        console.error('Failed to load journal entries', err)
+      } finally {
+        if (active) {
+          setIsJournalLoading(false)
+        }
+      }
     }
-  }, [currentTab, activeChar?.id])
+    loadJournalData()
+    return () => {
+      active = false
+    }
+  }, [currentTab, activeChar])
 
   useEffect(() => {
     if (activeChar?.state?.location) {
@@ -110,13 +117,13 @@ const ChatView: React.FC<ChatViewProps> = ({
     } else {
       stopAmbient()
     }
-  }, [activeChar?.state?.location, playAmbient, stopAmbient])
+  }, [activeChar, playAmbient, stopAmbient])
 
-  const scrollToBottom = (force = false) => {
+  const scrollToBottom = useCallback((force = false) => {
     if (force || isAtBottom) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }
+  }, [isAtBottom])
 
   const handleScroll = (e: React.UIEvent<HTMLElement>) => {
     const el = e.currentTarget
@@ -127,7 +134,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   useEffect(() => {
     scrollToBottom()
-  }, [activePath, displayedContent])
+  }, [activePath, displayedContent, scrollToBottom])
 
   useEffect(() => {
     if (isLoading) {
@@ -194,9 +201,9 @@ const ChatView: React.FC<ChatViewProps> = ({
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 select-none mt-xs sm:mt-0">
-              {activeChar?.state && (activeChar.state.location || activeChar.state.clothes) && (
+              {activeChar?.state && (activeChar.state?.location || activeChar.state?.clothes) && (
                 <span className="font-mono text-[9px] text-[#A1A1AA] bg-white/5 border border-white/10 px-2 py-0.5 rounded-full truncate max-w-[200px] sm:max-w-none">
-                  {(activeChar.state.location || '').toUpperCase()} • {(activeChar.state.clothes || '').toUpperCase()}
+                  {(activeChar.state?.location || '').toUpperCase()} • {(activeChar.state?.clothes || '').toUpperCase()}
                 </span>
               )}
               {activeChar && (
@@ -220,18 +227,18 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
                   <span>ENERGY</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar.state.stats.energy}%</span>
+                    <span className="text-white">{activeChar?.state?.stats?.energy}%</span>
                     <button
                       type="button"
                       onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { is_sleeping: !activeChar.state?.stats?.is_sleeping } })}
                       className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
                     >
-                      {activeChar.state.stats.is_sleeping ? 'Wake' : 'Sleep'}
+                      {activeChar?.state?.stats?.is_sleeping ? 'Wake' : 'Sleep'}
                     </button>
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar.state.stats.energy}%` }} />
+                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.energy}%` }} />
                 </div>
               </div>
 
@@ -239,19 +246,19 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
                   <span>HUNGER</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar.state.stats.hunger}%</span>
+                    <span className="text-white">{activeChar?.state?.stats?.hunger}%</span>
                     <button
                       type="button"
                       onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { hunger: Math.max(0, (activeChar.state?.stats?.hunger ?? 0) - 30) } })}
                       className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none disabled:opacity-20"
-                      disabled={activeChar.state.stats.hunger === 0}
+                      disabled={activeChar?.state?.stats?.hunger === 0}
                     >
                       Feed
                     </button>
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${activeChar.state.stats.hunger}%` }} />
+                  <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.hunger}%` }} />
                 </div>
               </div>
 
@@ -259,7 +266,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
                   <span>HAPPINESS</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar.state.stats.happiness ?? 100}%</span>
+                    <span className="text-white">{activeChar?.state?.stats?.happiness ?? 100}%</span>
                     <div className="flex gap-0.5">
                       <button
                         type="button"
@@ -279,7 +286,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-yellow-400 transition-all duration-500" style={{ width: `${activeChar.state.stats.happiness ?? 100}%` }} />
+                  <div className="h-full bg-yellow-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.happiness ?? 100}%` }} />
                 </div>
               </div>
 
@@ -287,7 +294,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
                   <span>SOCIAL</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar.state.stats.social ?? 100}%</span>
+                    <span className="text-white">{activeChar?.state?.stats?.social ?? 100}%</span>
                     <div className="flex gap-0.5">
                       <button
                         type="button"
@@ -307,7 +314,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-sky-400 transition-all duration-500" style={{ width: `${activeChar.state.stats.social ?? 100}%` }} />
+                  <div className="h-full bg-sky-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.social ?? 100}%` }} />
                 </div>
               </div>
 
@@ -315,7 +322,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
                   <span>RELATIONSHIP</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar.state.stats.relationship.score}%</span>
+                    <span className="text-white">{activeChar?.state?.stats?.relationship?.score}%</span>
                     <div className="flex gap-0.5">
                       <button
                         type="button"
@@ -335,7 +342,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-400 transition-all duration-500" style={{ width: `${activeChar.state.stats.relationship.score}%` }} />
+                  <div className="h-full bg-emerald-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.relationship?.score}%` }} />
                 </div>
               </div>
             </div>

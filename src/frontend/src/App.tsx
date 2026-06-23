@@ -54,6 +54,8 @@ interface Toast {
   type: 'success' | 'error'
 }
 
+const generateMessageId = () => Math.floor(Math.random() * 1000000) + Date.now();
+
 function App() {
   const { config } = useSettings()
   const [currentView, setCurrentView] = useState<View>('characters')
@@ -79,7 +81,7 @@ function App() {
     try {
       const data = await api.fetchUser()
       setUser(data)
-    } catch (err) {
+    } catch {
       showToast('Failed to fetch user.', 'error')
     }
   }, [])
@@ -91,7 +93,7 @@ function App() {
       if (data.length > 0 && !selectedCharId) {
         setSelectedCharId(data[0].id)
       }
-    } catch (err) {
+    } catch {
       showToast('Failed to fetch characters.', 'error')
     }
   }, [selectedCharId])
@@ -100,15 +102,25 @@ function App() {
     try {
       const data = await api.fetchTags()
       setTags(data)
-    } catch (err) {
+    } catch {
       showToast('Failed to fetch tags.', 'error')
     }
   }, [])
 
   useEffect(() => {
-    fetchCharacters()
-    fetchUser()
-    fetchTags()
+    let active = true
+    const init = async () => {
+      await Promise.resolve()
+      if (active) {
+        fetchCharacters()
+        fetchUser()
+        fetchTags()
+      }
+    }
+    init()
+    return () => {
+      active = false
+    }
   }, [fetchCharacters, fetchUser, fetchTags])
 
   const fetchHistory = useCallback(async (charId: number) => {
@@ -126,10 +138,20 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (selectedCharId) {
-      fetchHistory(selectedCharId)
+    let active = true
+    const init = async () => {
+      if (selectedCharId) {
+        await Promise.resolve()
+        if (active) {
+          fetchHistory(selectedCharId)
+        }
+      }
     }
-  }, [selectedCharId]) // Only re-run when character changes
+    init()
+    return () => {
+      active = false
+    }
+  }, [selectedCharId, fetchHistory]) // Only re-run when character changes or fetchHistory changes
 
   const updateUser = async (name: string, gender: string) => {
     try {
@@ -137,7 +159,7 @@ function App() {
       setUser(data)
       setActiveModal(null)
       showToast('Profile updated.')
-    } catch (err) {
+    } catch {
       showToast('Failed to update profile.', 'error')
     }
   }
@@ -150,7 +172,7 @@ function App() {
       setEditingTag(null)
       showToast('Tag created.')
       return data
-    } catch (err) {
+    } catch {
       showToast('Failed to create tag.', 'error')
       return null
     }
@@ -163,7 +185,7 @@ function App() {
       setActiveModal(null)
       setEditingTag(null)
       showToast('Tag updated.')
-    } catch (err) {
+    } catch {
       showToast('Failed to update tag.', 'error')
     }
   }
@@ -173,7 +195,7 @@ function App() {
       await api.deleteTag(id)
       setTags((prev) => prev.filter((tag) => tag.id !== id))
       showToast('Tag deleted.')
-    } catch (err) {
+    } catch {
       showToast('Failed to delete tag.', 'error')
     }
   }
@@ -185,7 +207,7 @@ function App() {
       setCharacters(prev => prev.filter(c => c.id !== id))
       if (selectedCharId === id) setSelectedCharId(null)
       showToast('Character deleted.')
-    } catch (err) {
+    } catch {
       showToast('Failed to delete character.', 'error')
     }
   }
@@ -201,7 +223,7 @@ function App() {
       setSelectedCharId(data.id)
       setActiveModal(null)
       showToast('Character initialized.')
-    } catch (err) {
+    } catch {
       showToast('Failed to create character.', 'error')
     }
   }
@@ -218,7 +240,7 @@ function App() {
       setActiveModal(null)
       setEditingCharacter(null)
       showToast('Changes saved.')
-    } catch (err) {
+    } catch {
       showToast('Failed to update character.', 'error')
     }
   }
@@ -229,7 +251,7 @@ function App() {
     const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
 
     // Use a more robust temporary ID to avoid collisions and ensure stability in tests
-    const userMsgId = Math.floor(Math.random() * 1000000) + Date.now()
+    const userMsgId = generateMessageId()
     const assistantMsgId = userMsgId + 1
 
     const userMsg: MessageNode = { 
@@ -255,7 +277,7 @@ function App() {
     try {
       const response = await api.sendMessageStream(currentInput, selectedCharId, parentId, config)
       await handleStreamResponse(response)
-    } catch (error) {
+    } catch {
       showToast('Lost connection to AI.', 'error')
     } finally {
       setIsLoading(false)
@@ -279,7 +301,7 @@ function App() {
     }
 
     const actionMessage = actionsMessages[actionId] || `*Performs action: ${actionId}*`
-    const userMsgId = Math.floor(Math.random() * 1000000) + Date.now()
+    const userMsgId = generateMessageId()
     const assistantMsgId = userMsgId + 1
 
     const userMsg: MessageNode = { 
@@ -303,7 +325,7 @@ function App() {
     try {
       const response = await api.sendMessageStream(null, selectedCharId, parentId, config, actionId)
       await handleStreamResponse(response)
-    } catch (error) {
+    } catch {
       showToast('Lost connection to AI.', 'error')
     } finally {
       setIsLoading(false)
@@ -313,7 +335,7 @@ function App() {
   const handleRegenerate = async (parentId: number) => {
     if (isLoading || !selectedCharId) return
 
-    const assistantMsgId = Date.now()
+    const assistantMsgId = generateMessageId()
     const assistantMsg: MessageNode = { 
       id: assistantMsgId,
       parent_id: parentId,
@@ -328,7 +350,7 @@ function App() {
     try {
       const response = await api.sendMessageStream(null, selectedCharId, parentId, config)
       await handleStreamResponse(response)
-    } catch (error) {
+    } catch {
       showToast('Lost connection to AI.', 'error')
     } finally {
       setIsLoading(false)
@@ -395,11 +417,11 @@ function App() {
     setCurrentView('chat')
   }
 
-  const handleUpdateState = async (charId: number, stateUpdate: any) => {
+  const handleUpdateState = async (charId: number, stateUpdate: Record<string, unknown>) => {
     try {
       const updatedChar = await api.updateCharacterState(charId, stateUpdate)
       setCharacters((prev) => prev.map((c) => c.id === charId ? updatedChar : c))
-    } catch (err) {
+    } catch {
       setToast({ message: 'Failed to update character state.', type: 'error' })
     }
   }
@@ -412,8 +434,8 @@ function App() {
         setMessages([])
         fetchCharacters()
         setToast({ message: 'Conversation cleared.', type: 'success' })
-      } catch (err) {
-        setToast({ message: 'Failed to clear conversation.', type: 'error' })
+      } catch {
+        setToast({ message: 'Failed to clear conversation history.', type: 'error' })
       }
     }
   }

@@ -33,7 +33,7 @@ export const useTokenQueue = (msPerToken: number = 25, onTokenReleased?: () => v
         setIsDraining(false);
       }
     }, msPerToken);
-  }, [msPerToken]);
+  }, [msPerToken, onTokenReleased]);
 
   const enqueue = useCallback((tokens: string) => {
     if (!tokens) return;

@@ -2,12 +2,60 @@ import { renderHook, act } from '@testing-library/react';
 import { useAudio } from '../useAudio';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
+interface MockOscillator {
+  type: string;
+  frequency: {
+    setValueAtTime: ReturnType<typeof vi.fn>;
+    exponentialRampToValueAtTime: ReturnType<typeof vi.fn>;
+  };
+  connect: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+}
+
+interface MockGain {
+  gain: {
+    value: number;
+    setValueAtTime: ReturnType<typeof vi.fn>;
+    exponentialRampToValueAtTime: ReturnType<typeof vi.fn>;
+  };
+  connect: ReturnType<typeof vi.fn>;
+}
+
+interface MockBiquadFilter {
+  type: string;
+  frequency: { value: number };
+  Q: { value: number };
+  connect: ReturnType<typeof vi.fn>;
+}
+
+interface MockBufferSource {
+  buffer: AudioBuffer | null;
+  loop: boolean;
+  connect: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+}
+
+interface MockAudioContextInstance {
+  state: string;
+  currentTime: number;
+  sampleRate: number;
+  resume: ReturnType<typeof vi.fn>;
+  createOscillator: ReturnType<typeof vi.fn>;
+  createGain: ReturnType<typeof vi.fn>;
+  createBiquadFilter: ReturnType<typeof vi.fn>;
+  createBufferSource: ReturnType<typeof vi.fn>;
+  createBuffer: ReturnType<typeof vi.fn>;
+  destination: Record<string, unknown>;
+}
+
 describe('useAudio', () => {
-  let mockAudioContextInstance: any;
-  let mockOscillator: any;
-  let mockGain: any;
-  let mockBiquadFilter: any;
-  let mockBufferSource: any;
+  let mockAudioContextInstance: MockAudioContextInstance;
+  let mockOscillator: MockOscillator;
+  let mockGain: MockGain;
+  let mockBiquadFilter: MockBiquadFilter;
+  let mockBufferSource: MockBufferSource;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -66,13 +114,13 @@ describe('useAudio', () => {
     };
 
     // Set mock AudioContext on window
-    (window as any).AudioContext = vi.fn().mockImplementation(function() {
+    (window as typeof window & { AudioContext?: ReturnType<typeof vi.fn> }).AudioContext = vi.fn().mockImplementation(function(this: unknown) {
       return mockAudioContextInstance;
     });
   });
 
   afterEach(() => {
-    delete (window as any).AudioContext;
+    delete (window as typeof window & { AudioContext?: ReturnType<typeof vi.fn> }).AudioContext;
   });
 
   it('should resume audio context if suspended', async () => {
@@ -149,7 +197,7 @@ describe('useAudio', () => {
   });
 
   it('should handle errors gracefully during playback and context setup', () => {
-    (window as any).AudioContext = vi.fn().mockImplementation(() => {
+    (window as typeof window & { AudioContext?: ReturnType<typeof vi.fn> }).AudioContext = vi.fn().mockImplementation(() => {
       throw new Error('AudioContext failed to initialize');
     });
 

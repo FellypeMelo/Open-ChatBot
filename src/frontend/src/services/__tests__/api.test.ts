@@ -10,7 +10,7 @@ describe('api service tests', () => {
     vi.unstubAllGlobals();
   });
 
-  const mockSuccessResponse = (data: any) => {
+  const mockSuccessResponse = (data: unknown) => {
     return Promise.resolve({
       ok: true,
       json: () => Promise.resolve(data),
@@ -163,7 +163,7 @@ describe('api service tests', () => {
 
   it('saveRunnerConfig should make POST call to /settings/save', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
-    const cfg = { inference: {} as any, embedding: {} as any };
+    const cfg = { inference: {}, embedding: {} } as unknown as Parameters<typeof api.saveRunnerConfig>[0];
     await api.saveRunnerConfig(cfg);
     expect(fetch).toHaveBeenCalledWith('/settings/save', expect.objectContaining({
       method: 'POST',

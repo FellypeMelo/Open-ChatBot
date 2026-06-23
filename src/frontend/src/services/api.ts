@@ -188,7 +188,7 @@ export const restartAllServers = async () => {
   return response.json()
 }
 
-export const updateCharacterState = async (charId: number, stateUpdate: any) => {
+export const updateCharacterState = async (charId: number, stateUpdate: Record<string, unknown>) => {
   const response = await fetch(`/characters/${charId}/state`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

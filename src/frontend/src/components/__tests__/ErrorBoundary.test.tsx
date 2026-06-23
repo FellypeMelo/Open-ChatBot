@@ -7,7 +7,7 @@ const ProblemChild = () => {
 };
 
 describe('ErrorBoundary', () => {
-  let consoleSpy: any;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -28,9 +28,19 @@ describe('ErrorBoundary', () => {
   });
 
   it('should catch error and render fallback UI with reload button', () => {
-    const { location } = window;
-    delete (window as any).location;
-    window.location = { reload: vi.fn() } as any;
+    const originalLocation = window.location;
+    const mockReload = vi.fn();
+
+    const mockedLocation = {
+      ...originalLocation,
+      reload: mockReload,
+    } as unknown as Location;
+
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      configurable: true,
+      value: mockedLocation,
+    });
 
     render(
       <ErrorBoundary>
@@ -43,8 +53,12 @@ describe('ErrorBoundary', () => {
 
     const reloadButton = screen.getByRole('button', { name: 'Reload Interface' });
     fireEvent.click(reloadButton);
-    expect(window.location.reload).toHaveBeenCalled();
+    expect(mockReload).toHaveBeenCalled();
 
-    window.location = location; // restore
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      configurable: true,
+      value: originalLocation,
+    });
   });
 });

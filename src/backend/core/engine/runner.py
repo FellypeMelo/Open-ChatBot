@@ -84,8 +84,12 @@ class LlamaServerRunner:
                         self.config["embedding"]["port"] = 8080
                         updated = True
 
-            except Exception as e:
-                logger.error(f"Failed to load models_config.json: {e}")
+            except (json.JSONDecodeError, FileNotFoundError, PermissionError) as e:
+                logger.warning(f"Could not load models_config.json, using defaults: {e}")
+                self.config = DEFAULT_CONFIG.copy()
+                updated = True
+            except Exception:
+                logger.exception("Unexpected error loading models_config.json")
                 self.config = DEFAULT_CONFIG.copy()
                 updated = True
         else:
@@ -106,8 +110,8 @@ class LlamaServerRunner:
         try:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save models_config.json: {e}")
+        except IOError:
+            logger.exception("Failed to write to models_config.json")
 
     def get_available_models(self) -> List[str]:
         models_dir = Path("models")
@@ -227,8 +231,8 @@ class LlamaServerRunner:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             return True
-        except Exception as e:
-            logger.error(f"Failed to start Llama Inference Server: {e}")
+        except OSError:
+            logger.exception("Failed to start Llama Inference Server subprocess")
             return False
 
     def start_embedding(self) -> bool:
@@ -302,8 +306,8 @@ class LlamaServerRunner:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             return True
-        except Exception as e:
-            logger.error(f"Failed to start Llama Embedding Server: {e}")
+        except OSError:
+            logger.exception("Failed to start Llama Embedding Server subprocess")
             return False
 
     def stop_inference(self):

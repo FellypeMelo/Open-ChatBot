@@ -53,7 +53,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       setEmbArgs(data.embedding.config.additional_args)
       
       setError(null)
-    } catch (err: any) {
+    } catch {
       setError('Failed to fetch AI runner status from backend.')
     } finally {
       setLoading(false)
@@ -61,7 +61,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   }
 
   useEffect(() => {
-    loadStatus()
+    let active = true
+    const init = async () => {
+      await Promise.resolve()
+      if (active) {
+        await loadStatus()
+      }
+    }
+    init()
+    return () => {
+      active = false
+    }
   }, [])
 
   const handleSave = async (e: React.FormEvent) => {
@@ -94,8 +104,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       await api.restartAllServers()
       await loadStatus()
       alert('AI Configuration updated and servers restarted successfully!')
-    } catch (err: any) {
-      setError(err.message || 'Failed to save settings.')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save settings.'
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -106,8 +117,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     try {
       await api.startServer(type)
       await loadStatus()
-    } catch (err: any) {
-      setError(err.message || `Failed to start ${type} server. Check GGUF path.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : `Failed to start ${type} server. Check GGUF path.`
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -118,8 +130,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     try {
       await api.stopServer(type)
       await loadStatus()
-    } catch (err: any) {
-      setError(err.message || `Failed to stop ${type} server.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : `Failed to stop ${type} server.`
+      setError(msg)
     } finally {
       setLoading(false)
     }

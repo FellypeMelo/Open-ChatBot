@@ -15,7 +15,7 @@ export const useAudio = () => {
   const playTypewriterClick = useCallback(() => {
     try {
       if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
       }
 
       const ctx = audioCtxRef.current;
@@ -48,7 +48,9 @@ export const useAudio = () => {
     if (ambientSourceRef.current) {
       try {
         ambientSourceRef.current.stop();
-      } catch (e) {}
+      } catch {
+        // Suppress error
+      }
       ambientSourceRef.current = null;
     }
     ambientGainRef.current = null;
@@ -62,7 +64,7 @@ export const useAudio = () => {
       currentLocationRef.current = loc;
 
       if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioCtxRef.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
       }
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') {
@@ -73,7 +75,9 @@ export const useAudio = () => {
       if (ambientSourceRef.current) {
         try {
           ambientSourceRef.current.stop();
-        } catch (e) {}
+        } catch {
+          // Suppress error
+        }
       }
 
       // Generate a 4-second buffer of brown noise (softer and deeper than white noise)

@@ -22,54 +22,40 @@ describe('App', () => {
     }
   ]
 
+  const mockResponse = (data: unknown, ok = true) => {
+    return Promise.resolve({
+      ok,
+      json: () => Promise.resolve(data),
+    } as unknown as Response)
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(fetch).mockImplementation((url) => {
       if (url === '/users/me') {
-        return Promise.resolve({
-          json: () => Promise.resolve(mockUser),
-          ok: true
-        } as any)
+        return mockResponse(mockUser)
       }
       if (url === '/characters/') {
-        return Promise.resolve({
-          json: () => Promise.resolve(mockCharacters),
-          ok: true
-        } as any)
+        return mockResponse(mockCharacters)
       }
       if (url === '/tags/') {
-        return Promise.resolve({
-          json: () => Promise.resolve([]),
-          ok: true
-        } as any)
+        return mockResponse([])
       }
       if (url === '/lore/') {
-        return Promise.resolve({
-          json: () => Promise.resolve([]),
-          ok: true
-        } as any)
+        return mockResponse([])
       }
       if (String(url).startsWith('/history/')) {
-        return Promise.resolve({
-          json: () => Promise.resolve([]),
-          ok: true
-        } as any)
+        return mockResponse([])
       }
       if (url === '/settings/status') {
-        return Promise.resolve({
-          json: () => Promise.resolve({
-            inference: { running: false, config: { binary_path: 'llama-server.exe', model_path: '', port: 8080, threads: 4, gpu_layers: -1, context_size: 4096, additional_args: '' } },
-            embedding: { running: false, config: { binary_path: 'llama-server.exe', model_path: '', port: 8081, threads: 4, gpu_layers: -1, context_size: 4096, additional_args: '' } },
-            available_models: [],
-            available_binaries: []
-          }),
-          ok: true
-        } as any)
+        return mockResponse({
+          inference: { running: false, config: { binary_path: 'llama-server.exe', model_path: '', port: 8080, threads: 4, gpu_layers: -1, context_size: 4096, additional_args: '' } },
+          embedding: { running: false, config: { binary_path: 'llama-server.exe', model_path: '', port: 8081, threads: 4, gpu_layers: -1, context_size: 4096, additional_args: '' } },
+          available_models: [],
+          available_binaries: []
+        })
       }
-      return Promise.resolve({
-        json: () => Promise.resolve({}),
-        ok: true
-      } as any)
+      return mockResponse({})
     })
   })
 
@@ -106,16 +92,13 @@ describe('App', () => {
     ]
     vi.mocked(fetch).mockImplementation((url, options) => {
       if (url === '/characters/' && options?.method === 'POST') {
-        return Promise.resolve({
-          json: () => Promise.resolve(updatedCharacters[1]),
-          ok: true
-        } as any)
+        return mockResponse(updatedCharacters[1])
       }
-      if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
-      if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(updatedCharacters), ok: true } as any)
-      if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      if (String(url).startsWith('/history/')) return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
+      if (url === '/users/me') return mockResponse(mockUser)
+      if (url === '/characters/') return mockResponse(updatedCharacters)
+      if (url === '/tags/') return mockResponse([])
+      if (String(url).startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
     })
 
     render(<App />)
@@ -138,16 +121,13 @@ describe('App', () => {
     const updatedUser = { ...mockUser, name: 'New Name', gender: 'Female' }
     vi.mocked(fetch).mockImplementation((url, options) => {
       if (url === '/users/me' && options?.method === 'POST') {
-        return Promise.resolve({
-          json: () => Promise.resolve(updatedUser),
-          ok: true
-        } as any)
+        return mockResponse(updatedUser)
       }
-      if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
-      if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(mockCharacters), ok: true } as any)
-      if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      if (String(url).startsWith('/history/')) return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
+      if (url === '/users/me') return mockResponse(mockUser)
+      if (url === '/characters/') return mockResponse(mockCharacters)
+      if (url === '/tags/') return mockResponse([])
+      if (String(url).startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
     })
 
     render(<App />)
@@ -176,15 +156,15 @@ describe('App', () => {
             controller.close()
           }
         })
-        return Promise.resolve({ body: stream, ok: true } as any)
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
       }
-      if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
-      if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(mockCharacters), ok: true } as any)
-      if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
+      if (url === '/users/me') return mockResponse(mockUser)
+      if (url === '/characters/') return mockResponse(mockCharacters)
+      if (url === '/tags/') return mockResponse([])
       if (String(url).startsWith('/history/')) {
-          return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
+          return mockResponse([])
       }
-      return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
+      return mockResponse({})
     })
 
     render(<App />)
@@ -221,11 +201,11 @@ describe('App', () => {
   it('handles chat error', async () => {
     vi.mocked(fetch).mockImplementation((url) => {
       if (url === '/chat/stream') return Promise.reject(new Error('Network error'))
-      if (url === '/users/me') return Promise.resolve({ json: () => Promise.resolve(mockUser), ok: true } as any)
-      if (url === '/characters/') return Promise.resolve({ json: () => Promise.resolve(mockCharacters), ok: true } as any)
-      if (url === '/tags/') return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      if (String(url).startsWith('/history/')) return Promise.resolve({ json: () => Promise.resolve([]), ok: true } as any)
-      return Promise.resolve({ json: () => Promise.resolve({}), ok: true } as any)
+      if (url === '/users/me') return mockResponse(mockUser)
+      if (url === '/characters/') return mockResponse(mockCharacters)
+      if (url === '/tags/') return mockResponse([])
+      if (String(url).startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
     })
 
     render(<App />)

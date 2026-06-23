@@ -43,9 +43,26 @@ describe('App', () => {
           ok: true
         } as any)
       }
+      if (url === '/lore/') {
+        return Promise.resolve({
+          json: () => Promise.resolve([]),
+          ok: true
+        } as any)
+      }
       if (String(url).startsWith('/history/')) {
         return Promise.resolve({
           json: () => Promise.resolve([]),
+          ok: true
+        } as any)
+      }
+      if (url === '/settings/status') {
+        return Promise.resolve({
+          json: () => Promise.resolve({
+            inference: { running: false, config: { binary_path: 'llama-server.exe', model_path: '', port: 8080, threads: 4, gpu_layers: -1, context_size: 4096, additional_args: '' } },
+            embedding: { running: false, config: { binary_path: 'llama-server.exe', model_path: '', port: 8081, threads: 4, gpu_layers: -1, context_size: 4096, additional_args: '' } },
+            available_models: [],
+            available_binaries: []
+          }),
           ok: true
         } as any)
       }
@@ -58,8 +75,8 @@ describe('App', () => {
 
   it('renders the main application structure', async () => {
     render(<App />)
-    expect(screen.getAllByText('Character Library').length).toBeGreaterThan(0)
-    expect(screen.getByText('Manage and select your AI personas')).toBeInTheDocument()
+    expect(screen.getAllByText('Character Core').length).toBeGreaterThan(0)
+    expect(screen.getByText('NARRATIVE ENGINE')).toBeInTheDocument()
 
     // Wait for initial data fetch
     await waitFor(() => {
@@ -73,7 +90,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Luna')
 
-    const addBtn = screen.getByText('New Character')
+    const addBtn = screen.getByText('Initialize Persona')
     fireEvent.click(addBtn)
 
     expect(await screen.findByText('Create Character')).toBeInTheDocument()
@@ -103,7 +120,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Luna')
-    fireEvent.click(screen.getByText('New Character'))
+    fireEvent.click(screen.getByText('Initialize Persona'))
 
     const nameInput = await screen.findByPlaceholderText(/e\.g\. Architect/)
     fireEvent.change(nameInput, { target: { value: 'Nova' } })
@@ -178,7 +195,7 @@ describe('App', () => {
     fireEvent.click(chatBtn)
 
     // Should now be in chat view
-    const input = await screen.findByPlaceholderText(/Speak with Luna/)
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
     
     // Type and send
     await act(async () => {
@@ -215,9 +232,9 @@ describe('App', () => {
     await screen.findAllByText('Luna')
 
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
-    await screen.findByPlaceholderText(/Speak with Luna/)
+    await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
-    fireEvent.change(screen.getByPlaceholderText(/Speak with Luna/), { target: { value: 'Hi' } })
+    fireEvent.change(screen.getByPlaceholderText(/Write a prompt for Luna/), { target: { value: 'Hi' } })
     const sendButton = screen.getByText('arrow_upward').closest('button')!
 
     await act(async () => {
@@ -225,5 +242,51 @@ describe('App', () => {
     })
 
     expect(await screen.findByText(/Lost connection/)).toBeInTheDocument()
+  })
+
+  it('navigates to Lorebook and Knowledge Tags views via sidebar buttons', async () => {
+    render(<App />)
+    
+    // Wait for App to render
+    await screen.findAllByText('Luna')
+
+    // Click Lorebook link in sidebar
+    const lorebookBtn = screen.getByText('Lorebook')
+    fireEvent.click(lorebookBtn)
+    
+    // Should display Lorebook title
+    expect(await screen.findByText('Lorebook & Knowledge')).toBeInTheDocument()
+
+    // Click Knowledge Tags link in sidebar
+    const tagsBtn = screen.getByText('Knowledge Tags')
+    fireEvent.click(tagsBtn)
+    
+    // Should display Tag Management title
+    expect(await screen.findByText('Tag Management')).toBeInTheDocument()
+  })
+
+  it('opens and closes the settings modal', async () => {
+    render(<App />)
+    await screen.findAllByText('Luna')
+
+    const settingsBtn = screen.getByTitle('Settings')
+    fireEvent.click(settingsBtn)
+
+    expect(await screen.findByText('Local Narrative Core')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Cancel'))
+    await waitFor(() => expect(screen.queryByText('Local Narrative Core')).not.toBeInTheDocument())
+  })
+
+  it('opens character creator in edit mode when Edit is clicked', async () => {
+    render(<App />)
+    await screen.findAllByText('Luna')
+
+    // Find and click the edit button on the card (first we hover or hover isn't strictly required in JSDOM unless CSS hides it, click by aria-label)
+    const editBtn = screen.getByRole('button', { name: 'Edit' })
+    fireEvent.click(editBtn)
+
+    expect(await screen.findByText('Edit Character')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Luna')).toBeInTheDocument()
   })
 })

@@ -1,63 +1,176 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import SettingsModal from '../SettingsModal'
+import * as api from '../../services/api'
 
-// Mock useSettings hook
-const mockSetConfig = vi.fn()
-vi.mock('../../hooks/useSettings', () => ({
-  useSettings: () => ({
-    config: { base_url: 'http://localhost:8080', model_name: 'test-model' },
-    setConfig: mockSetConfig
-  })
+// Mock the API service
+vi.mock('../../services/api', () => ({
+  fetchRunnerStatus: vi.fn(),
+  saveRunnerConfig: vi.fn(),
+  startServer: vi.fn(),
+  stopServer: vi.fn(),
+  restartAllServers: vi.fn()
 }))
+
+const mockStatusResponse = {
+  inference: {
+    running: false,
+    config: {
+      binary_path: 'llama_bin/llama-server.exe',
+      model_path: 'models/qwen.gguf',
+      port: 8080,
+      threads: 4,
+      gpu_layers: -1,
+      context_size: 4096,
+      additional_args: '--cache-type-k q8_0'
+    }
+  },
+  embedding: {
+    running: false,
+    config: {
+      binary_path: 'llama_bin/llama-server.exe',
+      model_path: 'models/qwen-emb.gguf',
+      port: 8081,
+      threads: 4,
+      gpu_layers: -1,
+      context_size: 4096,
+      additional_args: ''
+    }
+  },
+  available_models: ['qwen.gguf', 'qwen-emb.gguf'],
+  available_binaries: ['llama-server.exe']
+}
 
 describe('SettingsModal', () => {
   const mockOnClose = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(api.fetchRunnerStatus).mockResolvedValue(mockStatusResponse)
+    vi.mocked(api.saveRunnerConfig).mockResolvedValue({ status: 'success' })
+    vi.mocked(api.restartAllServers).mockResolvedValue({ status: 'success' })
   })
 
-  it('renders with initial values from config', () => {
+  it('renders and displays loaded config values', async () => {
     render(<SettingsModal onClose={mockOnClose} />)
     
-    expect(screen.getByLabelText(/Server URL/i)).toHaveValue('http://localhost:8080')
-    expect(screen.getByLabelText(/Model Identifier/i)).toHaveValue('test-model')
+    // Wait for the status to load and loading state to end
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+    
+    expect(screen.getByText('Local Narrative Core')).toBeInTheDocument()
+    
+    // Check ports
+    const portInputs = screen.getAllByLabelText('Port')
+    expect(portInputs[0]).toHaveValue(8080)
   })
 
-  it('calls setConfig and onClose when form is submitted', async () => {
+  it('allows switching between Inference and Embedding tabs', async () => {
     render(<SettingsModal onClose={mockOnClose} />)
     
-    const urlInput = screen.getByLabelText(/Server URL/i)
-    const modelInput = screen.getByLabelText(/Model Identifier/i)
-    const saveButton = screen.getByText('Save Settings')
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
 
-    fireEvent.change(urlInput, { target: { value: 'http://127.0.0.1:9090' } })
-    fireEvent.change(modelInput, { target: { value: 'new-model' } })
+    // Inference tab is active by default, check for inference specific fields
+    expect(screen.getByLabelText('Context Size (tokens)')).toBeInTheDocument()
+
+    // Switch to Embedding tab
+    const embeddingTabButton = screen.getByText(/Embedding Vector/i)
+    fireEvent.click(embeddingTabButton)
+
+    // Check embedding status title
+    await waitFor(() => {
+      expect(screen.getByText('Embedding Server: STOPPED')).toBeInTheDocument()
+    })
+  })
+
+  it('calls saveRunnerConfig and restartAllServers when form is submitted', async () => {
+    render(<SettingsModal onClose={mockOnClose} />)
+    
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    // Modify a field (e.g. CPU Threads)
+    const threadsInput = screen.getByLabelText('CPU Threads')
+    fireEvent.change(threadsInput, { target: { value: '8' } })
+
+    // Save & Restart AI
+    const saveButton = screen.getByText('Save & Restart AI')
     fireEvent.click(saveButton)
 
-    expect(mockSetConfig).toHaveBeenCalledWith({
-      base_url: 'http://127.0.0.1:9090',
-      model_name: 'new-model'
+    await waitFor(() => {
+      expect(api.saveRunnerConfig).toHaveBeenCalled()
+      expect(api.restartAllServers).toHaveBeenCalled()
     })
-    expect(mockOnClose).toHaveBeenCalled()
   })
 
-  it('calls onClose when Cancel button is clicked', () => {
+  it('calls onClose when Cancel button is clicked', async () => {
     render(<SettingsModal onClose={mockOnClose} />)
     
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
     const cancelButton = screen.getByText('Cancel')
     fireEvent.click(cancelButton)
 
     expect(mockOnClose).toHaveBeenCalled()
   })
 
-  it('calls onClose when Close icon is clicked', () => {
+  it('calls onClose when Close icon button is clicked', async () => {
     render(<SettingsModal onClose={mockOnClose} />)
     
-    const closeIcon = screen.getByLabelText('Close modal')
-    fireEvent.click(closeIcon)
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    const closeIconButton = screen.getByLabelText('Close modal')
+    fireEvent.click(closeIconButton)
 
     expect(mockOnClose).toHaveBeenCalled()
+  })
+
+  it('calls startServer when START SERVER is clicked', async () => {
+    vi.mocked(api.startServer).mockResolvedValue({ status: 'success' })
+    render(<SettingsModal onClose={mockOnClose} />)
+    
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    const startButton = screen.getByText('START SERVER')
+    fireEvent.click(startButton)
+
+    await waitFor(() => {
+      expect(api.startServer).toHaveBeenCalledWith('inference')
+    })
+  })
+
+  it('calls stopServer when STOP SERVER is clicked', async () => {
+    const runningStatusResponse = {
+      ...mockStatusResponse,
+      inference: {
+        ...mockStatusResponse.inference,
+        running: true
+      }
+    }
+    vi.mocked(api.fetchRunnerStatus).mockResolvedValue(runningStatusResponse)
+    vi.mocked(api.stopServer).mockResolvedValue({ status: 'success' })
+    
+    render(<SettingsModal onClose={mockOnClose} />)
+    
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: ACTIVE')).toBeInTheDocument()
+    })
+
+    const stopButton = screen.getByText('STOP SERVER')
+    fireEvent.click(stopButton)
+
+    await waitFor(() => {
+      expect(api.stopServer).toHaveBeenCalledWith('inference')
+    })
   })
 })

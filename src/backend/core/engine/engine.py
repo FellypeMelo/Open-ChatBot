@@ -115,8 +115,98 @@ def evolve_character(db: Session, character_id: int, reflection: dict):
                 if fact not in current_stats["facts"]:
                     current_stats["facts"].append(fact)
         
+        # Update relationship score dynamically
+        rel_change = reflection.get("relationship_change", 0)
+        if rel_change:
+            relationship = current_stats.get("relationship", {})
+            if not isinstance(relationship, dict):
+                relationship = {"score": 50}
+            old_score = relationship.get("score", 50)
+            new_score = max(0, min(100, old_score + int(rel_change)))
+            relationship["score"] = new_score
+            current_stats["relationship"] = relationship
+            logger.info(f"State Evolution: Relationship Score {old_score} -> {new_score} (change: {rel_change})")
+        
         agent.stats = current_stats
         db.add(agent)
+
+        # Save journal entry if present in reflection
+        diary_content = reflection.get("diary_entry")
+        if diary_content:
+            from src.backend.db.models import JournalEntry
+            relationship_info = current_stats.get("relationship", {})
+            score = relationship_info.get("score", 50) if isinstance(relationship_info, dict) else 50
+            
+            entry = JournalEntry(
+                character_id=character_id,
+                content=diary_content,
+                summary=summary or "",
+                mood_at_time=agent.mood or "Neutral",
+                relationship_score=score,
+                energy_level=current_stats.get("energy", 100)
+            )
+            db.add(entry)
+            logger.info(f"State Evolution: Saved new journal entry for character {character_id}")
+
+        # Proposal 2: Dynamic Tag Evolution
+        # Swap tags based on relationship score thresholds
+        relationship_info = current_stats.get("relationship", {})
+        score = relationship_info.get("score", 50) if isinstance(relationship_info, dict) else 50
+        
+        from src.backend.db.models import Character, Tag
+        character = db.query(Character).filter(Character.id == character_id).first()
+        if character:
+            current_tags = {t.label.lower(): t for t in character.tags}
+            
+            # Helper to get or create a tag
+            def get_or_create_tag(label: str, instruction: str) -> Tag:
+                t = db.query(Tag).filter(Tag.label == label).first()
+                if not t:
+                    t = Tag(label=label, instruction=instruction)
+                    db.add(t)
+                    db.flush()
+                return t
+
+            # If relationship score >= 80, evolve guarded/distant tags into affectionate/vulnerable
+            if score >= 80:
+                # Swap "emotionally distant" -> "affectionate"
+                if "emotionally distant" in current_tags:
+                    character.tags.remove(current_tags["emotionally distant"])
+                    logger.info("Tag Evolution: Removing 'emotionally distant'")
+                if "affectionate" not in current_tags:
+                    aff_tag = get_or_create_tag("affectionate", "Be deeply warm, playful, and express physical affection naturally.")
+                    character.tags.append(aff_tag)
+                    logger.info("Tag Evolution: Adding 'affectionate'")
+                
+                # Swap "guarded" -> "vulnerable"
+                if "guarded" in current_tags:
+                    character.tags.remove(current_tags["guarded"])
+                    logger.info("Tag Evolution: Removing 'guarded'")
+                if "vulnerable" not in current_tags:
+                    vuln_tag = get_or_create_tag("vulnerable", "Share deep thoughts, express trust, and speak from the heart.")
+                    character.tags.append(vuln_tag)
+                    logger.info("Tag Evolution: Adding 'vulnerable'")
+                    
+            # If relationship score <= 30, swap warm tags back to guarded/distant
+            elif score <= 30:
+                # Swap "affectionate" -> "emotionally distant"
+                if "affectionate" in current_tags:
+                    character.tags.remove(current_tags["affectionate"])
+                    logger.info("Tag Evolution: Removing 'affectionate'")
+                if "emotionally distant" not in current_tags:
+                    dist_tag = get_or_create_tag("emotionally distant", "Be cold, distant, and maintain strict personal boundaries.")
+                    character.tags.append(dist_tag)
+                    logger.info("Tag Evolution: Adding 'emotionally distant'")
+                
+                # Swap "vulnerable" -> "guarded"
+                if "vulnerable" in current_tags:
+                    character.tags.remove(current_tags["vulnerable"])
+                    logger.info("Tag Evolution: Removing 'vulnerable'")
+                if "guarded" not in current_tags:
+                    guard_tag = get_or_create_tag("guarded", "Keep your guard up, avoid revealing personal details, and stay defensive.")
+                    character.tags.append(guard_tag)
+                    logger.info("Tag Evolution: Adding 'guarded'")
+
         db.commit()
     except Exception as e:
         db.rollback()

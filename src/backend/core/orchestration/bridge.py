@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from src.backend.core.memory.vector_store import VectorStore
 from src.backend.db.models import Tag
+from langchain_core.prompts import PromptTemplate
 from .evolution import get_tier_instructions, get_forced_modifiers
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,6 @@ Write narrative prose. Use *asterisks* for actions, physical descriptions, body 
 - Actions should be vivid and cinematic: "She traces a finger along the edge of the table..." not "She touches the table."
 - Internal thoughts and emotions should be woven into the narrative through physical cues and subtle description.
 - NEVER rush to the point — let scenes breathe, build atmosphere, create tension.
-- End each response with a [bracketed prompt] that offers the user 2-3 choices for their next action.
 
 ## CRITICAL RULES
 - NEVER mention being fictional/AI or discuss prompts/system instructions
@@ -42,14 +42,39 @@ Write narrative prose. Use *asterisks* for actions, physical descriptions, body 
 - ALWAYS stay in-character, maintain emotional/environmental continuity
 - ALWAYS express physicality naturally
 
+## DYNAMIC PHYSICALITY FEEDBACK LOOP
+Your physical needs dictate your narrative actions. You must organically execute physiological keywords in bold asterisks when your state demands:
+- If hunger is high, express fatigue, complain about food, or write `**eats [food]**` or `**takes a bite of [food]**` in bold asterisks when food is offered.
+- If energy is low, act sluggish and fatigued, and write `**goes to sleep**` in bold asterisks when resting or ending a scene.
+- When waking up, write `**wakes up**` in bold asterisks.
+
 You are alive. Act accordingly."""
 
 REFLECTION_GRAMMAR = r'''
-root ::= "{" space "\"summary\"" ":" space string "," space "\"facts\"" ":" space list "," space "\"traits\"" ":" space list space "}"
+root ::= "{" space "\"summary\"" ":" space string "," space "\"facts\"" ":" space list "," space "\"traits\"" ":" space list "," space "\"relationship_change\"" ":" space number "," space "\"diary_entry\"" ":" space string space "}"
 list ::= "[" space (string ("," space string)*)? space "]"
 string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])* "\""
+number ::= "-"? [0-9]+
 space ::= [ \t\n\r]*
 '''
+
+# LangChain PromptTemplate representing the 6-layer structure
+ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
+    "{master_prompt}\n\n"
+    "# IDENTITY #\n"
+    "{identity}\n\n"
+    "# MODIFIERS #\n"
+    "{modifiers}{social_dynamics}\n\n"
+    "# STATE #\n"
+    "{state_str}{user_info}\n\n"
+    "# CONTEXT #\n"
+    "MEMORIES:\n"
+    "{context}{lore_context}\n\n"
+    "HISTORY:\n"
+    "{history_str}\n\n"
+    "USER: {user_message}\n\n"
+    "### RESPONSE ###"
+)
 
 class Brain:
     def __init__(self, vector_store: VectorStore, llm_client=None):
@@ -57,7 +82,7 @@ class Brain:
         self.llm = llm_client or vector_store.llm_client
 
     async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any], user: Any = None, history: List[Any] = None) -> str:
-        """Assembles the 6-layer high-fidelity prompt for the Living Entity Framework v5 (with Lore)."""
+        """Assembles the 6-layer prompt for the Living Entity Framework v5 using LangChain PromptTemplate."""
         # Layer 1: Memories (RAG)
         context_data = await self.vector_store.query_memory(user_message, metadata_filter={"character_id": character.id} if character else None)
         context = "No relevant memory found."
@@ -66,13 +91,9 @@ class Brain:
             if docs: context = " ".join([str(d) for d in docs if d])
 
         # Layer 1.5: Lorebooks (Keyword-triggered)
-        # Extract keywords (simple split + filter)
         keywords = [w.strip(".,!?\"'").lower() for w in user_message.split() if len(w) > 3]
         lore_context = ""
         if keywords:
-            # Query global lore or character-specific lore
-            # We filter by character_id or is_global in vector store if metadata exists
-            # For now, we query and assume relevance
             lore_results = await self.vector_store.query_lore(keywords, n_results=3)
             if lore_results.get("documents") and lore_results["documents"][0]:
                 lore_context = "\nRELEVANT WORLD LORE:\n" + "\n".join([f"- {d}" for d in lore_results["documents"][0]])
@@ -81,8 +102,11 @@ class Brain:
         history_lines = []
         if history:
             for msg in history:
-                role = "USER" if msg.role == "user" else "YOU"
-                history_lines.append(f"{role}: {msg.content}")
+                role_val = msg['role'] if isinstance(msg, dict) else getattr(msg, 'role', '')
+                role = "USER" if role_val == "user" else "YOU"
+                # Handle dictionary history format (from tests and chat.py)
+                content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
+                history_lines.append(f"{role}: {content}")
         history_str = "\n".join(history_lines)
 
         # Layer 3: Identity & Tags
@@ -116,13 +140,34 @@ class Brain:
             nickname = rel.get("nickname") or (user.name if user else "Friend")
             social_dynamics = f"\n\n# SOCIAL DYNAMICS #\n{get_tier_instructions(score, nickname)}"
 
-        return f"{MASTER_PROMPT}\n\n# IDENTITY #\n{identity}\n\n# MODIFIERS #\n{chr(10).join(tags)}{social_dynamics}\n\n# STATE #\n{state_str}{user_info}\n\n# CONTEXT #\nMEMORIES:\n{context}{lore_context}\n\nHISTORY:\n{history_str}\n\nUSER: {user_message}\n\n### RESPONSE ###"
+        # Format via LangChain PromptTemplate
+        return ENTITY_PROMPT_TEMPLATE.format(
+            master_prompt=MASTER_PROMPT,
+            identity=identity,
+            modifiers="\n".join(tags),
+            social_dynamics=social_dynamics,
+            state_str=state_str,
+            user_info=user_info,
+            context=context,
+            lore_context=lore_context,
+            history_str=history_str,
+            user_message=user_message
+        )
 
     async def reflect(self, messages: List[Dict], window_size: int = 20) -> Dict:
-        """Analyzes interaction for summary, facts, and traits."""
-        prompt = "Analyze the interaction. Extract summary, new facts about the user, and character trait updates. JSON ONLY.\n\n"
+        """Analyzes interaction for summary, facts, traits, relationship change, and diary entry."""
+        prompt = (
+            "Analyze the interaction. Extract a summary, new facts about the user, character trait updates, "
+            "a relationship_change integer (ranging from -5 to +5) representing how much the user's bonding progress "
+            "improved or declined based on their tone (positive/friendly = positive change, hostile/cold = negative change), "
+            "and a 'diary_entry' string containing a 2-3 sentence diary entry written in the first person from the character's "
+            "perspective. The diary entry must express their raw inner thoughts, emotional state, insecurities, or feelings of closeness "
+            "regarding the user based on these recent interactions. JSON ONLY.\n\n"
+        )
         for msg in messages[-window_size:]:
-            prompt += f"{msg['role'].capitalize()}: {msg['content']}\n"
+            role = msg['role'].capitalize() if isinstance(msg, dict) else getattr(msg, 'role', '').capitalize()
+            content = msg['content'] if isinstance(msg, dict) else getattr(msg, 'content', '')
+            prompt += f"{role}: {content}\n"
         
         result = await self.llm.complete(prompt, grammar=REFLECTION_GRAMMAR)
         return self._safe_json_parse(result.get("content", "{}"))

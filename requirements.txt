@@ -4,4 +4,7 @@ sqlalchemy
 pydantic-settings
 httpx
 python-multipart
-chromadb
+langchain
+langchain-community
+turbovec
+langchain-openai

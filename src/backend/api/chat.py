@@ -44,6 +44,31 @@ def parse_actions_to_state(ai_response: str, state: AgentState):
         if new_outfit != state.clothes:
             logger.info(f"State Update: Clothes -> {new_outfit}")
             state.clothes = new_outfit
+
+    # Physiological stats updates based on keywords in actions
+    stats = dict(state.stats) if state.stats else {}
+    
+    # Check for eating/drinking
+    eat_match = re.search(r'\*\*(?:eats|takes a bite of|chews on|drinks|sips|consumes|devours) (.+?)\*\*', ai_response, re.IGNORECASE)
+    if eat_match:
+        old_hunger = stats.get("hunger", 0)
+        new_hunger = max(0, old_hunger - 30)
+        stats["hunger"] = new_hunger
+        logger.info(f"State Update: Hunger {old_hunger}% -> {new_hunger}% due to eating action")
+
+    # Check for sleeping
+    sleep_match = re.search(r'\*\*(?:goes to sleep|falls asleep|nods off|sleeps|rests her eyes)\*\*', ai_response, re.IGNORECASE)
+    if sleep_match:
+        stats["is_sleeping"] = True
+        logger.info("State Update: is_sleeping -> True due to sleeping action")
+        
+    # Check for waking up
+    wake_match = re.search(r'\*\*(?:wakes up|stretches and yawns|wakes)\*\*', ai_response, re.IGNORECASE)
+    if wake_match:
+        stats["is_sleeping"] = False
+        logger.info("State Update: is_sleeping -> False due to waking action")
+
+    state.stats = stats
 router = APIRouter()
 llama = LlamaClient()
 vector_store = VectorStore(llm_client=llama)
@@ -68,8 +93,77 @@ async def run_consciousness_layer(character_id: int, user_message: str, ai_respo
                 logger.info(f"Consciousness Layer: Reflection complete for character {character_id}")
         finally:
             db.close()
+            import gc
+            gc.collect()
     except Exception as e:
         logger.exception(f"Consciousness layer error: {e}")
+
+ACTIONS_CONFIG = {
+    "hug": {
+        "message": "*I step forward and wrap my arms around you in a warm, gentle hug.*",
+        "stats": {
+            "happiness": 5,
+            "social": 10,
+            "relationship_score": 2
+        }
+    },
+    "pat_head": {
+        "message": "*I reach out and pat your head gently, smiling softly.*",
+        "stats": {
+            "happiness": 3,
+            "social": 5,
+            "relationship_score": 1
+        }
+    },
+    "tease": {
+        "message": "*I look at you with a playful smirk, teasing you lightly.*",
+        "stats": {
+            "happiness": 2,
+            "social": 8,
+            "relationship_score": 1
+        }
+    },
+    "hold_hand": {
+        "message": "*I slide my hand into yours, holding it gently.*",
+        "stats": {
+            "happiness": 4,
+            "social": 8,
+            "relationship_score": 2
+        }
+    },
+    "coffee": {
+        "message": "*I hand you a hot, freshly brewed cup of black coffee.*",
+        "stats": {
+            "hunger": -10,
+            "energy": 15,
+            "relationship_score": 2
+        }
+    },
+    "croissant": {
+        "message": "*I offer you a warm, freshly baked chocolate croissant.*",
+        "stats": {
+            "hunger": -35,
+            "energy": 5,
+            "relationship_score": 3
+        }
+    },
+    "book": {
+        "message": "*I present you with a beautifully bound, vintage book.*",
+        "stats": {
+            "happiness": 8,
+            "social": 5,
+            "relationship_score": 4
+        }
+    },
+    "necklace": {
+        "message": "*I hand you a small velvet box containing a delicate silver necklace.*",
+        "stats": {
+            "happiness": 15,
+            "social": 10,
+            "relationship_score": 8
+        }
+    }
+}
 
 class LLMConfig(BaseModel):
     base_url: Optional[str] = None
@@ -80,6 +174,7 @@ class ChatRequest(BaseModel):
     character_id: int = 1
     parent_id: Optional[int] = None
     config: Optional[LLMConfig] = None
+    action_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     reply: str
@@ -98,6 +193,40 @@ async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
         "variant_index": m.variant_index,
         "timestamp": m.timestamp
     } for m in reversed(messages)]
+
+@router.post("/chat/clear/{character_id}")
+async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
+    try:
+        from src.backend.db.models import JournalEntry
+        # Delete all messages and journal entries for this character
+        db.query(MessageNode).filter(MessageNode.character_id == character_id).delete()
+        db.query(JournalEntry).filter(JournalEntry.character_id == character_id).delete()
+        # Reset current message ID and states on AgentState
+        state = db.query(AgentState).filter(AgentState.character_id == character_id).first()
+        if state:
+            state.current_message_id = None
+            state.location = "Living Room"
+            state.clothes = "Casual"
+            state.mood = "Neutral"
+            state.interaction_count = 0
+            state.stats = {
+                "energy": 100,
+                "hunger": 0,
+                "happiness": 100,
+                "social": 100,
+                "is_sleeping": False,
+                "relationship": {
+                    "score": 50,
+                    "history": [],
+                    "nickname": None
+                }
+            }
+        db.commit()
+        return {"status": "success", "message": "Chat history cleared successfully."}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to clear chat history for character {character_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -118,6 +247,27 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
         
         effective_parent_id = request.parent_id if request.parent_id is not None else state.current_message_id
         user_message_content = request.message
+
+        if request.action_id and request.action_id in ACTIONS_CONFIG:
+            action_cfg = ACTIONS_CONFIG[request.action_id]
+            user_message_content = action_cfg["message"]
+            request.message = user_message_content
+            
+            stat_mod = action_cfg.get("stats", {})
+            stats = dict(state.stats) if state.stats else {}
+            stats["energy"] = max(0, min(100, stats.get("energy", 100) + stat_mod.get("energy", 0)))
+            stats["hunger"] = max(0, min(100, stats.get("hunger", 0) + stat_mod.get("hunger", 0)))
+            stats["happiness"] = max(0, min(100, stats.get("happiness", 100) + stat_mod.get("happiness", 0)))
+            stats["social"] = max(0, min(100, stats.get("social", 100) + stat_mod.get("social", 0)))
+            
+            relationship = stats.get("relationship", {})
+            if not isinstance(relationship, dict):
+                relationship = {"score": 50}
+            old_score = relationship.get("score", 50)
+            relationship["score"] = max(0, min(100, old_score + stat_mod.get("relationship_score", 0)))
+            stats["relationship"] = relationship
+            
+            state.stats = stats
 
         if not user_message_content and effective_parent_id:
             last_msg = db.query(MessageNode).filter(MessageNode.id == effective_parent_id).first()
@@ -212,6 +362,27 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, d
     effective_parent_id = request.parent_id if request.parent_id is not None else state.current_message_id
     user_message_content = request.message
 
+    if request.action_id and request.action_id in ACTIONS_CONFIG:
+        action_cfg = ACTIONS_CONFIG[request.action_id]
+        user_message_content = action_cfg["message"]
+        request.message = user_message_content
+        
+        stat_mod = action_cfg.get("stats", {})
+        stats = dict(state.stats) if state.stats else {}
+        stats["energy"] = max(0, min(100, stats.get("energy", 100) + stat_mod.get("energy", 0)))
+        stats["hunger"] = max(0, min(100, stats.get("hunger", 0) + stat_mod.get("hunger", 0)))
+        stats["happiness"] = max(0, min(100, stats.get("happiness", 100) + stat_mod.get("happiness", 0)))
+        stats["social"] = max(0, min(100, stats.get("social", 100) + stat_mod.get("social", 0)))
+        
+        relationship = stats.get("relationship", {})
+        if not isinstance(relationship, dict):
+            relationship = {"score": 50}
+        old_score = relationship.get("score", 50)
+        relationship["score"] = max(0, min(100, old_score + stat_mod.get("relationship_score", 0)))
+        stats["relationship"] = relationship
+        
+        state.stats = stats
+
     if not user_message_content and effective_parent_id:
         last_msg = db.query(MessageNode).filter(MessageNode.id == effective_parent_id).first()
         if last_msg and last_msg.role == "user":
@@ -303,3 +474,17 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, d
             yield f"data: {json.dumps({'error': str(e), 'request_id': request_id})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+@router.get("/characters/{character_id}/journal")
+async def get_journal_entries(character_id: int, db: Session = Depends(get_db)):
+    from src.backend.db.models import JournalEntry
+    entries = db.query(JournalEntry).filter(JournalEntry.character_id == character_id).order_by(JournalEntry.timestamp.desc()).all()
+    return [{
+        "id": e.id,
+        "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+        "content": e.content,
+        "summary": e.summary,
+        "mood_at_time": e.mood_at_time,
+        "relationship_score": e.relationship_score,
+        "energy_level": e.energy_level
+    } for e in entries]

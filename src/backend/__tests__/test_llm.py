@@ -16,25 +16,23 @@ async def test_llm_completion_connection_error():
 
 @pytest.mark.asyncio
 async def test_llm_completion_sends_n_predict():
-    """Verify that complete() sends n_predict in the payload."""
-    client = LlamaClient()
-    client.client = AsyncMock()
-
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"content": "Hello"}
-    mock_response.raise_for_status.return_value = None
-    # httpx.Response.json() is synchronous
-    client.client.post.return_value = mock_response
-
-    await client.complete("Test prompt")
-
-    # Extract the payload sent to httpx
-    call_kwargs = client.client.post.call_args
-    assert call_kwargs is not None
-    _args, kwargs = call_kwargs
-    payload = kwargs.get("json", {})
-    assert "n_predict" in payload
-    assert payload["n_predict"] == settings.N_PREDICT
+    """Verify that complete() configures ChatOpenAI with max_tokens (settings.N_PREDICT)."""
+    from unittest.mock import patch
+    
+    with patch("src.backend.core.engine.llm.ChatOpenAI") as mock_chat_openai:
+        mock_instance = MagicMock()
+        mock_chat_openai.return_value = mock_instance
+        
+        mock_response = MagicMock()
+        mock_response.content = "Hello"
+        mock_instance.ainvoke = AsyncMock(return_value=mock_response)
+        
+        client = LlamaClient()
+        await client.complete("Test prompt")
+        
+        mock_chat_openai.assert_called_once()
+        _, kwargs = mock_chat_openai.call_args
+        assert kwargs.get("max_tokens") == settings.N_PREDICT
 
 def test_settings_has_n_predict():
     """Config must define N_PREDICT with a reasonable value."""

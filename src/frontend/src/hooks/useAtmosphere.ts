@@ -24,7 +24,7 @@ export const useAtmosphere = (text: string): Atmosphere => {
     const lastDoubleStar = text.lastIndexOf('**');
     const lastSingleStar = text.lastIndexOf('*');
 
-    if (lastDoubleStar !== -1 && (lastSingleStar === -1 || lastDoubleStar > lastSingleStar - 1)) {
+    if (lastDoubleStar !== -1 && (lastSingleStar === -1 || lastDoubleStar >= lastSingleStar - 1)) {
         // We might be in an action block
         // Check if it's closed
         const openingCount = (text.match(/\*\*/g) || []).length;

@@ -26,3 +26,24 @@ def test_parse_no_match():
     ai_response = "The trees are beautiful today."
     parse_actions_to_state(ai_response, state)
     assert state.location == "Forest"
+
+def test_parse_eating():
+    state = AgentState(character_id=1)
+    state.stats["hunger"] = 70
+    ai_response = "I was so hungry! *Happily* **eats an apple** and grins."
+    parse_actions_to_state(ai_response, state)
+    assert state.stats["hunger"] == 40
+
+def test_parse_sleeping():
+    state = AgentState(character_id=1)
+    state.stats["is_sleeping"] = False
+    ai_response = "*Yawning deeply,* **goes to sleep** on the sofa."
+    parse_actions_to_state(ai_response, state)
+    assert state.stats["is_sleeping"] is True
+
+def test_parse_waking():
+    state = AgentState(character_id=1)
+    state.stats["is_sleeping"] = True
+    ai_response = "*As the morning sun shines,* **wakes up** and stretches."
+    parse_actions_to_state(ai_response, state)
+    assert state.stats["is_sleeping"] is False

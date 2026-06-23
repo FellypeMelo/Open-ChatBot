@@ -105,3 +105,16 @@ class LorebookEntry(Base):
     is_global = Column(Boolean, default=False)
 
     character = relationship("Character")
+
+class JournalEntry(Base):
+    __tablename__ = "journal_entries"
+    id = Column(Integer, primary_key=True, index=True)
+    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    content = Column(Text)
+    summary = Column(Text)
+    mood_at_time = Column(String)
+    relationship_score = Column(Integer)
+    energy_level = Column(Integer)
+
+    character = relationship("Character")

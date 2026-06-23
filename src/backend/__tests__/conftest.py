@@ -78,3 +78,16 @@ def client(db_session):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+@pytest.fixture(autouse=True)
+def mock_vector_store_path(tmp_path, monkeypatch):
+    """
+    Automatically mock/redirect the vector store path to a temporary folder
+    for ALL tests to guarantee Mandatory Environment Isolation.
+    """
+    from src.backend.api import chat
+    from src.backend.core.memory.vector_store import VectorStore
+    
+    # Create a temporary VectorStore instance for the chat router
+    test_vs = VectorStore(llm_client=chat.llama, path=str(tmp_path / "test_chroma_db"))
+    monkeypatch.setattr(chat, "vector_store", test_vs)

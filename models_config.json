@@ -1,0 +1,19 @@
+{
+  "inference": {
+    "binary_path": "llama_bin/llama-server.exe",
+    "model_path": "models/Qwen3-4B-Hivemind-Inst-Hrtic-Ablit-Uncensored-Q4_K_M-imat.gguf",
+    "port": 8080,
+    "threads": 0,
+    "gpu_layers": 99,
+    "context_size": 4096,
+    "additional_args": "--cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --pooling mean --cache-ram 2048 --kv-unified --flash-attn auto"
+  },
+  "embedding": {
+    "binary_path": "llama_bin/llama-server.exe",
+    "model_path": "models/Qwen3-4B-Hivemind-Inst-Hrtic-Ablit-Uncensored-Q4_K_M-imat.gguf",
+    "port": 8080,
+    "threads": 0,
+    "gpu_layers": 99,
+    "additional_args": "--pooling mean --cache-ram 2048 --kv-unified --flash-attn auto"
+  }
+}

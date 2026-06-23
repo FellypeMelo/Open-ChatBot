@@ -115,3 +115,60 @@ def delete_character(char_id: int, db: Session = Depends(get_db)):
     db.delete(char)
     db.commit()
     return {"message": "Character deleted"}
+
+class StatsUpdate(BaseModel):
+    energy: Optional[int] = None
+    hunger: Optional[int] = None
+    happiness: Optional[int] = None
+    social: Optional[int] = None
+    is_sleeping: Optional[bool] = None
+    relationship_score: Optional[int] = None
+
+class StateUpdate(BaseModel):
+    location: Optional[str] = None
+    mood: Optional[str] = None
+    clothes: Optional[str] = None
+    stats: Optional[StatsUpdate] = None
+
+@router.put("/{char_id}/state", response_model=CharacterResponse)
+def update_character_state(char_id: int, state_data: StateUpdate, db: Session = Depends(get_db)):
+    char = db.query(Character).filter(Character.id == char_id).first()
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+        
+    state = char.state
+    if not state:
+        state = AgentState(character_id=char_id)
+        db.add(state)
+        
+    if state_data.location is not None:
+        state.location = state_data.location
+    if state_data.mood is not None:
+        state.mood = state_data.mood
+    if state_data.clothes is not None:
+        state.clothes = state_data.clothes
+        
+    if state_data.stats is not None:
+        current_stats = dict(state.stats) if state.stats else {}
+        if state_data.stats.energy is not None:
+            current_stats["energy"] = max(0, min(100, state_data.stats.energy))
+        if state_data.stats.hunger is not None:
+            current_stats["hunger"] = max(0, min(100, state_data.stats.hunger))
+        if state_data.stats.happiness is not None:
+            current_stats["happiness"] = max(0, min(100, state_data.stats.happiness))
+        if state_data.stats.social is not None:
+            current_stats["social"] = max(0, min(100, state_data.stats.social))
+        if state_data.stats.is_sleeping is not None:
+            current_stats["is_sleeping"] = state_data.stats.is_sleeping
+        if state_data.stats.relationship_score is not None:
+            rel = current_stats.get("relationship", {})
+            if not isinstance(rel, dict):
+                rel = {"score": 50}
+            rel["score"] = max(0, min(100, state_data.stats.relationship_score))
+            current_stats["relationship"] = rel
+            
+        state.stats = current_stats
+        
+    db.commit()
+    db.refresh(char)
+    return char

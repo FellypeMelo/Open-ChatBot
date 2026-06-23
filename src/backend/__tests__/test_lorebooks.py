@@ -21,11 +21,10 @@ async def test_lorebook_integration():
         # Real VectorStore with temp directory
         vs = VectorStore(llm_client=llm_mock, path=tmp_dir)
         
-        # Mock the collection query to avoid real DB side effects in this unit test
-        vs.lore_collection = MagicMock()
-        vs.lore_collection.query.return_value = {
+        # Mock the query_lore method to avoid real DB side effects in this unit test
+        vs.query_lore = AsyncMock(return_value={
             "documents": [["The Sword of Destiny is a legendary blade forged in the fires of Mount Doom."]]
-        }
+        })
         
         brain = Brain(vector_store=vs, llm_client=llm_mock)
         

@@ -56,3 +56,69 @@ def test_state_initialization_defaults():
     assert state.mood == "Neutral"
     assert state.stats["energy"] == 100
     assert state.stats["relationship"]["score"] == 50
+
+def test_evolve_character_relationship_change(db_session):
+    """Verifies that evolve_character updates the relationship score correctly."""
+    char = Character(name="Test", description="Test desc")
+    db_session.add(char)
+    db_session.commit()
+    
+    state = AgentState(character_id=char.id)
+    db_session.add(state)
+    db_session.commit()
+    
+    # Evolve with a positive relationship change
+    evolve_character(db_session, char.id, {"relationship_change": 5})
+    
+    db_session.refresh(state)
+    assert state.stats["relationship"]["score"] == 55
+    
+    # Evolve with a negative relationship change
+    evolve_character(db_session, char.id, {"relationship_change": -10})
+    db_session.refresh(state)
+    assert state.stats["relationship"]["score"] == 45
+
+def test_evolve_character_tag_evolution(db_session):
+    """Verifies that evolve_character swaps character tags dynamically based on relationship score thresholds."""
+    from src.backend.db.models import Tag
+    # Create tags in db
+    distant_tag = Tag(label="emotionally distant", instruction="Be distant.")
+    guarded_tag = Tag(label="guarded", instruction="Be guarded.")
+    db_session.add_all([distant_tag, guarded_tag])
+    db_session.commit()
+
+    char = Character(name="Luna", description="Luna character", tags=[distant_tag, guarded_tag])
+    db_session.add(char)
+    db_session.commit()
+
+    state = AgentState(character_id=char.id)
+    # Start at relationship score 50
+    state.stats["relationship"]["score"] = 50
+    db_session.add(state)
+    db_session.commit()
+
+    # Verify initial tags
+    assert len(char.tags) == 2
+    assert "emotionally distant" in [t.label.lower() for t in char.tags]
+    assert "guarded" in [t.label.lower() for t in char.tags]
+
+    # Evolve relationship to score 85 (above threshold of 80)
+    evolve_character(db_session, char.id, {"relationship_change": 35})
+    db_session.refresh(char)
+
+    # Distant and guarded tags should be swapped for affectionate and vulnerable
+    tag_labels = [t.label.lower() for t in char.tags]
+    assert "emotionally distant" not in tag_labels
+    assert "guarded" not in tag_labels
+    assert "affectionate" in tag_labels
+    assert "vulnerable" in tag_labels
+
+    # Evolve relationship back down to 25 (below threshold of 30)
+    evolve_character(db_session, char.id, {"relationship_change": -60})
+    db_session.refresh(char)
+
+    tag_labels_low = [t.label.lower() for t in char.tags]
+    assert "affectionate" not in tag_labels_low
+    assert "vulnerable" not in tag_labels_low
+    assert "emotionally distant" in tag_labels_low
+    assert "guarded" in tag_labels_low

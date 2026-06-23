@@ -57,6 +57,7 @@ interface Toast {
 function App() {
   const { config } = useSettings()
   const [currentView, setCurrentView] = useState<View>('characters')
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -261,6 +262,54 @@ function App() {
     }
   }
 
+  const handleSendAction = async (actionId: string, explicitParentId?: number) => {
+    if (isLoading || !selectedCharId) return
+
+    const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
+
+    const actionsMessages: Record<string, string> = {
+      "hug": "*I step forward and wrap my arms around you in a warm, gentle hug.*",
+      "pat_head": "*I reach out and pat your head gently, smiling softly.*",
+      "tease": "*I look at you with a playful smirk, teasing you lightly.*",
+      "hold_hand": "*I slide my hand into yours, holding it gently.*",
+      "coffee": "*I hand you a hot, freshly brewed cup of black coffee.*",
+      "croissant": "*I offer you a warm, freshly baked chocolate croissant.*",
+      "book": "*I present you with a beautifully bound, vintage book.*",
+      "necklace": "*I hand you a small velvet box containing a delicate silver necklace.*"
+    }
+
+    const actionMessage = actionsMessages[actionId] || `*Performs action: ${actionId}*`
+    const userMsgId = Math.floor(Math.random() * 1000000) + Date.now()
+    const assistantMsgId = userMsgId + 1
+
+    const userMsg: MessageNode = { 
+      id: userMsgId,
+      parent_id: parentId,
+      role: 'user', 
+      content: actionMessage, 
+      variant_index: 0 
+    }
+    const assistantMsg: MessageNode = { 
+      id: assistantMsgId,
+      parent_id: userMsgId,
+      role: 'assistant', 
+      content: '', 
+      variant_index: 0 
+    }
+    
+    setMessages(prev => [...prev, userMsg, assistantMsg])
+    setIsLoading(true)
+
+    try {
+      const response = await api.sendMessageStream(null, selectedCharId, parentId, config, actionId)
+      await handleStreamResponse(response)
+    } catch (error) {
+      showToast('Lost connection to AI.', 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleRegenerate = async (parentId: number) => {
     if (isLoading || !selectedCharId) return
 
@@ -341,12 +390,35 @@ function App() {
     fetchCharacters() // Refresh stats
   }
 
-  const activeChar = characters.find((c) => c.id === selectedCharId) || null
-
   const handleStartChat = (id: number) => {
     setSelectedCharId(id)
     setCurrentView('chat')
   }
+
+  const handleUpdateState = async (charId: number, stateUpdate: any) => {
+    try {
+      const updatedChar = await api.updateCharacterState(charId, stateUpdate)
+      setCharacters((prev) => prev.map((c) => c.id === charId ? updatedChar : c))
+    } catch (err) {
+      setToast({ message: 'Failed to update character state.', type: 'error' })
+    }
+  }
+
+  const handleClearChat = async () => {
+    if (!selectedCharId) return
+    if (window.confirm("Are you sure you want to clear this conversation history? This cannot be undone.")) {
+      try {
+        await api.clearChatHistory(selectedCharId)
+        setMessages([])
+        fetchCharacters()
+        setToast({ message: 'Conversation cleared.', type: 'success' })
+      } catch (err) {
+        setToast({ message: 'Failed to clear conversation.', type: 'error' })
+      }
+    }
+  }
+
+  const activeChar = characters.find((c) => c.id === selectedCharId) || null
 
   const tagUsage = characters.reduce<Record<number, number>>((acc, character) => {
     character.tags.forEach((tag) => {
@@ -357,16 +429,48 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="flex h-screen w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased">
+      <div className="flex h-screen w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased relative">
+        {/* Mobile Backdrop Overlay */}
+        {isSidebarOpen && (
+          <div 
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+          />
+        )}
+
         <Sidebar
           currentView={currentView}
           setView={(v) => setCurrentView(v as View)}
           userName={user?.name}
           onProfileClick={() => setActiveModal('user')}
           onSettingsClick={() => setActiveModal('settings')}
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
         />
 
-        <main className="flex-1 md:ml-64 h-screen overflow-hidden flex flex-col">
+        <main className="flex-1 h-screen overflow-hidden flex flex-col min-w-0">
+          {/* Mobile Top Header */}
+          <header className="md:hidden flex items-center justify-between px-md py-sm bg-[#0A0A0B]/90 backdrop-blur border-b border-white/5 z-30 shrink-0">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-1 text-[#A1A1AA] hover:text-white flex items-center"
+            >
+              <span className="material-symbols-outlined text-[20px]">menu</span>
+            </button>
+            <h2 className="font-sans text-xs font-bold text-white uppercase tracking-[0.2em]">
+              {currentView === 'characters' && 'Characters'}
+              {currentView === 'chat' && 'Direct Chat'}
+              {currentView === 'library' && 'Lorebook'}
+              {currentView === 'archives' && 'Knowledge Tags'}
+            </h2>
+            <button 
+              onClick={() => setActiveModal('user')}
+              className="w-7 h-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0"
+            >
+              <span className="material-symbols-outlined text-xs text-[#A1A1AA]">person</span>
+            </button>
+          </header>
+
           {currentView === 'characters' && (
             <CharactersView
               characters={characters}
@@ -394,6 +498,9 @@ function App() {
               onSend={handleSend}
               onRegenerate={handleRegenerate}
               isLoading={isLoading}
+              onUpdateState={handleUpdateState}
+              onClearChat={handleClearChat}
+              onSendAction={handleSendAction}
             />
           )}
 

@@ -6,26 +6,22 @@ if [ -f "/opt/intel/oneapi/setvars.sh" ]; then
 fi
 
 # Activate virtual environment
-source .venv/bin/activate
+source venv/bin/activate
 
 # Set PYTHONPATH and LD_LIBRARY_PATH
 export PYTHONPATH=$PYTHONPATH:.
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/llama-b8984:/opt/intel/oneapi/2025.3/lib
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/llama_bin:/opt/intel/oneapi/2025.3/lib
 
 # Build frontend static assets before launching the backend
 echo "Building frontend..."
-(cd frontend && pnpm build)
+(cd src/frontend && pnpm build)
 
 # Cleanup background processes on exit
 trap "kill 0" EXIT
 
-# Start Llama Inference Server (Port 8080)
-echo "Starting Llama Inference Server..."
-./llama-b8984/llama-server -m llama-b8984/Qwen3-4B-Hivemind-Instruct-NeoMAX-D_AU-Q6_K-imat.gguf --port 8080 --cache-type-k q8_0 --cache-type-v q8_0 -c 65536 -np 2 &
-
-# Start Llama Embedding Server (Port 8081)
-echo "Starting Llama Embedding Server..."
-./llama-b8984/llama-server -m llama-b8984/Qwen3-Embedding-0.6B-Q8_0.gguf --port 8081 --embedding -c 2048 &
+# Start Llama Consolidated Inference + Embedding Server (Port 8080)
+echo "Starting Llama Consolidated Server..."
+./llama_bin/llama-server -m models/Qwen3-4B-Hivemind-Inst-Hrtic-Ablit-Uncensored-Q4_K_M-imat.gguf --port 8080 --cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --embedding --pooling mean --cache-ram 2048 --kv-unified -ngl 99 -c 4096 --flash-attn auto &
 
 # Health Check Function
 wait_for_server() {
@@ -46,9 +42,8 @@ wait_for_server() {
     echo "$name is ready!"
 }
 
-# Wait for both servers
-wait_for_server 8080 "Inference Server"
-wait_for_server 8081 "Embedding Server"
+# Wait for consolidated server
+wait_for_server 8080 "Consolidated Server"
 
 echo "Giving model extra time to warm up..."
 sleep 5
@@ -65,7 +60,7 @@ done
 echo "Starting Open-ChatBot Backend..."
 if [ "$DEBUG_MODE" = true ]; then
     echo "DEBUG MODE ENABLED: Full detailed logs and latency tracking active."
-    DEBUG_LATENCY=True python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --log-level debug
+    DEBUG_LATENCY=True python -m uvicorn src.backend.main:app --host 0.0.0.0 --port 8000 --log-level debug
 else
-    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+    python -m uvicorn src.backend.main:app --host 0.0.0.0 --port 8000
 fi

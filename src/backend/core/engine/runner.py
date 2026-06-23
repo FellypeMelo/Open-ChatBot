@@ -191,8 +191,6 @@ class LlamaServerRunner:
 
         threads = int(cfg["threads"])
         if threads <= 0:
-            import os
-            # Auto-detect physical cores (fallback to logical cores // 2)
             threads = max(1, (os.cpu_count() or 8) // 2)
             logger.info(f"Auto-detected optimal thread count: {threads}")
 
@@ -279,7 +277,6 @@ class LlamaServerRunner:
 
         threads = int(cfg["threads"])
         if threads <= 0:
-            import os
             threads = max(1, (os.cpu_count() or 8) // 2)
             logger.info(f"Auto-detected optimal embedding thread count: {threads}")
 

@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock
-from src.backend.db.models import AgentState, Character, User
+from src.backend.db.models import AgentState, Character, User, MessageNode
 
 def test_chat_endpoint(client, db_session):
     # Setup: Create character, user, and state in mock DB
@@ -294,5 +294,131 @@ def test_tag_endpoints_404(client):
     # DELETE /tags/99999 -> 404
     response = client.delete("/tags/99999")
     assert response.status_code == 404
+
+
+def test_chat_history_endpoints(client, db_session):
+    # Setup
+    char = Character(id=2, name="HistoryChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    
+    # 1. Empty history
+    resp = client.get("/history/2")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # 2. Populated history
+    m1 = MessageNode(character_id=2, role="user", content="hello", variant_index=0)
+    db_session.add(m1)
+    db_session.commit()
+
+    resp = client.get("/history/2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "hello"
+
+
+def test_clear_chat_history(client, db_session):
+    char = Character(id=3, name="ClearChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    
+    state = AgentState(character_id=3, location="Kitchen", stats={"energy": 80})
+    db_session.add(state)
+    m = MessageNode(character_id=3, role="user", content="hi")
+    db_session.add(m)
+    db_session.commit()
+    
+    # 1. Clear success
+    resp = client.post("/chat/clear/3")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+    
+    # Verify state reset
+    db_session.refresh(state)
+    assert state.location == "Living Room"
+    assert state.stats["energy"] == 100
+    
+    # 2. Clear failure (triggers rollback/500)
+    with patch("sqlalchemy.orm.Session.query", side_effect=Exception("Clear failed")):
+        resp = client.post("/chat/clear/3")
+        assert resp.status_code == 500
+
+
+
+def test_chat_with_action_ids(client, db_session):
+    char = Character(id=4, name="ActionChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    
+    state = AgentState(character_id=4, stats={"energy": 50, "hunger": 20, "relationship": {"score": 50}})
+    db_session.add(state)
+    db_session.commit()
+
+    with patch("src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock) as mock_complete:
+        mock_complete.return_value = {"content": "Thank you for the croissant!"}
+        
+        # Test croissant action
+        resp = client.post("/chat", json={"character_id": 4, "action_id": "croissant"})
+        assert resp.status_code == 200
+        
+        # Verify stats updated (croissant: hunger -35, energy 5, relationship_score 3)
+        db_session.refresh(state)
+        assert state.stats["energy"] == 55
+        assert state.stats["hunger"] == 0 # min clamped at 0
+        assert state.stats["relationship"]["score"] == 53
+
+
+def test_chat_stream_with_action_ids(client, db_session):
+    char = Character(id=5, name="StreamActionChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    
+    state = AgentState(character_id=5, stats={"energy": 50, "hunger": 20, "relationship": {"score": 50}})
+    db_session.add(state)
+    db_session.commit()
+
+    with patch("src.backend.core.engine.llm.LlamaClient.complete_stream") as mock_stream:
+        async def mock_iter(prompt, url=None, model=None):
+            yield "Thanks!"
+            
+        mock_stream.side_effect = mock_iter
+        
+        # Test tease action (tease: happiness 2, social 8, relationship_score 1)
+        resp = client.post("/chat/stream", json={"character_id": 5, "action_id": "tease"})
+        assert resp.status_code == 200
+        
+        # Consume the stream so standard post-stream handlers execute
+        for _ in resp.iter_bytes():
+            pass
+            
+        db_session.refresh(state)
+        assert state.stats["relationship"]["score"] == 51
+
+
+def test_chat_endpoint_exceptions(client, db_session):
+    # Setup: Create character to avoid character query errors
+    char = Character(id=6, name="ErrChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    
+    with patch("src.backend.core.engine.llm.LlamaClient.complete") as mock_complete:
+        # Trigger general exception
+        mock_complete.side_effect = Exception("LLM crash")
+        resp = client.post("/chat", json={"message": "hello", "character_id": 6})
+        assert resp.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_exception():
+    # Test error fallback logging inside the consciousness layer background task
+    from src.backend.api.chat import run_consciousness_layer
+    with patch("src.backend.api.chat.logger") as mock_logger:
+        with patch("src.backend.api.chat.vector_store.add_memory", side_effect=Exception("Chroma failure")):
+            await run_consciousness_layer(None, None, None)
+            mock_logger.exception.assert_called()
+
+
 
 

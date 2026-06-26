@@ -1,0 +1,15 @@
+# OS Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# Temp/Backup Files
+*~
+*.swp
+*.tmp
+*.log
+
+# VS Code / IDE settings (optional to ignore)
+.vscode/
+.idea/

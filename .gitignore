@@ -21,7 +21,7 @@ htmlcov/
 # Binaries/Models
 llama-b8984/
 llama_bin/
-models/
+/models/
 *.gguf
 
 # Tools

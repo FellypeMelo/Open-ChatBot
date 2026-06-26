@@ -4,11 +4,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from src.backend.api import chat, characters, tags, users, settings as api_settings
+from src.backend.api import chat, characters, tags, users, settings as api_settings, lore
 from src.backend.db.database import init_db
 from src.backend.core.engine.llm import LlamaClient
 from src.backend.core.engine.runner import runner
 
+# Ensure all logs (including runner diagnostics) are visible in console
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
@@ -26,15 +31,27 @@ async def lifespan(app: FastAPI):
     is_testing = "pytest" in sys.modules
     if not is_testing:
         logger.info("Auto-starting Llama servers from settings...")
-        runner.start_inference()
-        runner.start_embedding()
-        # Give them 2 seconds to spin up before health check
-        await asyncio.sleep(2)
-    
-    if not is_testing:
+        inf_ok = runner.start_inference()
+        logger.info(f"start_inference returned: {inf_ok}")
+        emb_ok = runner.start_embedding()
+        logger.info(f"start_embedding returned: {emb_ok}")
+        
+        if not inf_ok:
+            logger.error("CRITICAL: Llama Inference Server failed to start! Check logs/llama_inference.log")
+        
         logger.info("Checking LLM server health...")
         llama = LlamaClient()
-        health = await llama.health_check()
+        
+        health = {"inference": False, "embedding": False}
+        is_consolidated = runner.config["embedding"]["port"] == runner.config["inference"]["port"]
+        
+        # Poll up to 30 seconds (model loading on GPU can take 20+ seconds)
+        for attempt in range(1, 31):
+            health = await llama.health_check()
+            if health["inference"] and (is_consolidated or health["embedding"]):
+                break
+            logger.warning(f"Waiting for Llama server to respond (attempt {attempt}/30)...")
+            await asyncio.sleep(1)
         
         if not health["inference"]:
             logger.error("CRITICAL: Llama Inference Server is unreachable!")
@@ -62,6 +79,7 @@ app.include_router(characters.router, prefix="/characters", tags=["Characters"])
 app.include_router(tags.router, prefix="/tags", tags=["Tags"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(api_settings.router, prefix="/settings", tags=["Settings"])
+app.include_router(lore.router, prefix="/lore", tags=["Lore"])
 
 # Mount static files (Frontend) - API routes MUST come first
 app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")

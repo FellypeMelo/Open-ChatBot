@@ -199,6 +199,8 @@ def test_runner_get_status():
 @patch("src.backend.core.engine.runner.subprocess.Popen")
 def test_runner_start_inference_edge_cases(mock_popen):
     """Verify various binary paths, HF models, NGL, and auto thread detection."""
+    # Simulate a running process (poll() returns None = still alive)
+    mock_popen.return_value.poll.return_value = None
     runner = LlamaServerRunner()
     
     # Config setup
@@ -292,6 +294,8 @@ def test_runner_start_inference_edge_cases(mock_popen):
 @patch("src.backend.core.engine.runner.subprocess.Popen")
 def test_runner_start_embedding_edge_cases(mock_popen):
     """Verify embedding server launches, handles consolidation, relative paths, HF, and errors."""
+    # Simulate a running process (poll() returns None = still alive)
+    mock_popen.return_value.poll.return_value = None
     runner = LlamaServerRunner()
     
     # 1. Consolidation check (ports match)

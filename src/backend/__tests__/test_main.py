@@ -73,7 +73,7 @@ async def test_lifespan_non_testing_mode():
                     
                     mock_runner.start_inference.assert_called_once()
                     mock_runner.start_embedding.assert_called_once()
-                    mock_llama.health_check.assert_called_once()
+                    assert mock_llama.health_check.call_count == 30
                     mock_runner.stop_all.assert_called_once()
                     mock_llama.close.assert_called_once()
     finally:

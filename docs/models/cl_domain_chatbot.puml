@@ -1,0 +1,71 @@
+@startuml
+title Open-ChatBot Domain Models – Class Diagram
+header Version 1.0 | Author: Antigravity AI | Date: 2026-06-26
+left header {req: RF-ALL} | {uc: UC-ALL}
+footer cl_domain_chatbot | Domain Bounded Contexts
+
+package "User Context" {
+    class User {
+        +id: Integer
+        +name: String
+        +gender: String
+        +is_active: Boolean
+    }
+}
+
+package "Character Context" {
+    class Character {
+        +id: Integer
+        +name: String
+        +description: Text
+        +persona_prompt: Text
+        +is_active: Boolean
+    }
+    class Tag {
+        +id: Integer
+        +label: String
+        +instruction: Text
+    }
+    class AgentState {
+        +id: Integer
+        +location: String
+        +mood: String
+        +clothes: String
+        +stats: JSON
+    }
+    Character "1" -- "many" Tag : has
+    Character "1" -- "1" AgentState : maintains
+}
+
+package "Chat & Memory Context" {
+    class MessageNode {
+        +id: Integer
+        +role: String
+        +content: Text
+        +type: String
+        +timestamp: DateTime
+    }
+    class LorebookEntry {
+        +id: Integer
+        +keyword: String
+        +content: Text
+        +is_global: Boolean
+    }
+    class JournalEntry {
+        +id: Integer
+        +timestamp: DateTime
+        +content: Text
+        +summary: Text
+        +mood_at_time: String
+    }
+    MessageNode "1" -- "many" MessageNode : children
+    MessageNode "*" -- "1" Character : references
+    MessageNode "*" -- "1" User : references
+    LorebookEntry "*" -- "1" Character : specific to
+    JournalEntry "*" -- "1" Character : belongs to
+}
+
+User -[hidden]-> Character
+Character -[hidden]-> MessageNode
+
+@enduml

@@ -29,6 +29,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [embGpuLayers, setEmbGpuLayers] = useState(-1)
   const [embArgs, setEmbArgs] = useState('')
 
+  // Consolidated mode state (whether embedding runs on the same server/port/model)
+  const [isConsolidated, setIsConsolidated] = useState(false)
+
   const loadStatus = async () => {
     try {
       setLoading(true)
@@ -52,6 +55,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       setEmbGpuLayers(data.embedding.config.gpu_layers)
       setEmbArgs(data.embedding.config.additional_args)
       
+      const consolidated = data.embedding.config.port === data.inference.config.port
+      setIsConsolidated(consolidated)
+      
       setError(null)
     } catch {
       setError('Failed to fetch AI runner status from backend.')
@@ -74,6 +80,32 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     }
   }, [])
 
+  // Synchronize embedding settings when consolidated is active
+  useEffect(() => {
+    if (isConsolidated) {
+      setEmbPort(infPort)
+      setEmbModel(infModel)
+      setEmbBinary(infBinary)
+      setEmbThreads(infThreads)
+      setEmbGpuLayers(infGpuLayers)
+      setEmbArgs(infArgs)
+    }
+  }, [isConsolidated, infPort, infModel, infBinary, infThreads, infGpuLayers, infArgs])
+
+  const handleConsolidatedChange = (checked: boolean) => {
+    setIsConsolidated(checked)
+    if (checked) {
+      setEmbPort(infPort)
+      setEmbModel(infModel)
+      setEmbBinary(infBinary)
+      setEmbThreads(infThreads)
+      setEmbGpuLayers(infGpuLayers)
+      setEmbArgs(infArgs)
+    } else {
+      setEmbPort(8081)
+    }
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!status) return
@@ -91,13 +123,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           additional_args: infArgs
         },
         embedding: {
-          binary_path: embBinary,
-          model_path: embModel,
-          port: embPort,
-          threads: embThreads,
-          gpu_layers: embGpuLayers,
+          binary_path: isConsolidated ? infBinary : embBinary,
+          model_path: isConsolidated ? infModel : embModel,
+          port: isConsolidated ? infPort : embPort,
+          threads: isConsolidated ? infThreads : embThreads,
+          gpu_layers: isConsolidated ? infGpuLayers : embGpuLayers,
           context_size: 4096, // Fixed default
-          additional_args: embArgs
+          additional_args: isConsolidated ? infArgs : embArgs
         }
       }
       await api.saveRunnerConfig(newConfig)
@@ -351,7 +383,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  {status?.embedding.running ? (
+                  {isConsolidated ? (
+                    <span className="font-label-sm text-[10px] text-[#71717A] uppercase bg-white/5 border border-white/10 px-3 py-1.5 rounded-full">
+                      Managed by Inference
+                    </span>
+                  ) : status?.embedding.running ? (
                     <button
                       type="button"
                       onClick={() => handleStop('embedding')}
@@ -373,8 +409,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
+              {/* Consolidated Mode Toggle */}
+              <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-[1rem] p-sm relative z-10">
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-label-sm text-xs text-white font-medium">Consolidated Server Mode</span>
+                  <span className="font-label-sm text-[10px] text-[#71717A] max-w-[380px]">
+                    Run embeddings on the same server instance as inference (shares model & port, enables LLM --embedding option).
+                  </span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer select-none">
+                  <input 
+                    type="checkbox" 
+                    checked={isConsolidated} 
+                    onChange={(e) => handleConsolidatedChange(e.target.checked)} 
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-[#27272A] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-4 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-white/90"></div>
+                </label>
+              </div>
+
+              {isConsolidated && (
+                <div className="text-[10px] text-emerald-400/90 font-label-sm bg-emerald-500/5 border border-emerald-500/10 rounded-[0.75rem] p-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-sm">info</span>
+                  <span>Sharing port {infPort} and model {infModel.replace('models/', '') || 'Inference Model'}. Llama server will launch consolidated.</span>
+                </div>
+              )}
+
               {/* Form Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-sm">
+              <div className={`grid grid-cols-1 md:grid-cols-2 gap-sm transition-all duration-300 ${isConsolidated ? 'opacity-40 pointer-events-none' : ''}`}>
                 <div className="flex flex-col gap-1">
                   <label htmlFor="emb-binary" className="font-label-sm text-[10px] text-[#71717A] uppercase">Runner Binary</label>
                   <select
@@ -382,6 +444,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     value={embBinary.replace('llama_bin/', '')}
                     onChange={e => setEmbBinary(`llama_bin/${e.target.value}`)}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                    disabled={isConsolidated}
                   >
                     {status?.available_binaries.map(b => (
                       <option key={b} value={b}>{b}</option>
@@ -400,6 +463,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     onChange={e => setEmbModel(e.target.value ? `models/${e.target.value}` : '')}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
                     required
+                    disabled={isConsolidated}
                   >
                     <option value="">-- Choose Model --</option>
                     {status?.available_models.map(m => (
@@ -417,6 +481,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     onChange={e => setEmbPort(parseInt(e.target.value) || 8081)}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
                     required
+                    disabled={isConsolidated}
                   />
                 </div>
 
@@ -429,6 +494,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     onChange={e => setEmbThreads(parseInt(e.target.value) || 4)}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
                     required
+                    disabled={isConsolidated}
                   />
                 </div>
 
@@ -441,6 +507,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     onChange={e => setEmbGpuLayers(parseInt(e.target.value) ?? -1)}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
                     required
+                    disabled={isConsolidated}
                   />
                 </div>
               </div>
@@ -453,7 +520,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   value={embArgs}
                   onChange={e => setEmbArgs(e.target.value)}
                   placeholder="e.g. --pooling cls"
-                  className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                  className={`bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none ${isConsolidated ? 'opacity-40 pointer-events-none' : ''}`}
+                  disabled={isConsolidated}
                 />
               </div>
             </div>
@@ -469,7 +537,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               Cancel
             </button>
             <button 
-              disabled={loading || !infModel || !embModel}
+              disabled={loading || !infModel || (!isConsolidated && !embModel)}
               className="font-label-sm text-xs font-semibold bg-white text-black px-lg py-xs hover:bg-[#E4E4E7] rounded-full transition-all duration-300 disabled:opacity-50 flex items-center gap-1.5" 
               type="submit"
             >

@@ -11,17 +11,17 @@ describe('api service tests', () => {
   });
 
   const mockSuccessResponse = (data: unknown) => {
-    return Promise.resolve({
+    return {
       ok: true,
       json: () => Promise.resolve(data),
-    } as Response);
+    } as Response;
   };
 
   const mockErrorResponse = (status = 500) => {
-    return Promise.resolve({
+    return {
       ok: false,
       status,
-    } as Response);
+    } as Response;
   };
 
   it('fetchUser should make GET call to /users/me', async () => {

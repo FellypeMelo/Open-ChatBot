@@ -20,7 +20,7 @@ describe('LorebookView', () => {
     vi.spyOn(window, 'confirm').mockImplementation(() => true);
     vi.mocked(api.fetchLore).mockResolvedValue(mockLoreEntries);
     vi.mocked(api.createLore).mockResolvedValue({ id: 3, keyword: 'Magic Ring', content: 'Allows invisibility', character_id: null, is_global: true });
-    vi.mocked(api.deleteLore).mockResolvedValue({ status: 'success' });
+    vi.mocked(api.deleteLore).mockResolvedValue(true);
   });
 
   it('should render page title and fetch lore entries on mount', async () => {

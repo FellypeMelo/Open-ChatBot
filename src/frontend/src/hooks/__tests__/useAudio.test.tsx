@@ -106,7 +106,7 @@ describe('useAudio', () => {
       createGain: vi.fn().mockReturnValue(mockGain),
       createBiquadFilter: vi.fn().mockReturnValue(mockBiquadFilter),
       createBufferSource: vi.fn().mockReturnValue(mockBufferSource),
-      createBuffer: vi.fn().mockImplementation((channels, size, rate) => ({
+      createBuffer: vi.fn().mockImplementation((_channels, size, rate) => ({
         getChannelData: vi.fn().mockReturnValue(new Float32Array(size)),
         sampleRate: rate,
       })),
@@ -120,7 +120,7 @@ describe('useAudio', () => {
   });
 
   afterEach(() => {
-    delete (window as typeof window & { AudioContext?: ReturnType<typeof vi.fn> }).AudioContext;
+    delete (window as any).AudioContext;
   });
 
   it('should resume audio context if suspended', async () => {

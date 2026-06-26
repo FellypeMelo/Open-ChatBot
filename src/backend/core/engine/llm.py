@@ -19,7 +19,7 @@ class LlamaClient:
         if self._url is not None:
             return self._url
         from src.backend.core.engine.runner import runner
-        return f"http://localhost:{runner.config['inference']['port']}"
+        return f"http://127.0.0.1:{runner.config['inference']['port']}"
 
     @url.setter
     def url(self, value: str):
@@ -30,7 +30,7 @@ class LlamaClient:
         if self._embedding_url is not None:
             return self._embedding_url
         from src.backend.core.engine.runner import runner
-        return f"http://localhost:{runner.config['embedding']['port']}"
+        return f"http://127.0.0.1:{runner.config['embedding']['port']}"
 
     @embedding_url.setter
     def embedding_url(self, value: str):

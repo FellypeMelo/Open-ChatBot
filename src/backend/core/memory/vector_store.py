@@ -27,7 +27,7 @@ class LlamaCppEmbeddings(Embeddings):
             # to avoid blocking/deadlock issues with event loop integration.
             import httpx
             results = []
-            target_url = getattr(self.llm_client, "embedding_url", None) or "http://localhost:8081"
+            target_url = getattr(self.llm_client, "embedding_url", None) or "http://127.0.0.1:8081"
             for text in texts:
                 try:
                     resp = httpx.post(f"{target_url}/embedding", json={"content": text}, timeout=60.0)

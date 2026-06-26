@@ -1,0 +1,952 @@
+openapi: 3.1.0
+info:
+  title: Open-ChatBot
+  version: 0.1.0
+paths:
+  /history/{character_id}:
+    get:
+      summary: Get Chat History
+      operationId: get_chat_history_history__character_id__get
+      parameters:
+      - name: character_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Character Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+                title: Response Get Chat History History  Character Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /chat/clear/{character_id}:
+    post:
+      summary: Clear Chat History
+      operationId: clear_chat_history_chat_clear__character_id__post
+      parameters:
+      - name: character_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Character Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /chat:
+    post:
+      summary: Chat
+      operationId: chat_chat_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /chat/stream:
+    post:
+      summary: Chat Stream
+      operationId: chat_stream_chat_stream_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /characters/{character_id}/journal:
+    get:
+      summary: Get Journal Entries
+      operationId: get_journal_entries_characters__character_id__journal_get
+      parameters:
+      - name: character_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Character Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /characters/auto-tag:
+    post:
+      tags:
+      - Characters
+      summary: Auto Tag Character
+      operationId: auto_tag_character_characters_auto_tag_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DescriptionRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  type: integer
+                type: array
+                title: Response Auto Tag Character Characters Auto Tag Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /characters/:
+    get:
+      tags:
+      - Characters
+      summary: List Characters
+      operationId: list_characters_characters__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/CharacterResponse'
+                type: array
+                title: Response List Characters Characters  Get
+    post:
+      tags:
+      - Characters
+      summary: Create Character
+      operationId: create_character_characters__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CharacterCreate'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharacterResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /characters/{char_id}:
+    put:
+      tags:
+      - Characters
+      summary: Update Character
+      operationId: update_character_characters__char_id__put
+      parameters:
+      - name: char_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Char Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CharacterUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharacterResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - Characters
+      summary: Get Character
+      operationId: get_character_characters__char_id__get
+      parameters:
+      - name: char_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Char Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharacterResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Characters
+      summary: Delete Character
+      operationId: delete_character_characters__char_id__delete
+      parameters:
+      - name: char_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Char Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /characters/{char_id}/state:
+    put:
+      tags:
+      - Characters
+      summary: Update Character State
+      operationId: update_character_state_characters__char_id__state_put
+      parameters:
+      - name: char_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Char Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StateUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CharacterResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /tags/:
+    get:
+      tags:
+      - Tags
+      summary: List Tags
+      operationId: list_tags_tags__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TagResponse'
+                type: array
+                title: Response List Tags Tags  Get
+    post:
+      tags:
+      - Tags
+      summary: Create Tag
+      operationId: create_tag_tags__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCreate'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /tags/{tag_id}:
+    put:
+      tags:
+      - Tags
+      summary: Update Tag
+      operationId: update_tag_tags__tag_id__put
+      parameters:
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Tag Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCreate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Tags
+      summary: Delete Tag
+      operationId: delete_tag_tags__tag_id__delete
+      parameters:
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Tag Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /users/me:
+    get:
+      tags:
+      - Users
+      summary: Get Me
+      operationId: get_me_users_me_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchema'
+    post:
+      tags:
+      - Users
+      summary: Update Me
+      operationId: update_me_users_me_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateSchema'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchema'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /settings/status:
+    get:
+      tags:
+      - Settings
+      summary: Get Runner Status
+      operationId: get_runner_status_settings_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /settings/save:
+    post:
+      tags:
+      - Settings
+      summary: Save Runner Config
+      operationId: save_runner_config_settings_save_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LlamaConfigModel'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /settings/start/inference:
+    post:
+      tags:
+      - Settings
+      summary: Start Inference Server
+      operationId: start_inference_server_settings_start_inference_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /settings/stop/inference:
+    post:
+      tags:
+      - Settings
+      summary: Stop Inference Server
+      operationId: stop_inference_server_settings_stop_inference_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /settings/start/embedding:
+    post:
+      tags:
+      - Settings
+      summary: Start Embedding Server
+      operationId: start_embedding_server_settings_start_embedding_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /settings/stop/embedding:
+    post:
+      tags:
+      - Settings
+      summary: Stop Embedding Server
+      operationId: stop_embedding_server_settings_stop_embedding_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /settings/restart-all:
+    post:
+      tags:
+      - Settings
+      summary: Restart All Servers
+      operationId: restart_all_servers_settings_restart_all_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /favicon.svg:
+    get:
+      summary: Favicon
+      operationId: favicon_favicon_svg_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /{full_path}:
+    get:
+      summary: Serve Frontend
+      operationId: serve_frontend__full_path__get
+      parameters:
+      - name: full_path
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Full Path
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    CharacterCreate:
+      properties:
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+        tag_ids:
+          items:
+            type: integer
+          type: array
+          title: Tag Ids
+          default: []
+      type: object
+      required:
+      - name
+      - description
+      title: CharacterCreate
+    CharacterResponse:
+      properties:
+        id:
+          type: integer
+          title: Id
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+        is_active:
+          type: boolean
+          title: Is Active
+        tags:
+          items:
+            $ref: '#/components/schemas/TagSchema'
+          type: array
+          title: Tags
+          default: []
+        state:
+          anyOf:
+          - $ref: '#/components/schemas/StateResponse'
+          - type: 'null'
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - is_active
+      title: CharacterResponse
+    CharacterUpdate:
+      properties:
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+        tag_ids:
+          items:
+            type: integer
+          type: array
+          title: Tag Ids
+          default: []
+      type: object
+      required:
+      - name
+      - description
+      title: CharacterUpdate
+    ChatRequest:
+      properties:
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+        character_id:
+          type: integer
+          title: Character Id
+          default: 1
+        parent_id:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Parent Id
+        config:
+          anyOf:
+          - $ref: '#/components/schemas/LLMConfig'
+          - type: 'null'
+        action_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Action Id
+      type: object
+      title: ChatRequest
+    ChatResponse:
+      properties:
+        reply:
+          type: string
+          title: Reply
+        request_id:
+          type: string
+          title: Request Id
+        stats:
+          additionalProperties: true
+          type: object
+          title: Stats
+          default: {}
+        latency:
+          additionalProperties:
+            type: number
+          type: object
+          title: Latency
+          default: {}
+      type: object
+      required:
+      - reply
+      - request_id
+      title: ChatResponse
+    DescriptionRequest:
+      properties:
+        description:
+          type: string
+          title: Description
+      type: object
+      required:
+      - description
+      title: DescriptionRequest
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    LLMConfig:
+      properties:
+        base_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Url
+        model_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model Name
+      type: object
+      title: LLMConfig
+    LlamaConfigModel:
+      properties:
+        inference:
+          $ref: '#/components/schemas/ServerConfigModel'
+        embedding:
+          $ref: '#/components/schemas/ServerConfigModel'
+      type: object
+      required:
+      - inference
+      - embedding
+      title: LlamaConfigModel
+    ServerConfigModel:
+      properties:
+        binary_path:
+          type: string
+          title: Binary Path
+        model_path:
+          type: string
+          title: Model Path
+        port:
+          type: integer
+          title: Port
+        threads:
+          type: integer
+          title: Threads
+        gpu_layers:
+          type: integer
+          title: Gpu Layers
+        context_size:
+          type: integer
+          title: Context Size
+          default: 4096
+        additional_args:
+          type: string
+          title: Additional Args
+      type: object
+      required:
+      - binary_path
+      - model_path
+      - port
+      - threads
+      - gpu_layers
+      - additional_args
+      title: ServerConfigModel
+    StateResponse:
+      properties:
+        location:
+          type: string
+          title: Location
+        mood:
+          type: string
+          title: Mood
+        clothes:
+          type: string
+          title: Clothes
+        stats:
+          additionalProperties: true
+          type: object
+          title: Stats
+      type: object
+      required:
+      - location
+      - mood
+      - clothes
+      - stats
+      title: StateResponse
+    StateUpdate:
+      properties:
+        location:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Location
+        mood:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mood
+        clothes:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Clothes
+        stats:
+          anyOf:
+          - $ref: '#/components/schemas/StatsUpdate'
+          - type: 'null'
+      type: object
+      title: StateUpdate
+    StatsUpdate:
+      properties:
+        energy:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Energy
+        hunger:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Hunger
+        happiness:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Happiness
+        social:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Social
+        is_sleeping:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Is Sleeping
+        relationship_score:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Relationship Score
+      type: object
+      title: StatsUpdate
+    TagCreate:
+      properties:
+        label:
+          type: string
+          title: Label
+        instruction:
+          type: string
+          title: Instruction
+      type: object
+      required:
+      - label
+      - instruction
+      title: TagCreate
+    TagResponse:
+      properties:
+        id:
+          type: integer
+          title: Id
+        label:
+          type: string
+          title: Label
+        instruction:
+          type: string
+          title: Instruction
+      type: object
+      required:
+      - id
+      - label
+      - instruction
+      title: TagResponse
+    TagSchema:
+      properties:
+        id:
+          type: integer
+          title: Id
+        label:
+          type: string
+          title: Label
+        instruction:
+          type: string
+          title: Instruction
+      type: object
+      required:
+      - id
+      - label
+      - instruction
+      title: TagSchema
+    UserSchema:
+      properties:
+        id:
+          type: integer
+          title: Id
+        name:
+          type: string
+          title: Name
+        gender:
+          type: string
+          title: Gender
+        is_active:
+          type: boolean
+          title: Is Active
+      type: object
+      required:
+      - id
+      - name
+      - gender
+      - is_active
+      title: UserSchema
+    UserUpdateSchema:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        gender:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Gender
+      type: object
+      title: UserUpdateSchema
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

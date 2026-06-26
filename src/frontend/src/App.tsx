@@ -422,7 +422,7 @@ function App() {
       const updatedChar = await api.updateCharacterState(charId, stateUpdate)
       setCharacters((prev) => prev.map((c) => c.id === charId ? updatedChar : c))
     } catch {
-      setToast({ message: 'Failed to update character state.', type: 'error' })
+      showToast('Failed to update character state.', 'error')
     }
   }
 
@@ -433,9 +433,9 @@ function App() {
         await api.clearChatHistory(selectedCharId)
         setMessages([])
         fetchCharacters()
-        setToast({ message: 'Conversation cleared.', type: 'success' })
+        showToast('Conversation cleared.')
       } catch {
-        setToast({ message: 'Failed to clear conversation history.', type: 'error' })
+        showToast('Failed to clear conversation history.', 'error')
       }
     }
   }

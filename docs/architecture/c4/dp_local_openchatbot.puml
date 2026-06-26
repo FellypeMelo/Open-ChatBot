@@ -1,0 +1,23 @@
+@startuml
+title Open-ChatBot System Architecture – Context Diagram
+header Version 1.0 | Author: Antigravity AI | Date: 2026-06-26
+left header {req: RF-ALL} | {uc: UC-ALL}
+footer C4-CONTEXT-01 | Architecture Context
+
+node "User Device (Localhost)" {
+    component "Frontend UI (React/Vite)" as Frontend
+    component "Backend API (FastAPI)" as Backend
+    database "SQLite DB (chatbot.db)" as DB
+    node "Llama.cpp Engine" {
+        component "Consolidated Llama.cpp Server\n(Inference & Embeddings)" as LlamaServer
+    }
+}
+
+actor "User" as User
+
+User --> Frontend : Interacts (UI)
+Frontend --> Backend : REST API (JSON)
+Backend --> DB : SQLAlchemy (CRUD)
+Backend --> LlamaServer : HTTP (Generation & Vectorization)
+
+@enduml

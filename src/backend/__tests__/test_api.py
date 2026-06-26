@@ -420,5 +420,38 @@ async def test_run_consciousness_layer_exception():
             mock_logger.exception.assert_called()
 
 
+def test_lore_endpoints(client, db_session):
+    with patch("src.backend.api.lore.vector_store.add_lore", new_callable=AsyncMock) as mock_add_lore:
+        mock_add_lore.return_value = None
+
+        # POST /lore/
+        lore_payload = {"keyword": "Elves", "content": "Immortal beings.", "character_id": None, "is_global": True}
+        response = client.post("/lore/", json=lore_payload)
+        assert response.status_code == 200
+        data = response.json()
+        lore_id = data["id"]
+        assert data["keyword"] == "Elves"
+        assert data["content"] == "Immortal beings."
+        assert data["is_global"] is True
+        assert mock_add_lore.called
+
+        # GET /lore/
+        response = client.get("/lore/")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 1
+        assert any(l["id"] == lore_id for l in data)
+
+        # DELETE /lore/{id}
+        response = client.delete(f"/lore/{lore_id}")
+        assert response.status_code == 200
+        assert response.json() == {"message": "Lore entry deleted"}
+
+        # DELETE /lore/{id} 404
+        response = client.delete(f"/lore/{lore_id}")
+        assert response.status_code == 404
+
+
+
 
 

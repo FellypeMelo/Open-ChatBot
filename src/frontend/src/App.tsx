@@ -143,9 +143,10 @@ function App() {
     let active = true
     const init = async () => {
       if (selectedCharId) {
+        setMessages([]) // Clear stale messages from previous character to avoid tree mismatch
         await Promise.resolve()
         if (active) {
-          fetchHistory(selectedCharId)
+          await fetchHistory(selectedCharId)
         }
       }
     }
@@ -428,7 +429,7 @@ function App() {
                 return next
               })
             }
-            if (selectedCharId) fetchHistory(selectedCharId)
+            if (selectedCharId) await fetchHistory(selectedCharId)
           }
         } catch (e) {
           console.error('SSE Error', e)

@@ -2,7 +2,7 @@
 target-version = "py311"
 
 [lint]
-select = ["F", "E", "W"]
+select = ["F", "E"]
 ignore = [
     "E701", # Multiple statements on one line (colon)
     "E702", # Multiple statements on one line (semicolon)

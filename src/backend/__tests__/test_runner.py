@@ -137,41 +137,34 @@ def test_runner_get_available_binaries_variations():
     """Verify iterdir outputs are correctly filtered on Windows and non-Windows."""
     runner = LlamaServerRunner()
     
-    # 1. Directory does not exist
-    with patch("src.backend.core.engine.runner.Path.exists", return_value=False):
+    with patch("src.backend.core.engine.runner.Path") as mock_path_class:
+        mock_bin_dir = MagicMock()
+        mock_path_class.return_value = mock_bin_dir
+        
+        # 1. Directory does not exist
+        mock_bin_dir.exists.return_value = False
         assert runner.get_available_binaries() == []
 
-    # 2. Files with NT matching rules
-    mock_bin_dir = MagicMock(spec=Path)
-    mock_bin_dir.exists.return_value = True
-    
-    f1 = MagicMock(spec=Path)
-    f1.is_file.return_value = True
-    f1.name = "llama-server.exe"
+        # 2. Files with NT matching rules
+        mock_bin_dir.exists.return_value = True
+        
+        f1, f2, f3, f4 = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        f1.is_file.return_value = True; f1.name = "llama-server.exe"
+        f2.is_file.return_value = True; f2.name = "llama-server.dll"
+        f3.is_file.return_value = True; f3.name = "llama-server"
+        f4.is_file.return_value = True; f4.name = "unrelated.txt"
+        
+        mock_bin_dir.iterdir.return_value = [f1, f2, f3, f4]
 
-    f2 = MagicMock(spec=Path)
-    f2.is_file.return_value = True
-    f2.name = "llama-server.dll"
+        with patch("os.name", "nt"):
+            res = runner.get_available_binaries()
+            assert res == ["llama-server.exe"]
 
-    f3 = MagicMock(spec=Path)
-    f3.is_file.return_value = True
-    f3.name = "llama-server" # NT OS drops it (no exe/dll extension)
-
-    f4 = MagicMock(spec=Path)
-    f4.is_file.return_value = True
-    f4.name = "unrelated.txt"
-
-    with patch("src.backend.core.engine.runner.Path.exists", return_value=True):
-        with patch("src.backend.core.engine.runner.Path.iterdir", return_value=[f1, f2, f3, f4]):
-            with patch("os.name", "nt"):
-                res = runner.get_available_binaries()
-                assert res == ["llama-server.exe"]
-
-            with patch("os.name", "posix"):
-                res = runner.get_available_binaries()
-                assert "llama-server" in res
-                assert "llama-server.exe" in res
-                assert "llama-server.dll" not in res
+        with patch("os.name", "posix"):
+            res = runner.get_available_binaries()
+            assert "llama-server" in res
+            assert "llama-server.exe" in res
+            assert "llama-server.dll" not in res
 
 
 def test_runner_get_status():

@@ -9,6 +9,7 @@
 4. **Test Coverage**: Maintain at least 80% test coverage for both frontend and backend codebases (overall and per major module/file). Ensure new features include corresponding tests.
 5. **Design Taste & Mobile Responsiveness**: Follow high-end anti-slop visual standards. Keep hero sections within viewport using `min-h-[100dvh]` instead of `h-screen`. Prefer CSS Grid over flexbox math (`grid grid-cols-...`). Ensure mobile navigation menu is clean, responsive, and collapses gracefully on screens `< 768px` (using sidebar drawer or modal hamburger patterns).
 6. **Testing Mandate**: Always require End-to-End (E2E) tests when making database or architectural changes to ensure DB migrations and complex integrations actually work outside of isolated TDD unit test environments.
+7. **Always Plan First**: Before executing large changes, creating new files (like tests or features), or running complex terminal commands, you must explicitly outline your plan to the user. Do not execute blindly. Present the strategy, explain what files will be modified, and wait for implicit or explicit alignment.
 
 ## Project Context
 We are working on **Open-ChatBot**, a stateful, modular AI character platform.
@@ -19,6 +20,7 @@ We are working on **Open-ChatBot**, a stateful, modular AI character platform.
 ## Corrections Log
 | 2026-06-22 | User Correction | Tried using `npm run test` instead of `pnpm`. | Under-specified initial package manager preference. Resolved: Always use `pnpm` in this workspace. |
 | 2026-06-30 | Missing DB Schema | 500 Errors caused by missing SQLite columns due to lack of migrations. TDD missed it. | Always enforce E2E testing for DB changes and explicitly write manual `ALTER TABLE` migrations in `database.py`. Ensure tests run in a clean, reset environment. |
+| 2026-06-30 | "Always plan first" | Added rule mandating that the agent must outline its strategy and planned file/command actions before executing them. |
 
 ## Frontend Design Taste Guidelines
 1. **Responsiveness & Layouts**:

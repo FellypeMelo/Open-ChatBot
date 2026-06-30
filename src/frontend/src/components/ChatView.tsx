@@ -57,6 +57,8 @@ interface ChatViewProps {
   onUpdateState: (charId: number, stateUpdate: Record<string, unknown>) => Promise<void>
   onClearChat: () => void
   onSendAction: (actionId: string, parentId?: number) => Promise<void>
+  onEditMessage?: (messageId: number, content: string) => Promise<void>
+  onDeleteMessage?: (messageId: number) => Promise<void>
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
@@ -69,7 +71,9 @@ const ChatView: React.FC<ChatViewProps> = ({
   isLoading,
   onUpdateState,
   onClearChat,
-  onSendAction
+  onSendAction,
+  onEditMessage,
+  onDeleteMessage
 }) => {
   const chatEndRef = useRef<HTMLDivElement>(null)
   const mainRef = useRef<HTMLElement>(null)
@@ -84,6 +88,8 @@ const ChatView: React.FC<ChatViewProps> = ({
   const [isJournalLoading, setIsJournalLoading] = useState(false)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [drawerTab, setDrawerTab] = useState<'actions' | 'gifts'>('actions')
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
+  const [editContent, setEditContent] = useState('')
 
   useEffect(() => {
     let active = true
@@ -415,17 +421,75 @@ const ChatView: React.FC<ChatViewProps> = ({
                 const isStreaming = isLastMessage && msg.role === 'assistant' && (isLoading || isDraining)
 
                 if (msg.role === 'user') {
+                  const isEditing = editingMessageId === msg.id
                   return (
-                    <div key={msg.id} className="w-full flex flex-col items-start mt-6 mb-6">
-                      <div className="flex items-center gap-2 mb-2 select-none">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#34D399]/40" />
-                        <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-[#34D399]/70">
-                          PROMPT ACTION
-                        </span>
+                    <div key={msg.id} className="w-full flex flex-col items-start mt-6 mb-6 group">
+                      <div className="flex items-center justify-between w-full mb-2">
+                        <div className="flex items-center gap-2 select-none">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#34D399]/40" />
+                          <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-[#34D399]/70">
+                            PROMPT ACTION
+                          </span>
+                        </div>
+                        
+                        {!isEditing && (
+                          <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => {
+                                setEditingMessageId(msg.id)
+                                setEditContent(msg.content)
+                              }}
+                              className="text-[#71717A] hover:text-white transition-colors cursor-pointer"
+                              title="Edit"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">edit</span>
+                            </button>
+                            {onDeleteMessage && (
+                              <button 
+                                onClick={() => {
+                                  if(confirm('Delete this message and everything after it?')) onDeleteMessage(msg.id)
+                                }}
+                                className="text-[#71717A] hover:text-red-400 transition-colors cursor-pointer"
+                                title="Delete"
+                              >
+                                <span className="material-symbols-outlined text-[14px]">delete</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="w-full border-l-2 border-white/10 pl-5 py-1 text-zinc-400 font-sans text-sm leading-relaxed whitespace-pre-wrap">
-                        {msg.content}
-                      </div>
+                      
+                      {isEditing ? (
+                        <div className="w-full flex flex-col gap-2">
+                          <textarea
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            className="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-sans text-sm resize-y min-h-[80px]"
+                            autoFocus
+                          />
+                          <div className="flex gap-2 self-end">
+                            <button
+                              onClick={() => setEditingMessageId(null)}
+                              className="px-3 py-1 text-xs font-mono text-zinc-400 hover:text-white"
+                            >
+                              CANCEL
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (onEditMessage) onEditMessage(msg.id, editContent)
+                                setEditingMessageId(null)
+                              }}
+                              className="px-3 py-1 bg-white text-black text-xs font-bold rounded"
+                            >
+                              SAVE
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-full border-l-2 border-white/10 pl-5 py-1 text-zinc-400 font-sans text-sm leading-relaxed whitespace-pre-wrap">
+                          {msg.content}
+                        </div>
+                      )}
                     </div>
                   )
                 }
@@ -471,9 +535,37 @@ const ChatView: React.FC<ChatViewProps> = ({
                     </div>
 
                     {/* Message Body (No bubble, flows directly on background) */}
-                    <div className="font-serif text-[17px] text-zinc-200 leading-[1.8] antialiased select-text">
-                      <MessageRenderer content={isStreaming ? displayedContent : msg.content} />
-                    </div>
+                    {editingMessageId === msg.id ? (
+                      <div className="w-full flex flex-col gap-2 mt-2">
+                        <textarea
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          className="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-serif text-[17px] leading-[1.8] resize-y min-h-[120px]"
+                          autoFocus
+                        />
+                        <div className="flex gap-2 self-end">
+                          <button
+                            onClick={() => setEditingMessageId(null)}
+                            className="px-3 py-1 text-xs font-mono text-zinc-400 hover:text-white"
+                          >
+                            CANCEL
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (onEditMessage) onEditMessage(msg.id, editContent)
+                              setEditingMessageId(null)
+                            }}
+                            className="px-3 py-1 bg-white text-black text-xs font-bold rounded"
+                          >
+                            SAVE
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="font-serif text-[17px] text-zinc-200 leading-[1.8] antialiased select-text">
+                        <MessageRenderer content={isStreaming ? displayedContent : msg.content} />
+                      </div>
+                    )}
 
                     {/* Controls Footer */}
                     <div className="flex gap-4 mt-3 items-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
@@ -484,6 +576,27 @@ const ChatView: React.FC<ChatViewProps> = ({
                         <span className="material-symbols-outlined text-[12px]">refresh</span>
                         Regenerate
                       </button>
+                      <button 
+                        onClick={() => {
+                          setEditingMessageId(msg.id)
+                          setEditContent(msg.content)
+                        }}
+                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[12px]">edit</span>
+                        Edit
+                      </button>
+                      {onDeleteMessage && (
+                        <button 
+                          onClick={() => {
+                            if(confirm('Delete this message and everything after it?')) onDeleteMessage(msg.id)
+                          }}
+                          className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-red-400 transition-colors cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-[12px]">delete</span>
+                          Delete
+                        </button>
+                      )}
                       <button 
                         onClick={() => handleCopyID(msg.request_id || '')}
                         className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer"

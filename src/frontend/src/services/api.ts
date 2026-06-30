@@ -22,11 +22,11 @@ export const fetchHistory = async (charId: number) => {
   return response.json()
 }
 
-export const updateUser = async (name: string, gender: string) => {
+export const updateUser = async (name: string, gender: string, persona_description?: string, appearance?: string) => {
   const response = await fetch('/users/me', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, gender })
+    body: JSON.stringify({ name, gender, persona_description, appearance })
   })
   if (!response.ok) throw new Error('Failed to update user')
   return response.json()
@@ -58,21 +58,37 @@ export const deleteTag = async (id: number) => {
   return response.ok
 }
 
-export const createCharacter = async (name: string, description: string, tagIds: number[]) => {
+export const createCharacter = async (data: { name: string, description: string, tag_ids: number[], compress_backstory: boolean }): Promise<Character> => {
   const response = await fetch('/characters/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description, tag_ids: tagIds })
-  })
-  if (!response.ok) throw new Error('Failed to create character')
-  return response.json()
-}
+    body: JSON.stringify(data)
+  });
+  if (!response.ok) throw new Error('Failed to create character');
+  return response.json();
+};
 
-export const updateCharacter = async (id: number, name: string, description: string, tagIds: number[]) => {
+export const importCharacterPng = async (file: File): Promise<Character> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const response = await fetch('/characters/import-png', {
+    method: 'POST',
+    body: formData
+  });
+  
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to import character');
+  }
+  return response.json();
+};
+
+export const updateCharacter = async (id: number, data: { name: string, description: string, tag_ids: number[], compress_backstory: boolean }): Promise<Character> => {
   const response = await fetch(`/characters/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description, tag_ids: tagIds })
+    body: JSON.stringify(data)
   })
   if (!response.ok) throw new Error('Failed to update character')
   return response.json()
@@ -87,6 +103,65 @@ export const deleteCharacter = async (id: number) => {
 export interface LLMConfig {
   base_url?: string;
   model_name?: string;
+  preset_id?: number;
+}
+
+export interface Character {
+  id: number;
+  name: string;
+  description: string;
+  is_active: boolean;
+  tags: any[];
+  state?: any;
+  avatar_url?: string;
+}
+
+export interface SamplerPreset {
+  id: number;
+  name: string;
+  is_default: boolean;
+  temperature: number;
+  min_p: number;
+  top_k: number;
+  top_p: number;
+  repeat_penalty: number;
+  dry_multiplier: number;
+  dry_base: number;
+  dry_range: number;
+  xtc_threshold: number;
+  xtc_probability: number;
+}
+
+export const fetchPresets = async (): Promise<SamplerPreset[]> => {
+  const response = await fetch('/presets/')
+  if (!response.ok) throw new Error('Failed to fetch presets')
+  return response.json()
+}
+
+export const createPreset = async (preset: Omit<SamplerPreset, 'id'>) => {
+  const response = await fetch('/presets/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(preset)
+  })
+  if (!response.ok) throw new Error('Failed to create preset')
+  return response.json()
+}
+
+export const updatePreset = async (id: number, preset: Omit<SamplerPreset, 'id'>) => {
+  const response = await fetch(`/presets/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(preset)
+  })
+  if (!response.ok) throw new Error('Failed to update preset')
+  return response.json()
+}
+
+export const deletePreset = async (id: number) => {
+  const response = await fetch(`/presets/${id}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('Failed to delete preset')
+  return response.ok
 }
 
 export const sendMessage = async (message: string | null, characterId: number, parentId: number | null, config?: LLMConfig) => {
@@ -203,6 +278,24 @@ export const clearChatHistory = async (characterId: number) => {
     method: 'POST'
   })
   if (!response.ok) throw new Error('Failed to clear chat history')
+  return response.json()
+}
+
+export const editMessage = async (messageId: number, content: string) => {
+  const response = await fetch(`/chat/message/${messageId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  })
+  if (!response.ok) throw new Error('Failed to edit message')
+  return response.json()
+}
+
+export const deleteMessage = async (messageId: number) => {
+  const response = await fetch(`/chat/message/${messageId}`, {
+    method: 'DELETE'
+  })
+  if (!response.ok) throw new Error('Failed to delete message')
   return response.json()
 }
 

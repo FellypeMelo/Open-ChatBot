@@ -3,23 +3,27 @@ import React, { useState } from 'react'
 interface User {
   name: string
   gender: string
+  persona_description?: string
+  appearance?: string
 }
 
 interface UserProfileModalProps {
   user: User | null
   onClose: () => void
-  onUpdate: (name: string, gender: string) => Promise<void> | void
+  onUpdate: (name: string, gender: string, persona: string, appearance: string) => Promise<void> | void
 }
 
 const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUpdate }) => {
   const [name, setName] = useState(user?.name || '')
   const [gender, setGender] = useState(user?.gender || 'Male')
+  const [persona, setPersona] = useState(user?.persona_description || '')
+  const [appearance, setAppearance] = useState(user?.appearance || '')
   const [isSaving, setIsSaving] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSaving(true)
-    await onUpdate(name, gender)
+    await onUpdate(name, gender, persona, appearance)
     setIsSaving(false)
   }
 
@@ -68,6 +72,30 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
               <option value="Non-binary" className="bg-[#111111]">Non-binary</option>
               <option value="Unknown" className="bg-[#111111]">Prefer not to say</option>
             </select>
+          </div>
+
+          <div className="flex flex-col gap-xs">
+            <label className="font-label-sm text-label-sm text-[#71717A] uppercase" htmlFor="user_appearance">Physical Appearance</label>
+            <textarea 
+              value={appearance}
+              onChange={e => setAppearance(e.target.value)}
+              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none" 
+              id="user_appearance" 
+              placeholder="e.g., Tall, dark hair, wearing a leather jacket..." 
+              rows={2}
+            />
+          </div>
+
+          <div className="flex flex-col gap-xs">
+            <label className="font-label-sm text-label-sm text-[#71717A] uppercase" htmlFor="user_persona">Personality / Background</label>
+            <textarea 
+              value={persona}
+              onChange={e => setPersona(e.target.value)}
+              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none" 
+              id="user_persona" 
+              placeholder="e.g., Sarcastic, former mercenary, secretly loves cats..." 
+              rows={2}
+            />
           </div>
 
           <div className="flex justify-end items-center gap-md pt-md border-t border-[#1A1A1A] mt-sm">

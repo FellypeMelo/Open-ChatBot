@@ -10,6 +10,7 @@ interface Character {
   name: string
   description: string
   tags: Tag[]
+  avatar_url?: string
 }
 
 interface CharactersViewProps {
@@ -17,6 +18,7 @@ interface CharactersViewProps {
   selectedCharId: number | null
   setSelectedCharId: (id: number) => void
   onNewCharacter: () => void
+  onCharacterImported: () => void
   onChat: (id: number) => void
   onEdit: (id: number) => void
   onDelete: (id: number) => void
@@ -27,11 +29,31 @@ const CharactersView: React.FC<CharactersViewProps> = ({
   selectedCharId,
   setSelectedCharId,
   onNewCharacter,
+  onCharacterImported,
   onChat,
   onEdit,
   onDelete
 }) => {
   const [search, setSearch] = useState('')
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    setImporting(true)
+    try {
+      const { importCharacterPng } = await import('../services/api')
+      await importCharacterPng(file)
+      onCharacterImported()
+    } catch (err) {
+      alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   const filteredCharacters = characters.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
@@ -57,13 +79,30 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                 Character Core
               </h1>
             </div>
-            <button
-              onClick={onNewCharacter}
-              className="btn-premium-primary cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[16px]">add</span>
-              Initialize Persona
-            </button>
+            <div className="flex gap-sm">
+              <input 
+                type="file" 
+                accept="image/png" 
+                ref={fileInputRef} 
+                className="hidden" 
+                onChange={handleImport} 
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+                className="btn-premium-secondary cursor-pointer border border-white/10 text-white bg-white/5 hover:bg-white/10 px-sm py-2 rounded-full font-label-sm uppercase tracking-wider text-xs transition-all"
+              >
+                <span className="material-symbols-outlined text-[16px] mr-1">{importing ? 'sync' : 'upload_file'}</span>
+                {importing ? 'Importing...' : 'Import PNG'}
+              </button>
+              <button
+                onClick={onNewCharacter}
+                className="btn-premium-primary cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[16px]">add</span>
+                Initialize Persona
+              </button>
+            </div>
           </div>
 
           <div className="relative w-full">
@@ -99,8 +138,12 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                       <div className="flex items-start justify-between gap-3 mb-2">
                         <div className="flex items-center gap-3">
                           {/* Avatar icon */}
-                          <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center font-mono text-xs text-[#A1A1AA] font-bold shadow-inner relative">
-                            {character.name.substring(0, 2).toUpperCase()}
+                          <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center font-mono text-xs text-[#A1A1AA] font-bold shadow-inner relative overflow-hidden">
+                            {character.avatar_url ? (
+                              <img src={character.avatar_url} alt={character.name} className="w-full h-full object-cover" />
+                            ) : (
+                              character.name.substring(0, 2).toUpperCase()
+                            )}
                             {isSelected && (
                               <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-[#09090B] dot-glow animate-pulse" />
                             )}

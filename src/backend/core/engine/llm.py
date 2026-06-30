@@ -40,6 +40,9 @@ class LlamaClient:
         await self.client.aclose()
 
     async def complete(self, prompt: str, grammar: str = None, url: str = None, model: str = None, preset: dict = None):
+        if settings.E2E_TESTING:
+            return {"content": "Mock E2E response"}
+            
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
         
@@ -84,6 +87,14 @@ class LlamaClient:
 
     async def complete_stream(self, prompt: str, grammar: str = None, url: str = None, model: str = None, preset: dict = None):
         """Async generator that yields tokens from llama.cpp via LangChain ChatOpenAI."""
+        if settings.E2E_TESTING:
+            yield "Mock "
+            yield "E2E "
+            yield "stream response "
+            yield "**enters the Ballroom** "
+            yield "**changes into a Tuxedo**"
+            return
+            
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
         
@@ -123,8 +134,8 @@ class LlamaClient:
 
     async def embed(self, text: str, url: str = None, model: str = None):
         import sys
-        if "pytest" in sys.modules:
-            return [0.1] * 128
+        if "pytest" in sys.modules or settings.E2E_TESTING:
+            return [0.1] * 2560
             
         base_url = (url or self.embedding_url) + "/v1"
         model_name = model or settings.MODEL_PATH

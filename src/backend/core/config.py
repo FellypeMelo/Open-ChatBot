@@ -6,7 +6,13 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./chatbot.db"
     MODEL_PATH: str = "models/model.gguf"
     DEBUG_LATENCY: bool = False
+    E2E_TESTING: bool = False
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.E2E_TESTING:
+            self.DATABASE_URL = "sqlite:///./e2e_test.db"
+
     # LLM Settings for 1-4B Models
     CONTEXT_SIZE: int = 8192
     RESPONSE_SLOT: int = 1024

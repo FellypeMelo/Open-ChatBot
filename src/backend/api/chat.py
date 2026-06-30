@@ -549,14 +549,17 @@ def deactivate_subtree(node_id: int, db: Session):
 
 @router.put("/chat/message/{message_id}")
 async def edit_message(message_id: int, req: MessageEditRequest, db: Session = Depends(get_db)):
+    logger.info(f"Backend edit_message called: id={message_id}, content={req.content}")
     msg = db.query(MessageNode).filter(MessageNode.id == message_id, MessageNode.is_active == True).first()
     if not msg:
+        logger.error(f"Backend edit_message: message {message_id} not found or inactive")
         raise HTTPException(status_code=404, detail="Message not found or inactive")
         
     msg.content = req.content
     
     # If a user message is edited, invalidate all subsequent assistant responses (and their subtrees)
     if msg.role == "user":
+        logger.info(f"Backend edit_message: deactivating subtree for user message {message_id}")
         deactivate_subtree(msg.id, db)
         
         # Update current_message_id to the edited message so tree can resume from here
@@ -565,6 +568,7 @@ async def edit_message(message_id: int, req: MessageEditRequest, db: Session = D
             state.current_message_id = msg.id
             
     db.commit()
+    logger.info(f"Backend edit_message: committed successfully for {message_id}")
     return {"status": "success", "message": "Message edited successfully"}
 
 @router.delete("/chat/message/{message_id}")

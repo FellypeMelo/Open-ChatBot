@@ -29,9 +29,10 @@ async def lifespan(app: FastAPI):
     from src.backend.db.database import vacuum_db
     vacuum_db()
     
-    # Auto-start servers using LlamaServerRunner (unless running tests)
+    # Auto-start servers using LlamaServerRunner (unless running tests or E2E mode)
     import sys
-    is_testing = "pytest" in sys.modules
+    import os
+    is_testing = "pytest" in sys.modules or os.environ.get("E2E_TESTING") == "1"
     if not is_testing:
         logger.info("Auto-starting Llama servers from settings...")
         inf_ok = runner.start_inference()

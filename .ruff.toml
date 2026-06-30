@@ -1,0 +1,16 @@
+# Ruff configuration file
+target-version = "py311"
+
+[lint]
+select = ["F", "E", "W"]
+ignore = [
+    "E701", # Multiple statements on one line (colon)
+    "E702", # Multiple statements on one line (semicolon)
+    "E712", # Avoid equality comparisons to True (needed for SQLAlchemy syntax)
+    "E402", # Module level import not at top of file (lifespans/scripts)
+    "E741", # Ambiguous variable name
+    "F401", # Unused imports
+    "F841", # Unused local variables
+    "E722", # Do not use bare except
+    "F541", # f-string without placeholders
+]

@@ -1,10 +1,16 @@
-fastapi
-uvicorn
-sqlalchemy
-pydantic-settings
-httpx
-python-multipart
-langchain
-langchain-community
-turbovec
-langchain-openai
+fastapi==0.136.3
+uvicorn==0.48.0
+sqlalchemy==2.0.50
+pydantic-settings==2.14.1
+httpx==0.28.1
+python-multipart==0.0.29
+langchain==1.3.4
+langchain-community==0.4.2
+turbovec==0.7.0
+langchain-openai==1.2.2
+
+# Dev / Testing / Linting Dependencies
+pytest==9.0.3
+pytest-asyncio==0.25.3
+pytest-cov==6.1.0
+ruff==0.9.9

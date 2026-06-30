@@ -44,6 +44,8 @@ interface User {
   name: string
   gender: string
   is_active: boolean
+  persona_description?: string
+  appearance?: string
 }
 
 type View = 'chat' | 'characters' | 'archives' | 'library'
@@ -153,9 +155,9 @@ function App() {
     }
   }, [selectedCharId, fetchHistory]) // Only re-run when character changes or fetchHistory changes
 
-  const updateUser = async (name: string, gender: string) => {
+  const updateUser = async (name: string, gender: string, persona: string, appearance: string) => {
     try {
-      const data = await api.updateUser(name, gender)
+      const data = await api.updateUser(name, gender, persona, appearance)
       setUser(data)
       setActiveModal(null)
       showToast('Profile updated.')
@@ -218,7 +220,7 @@ function App() {
     tagIds: number[]
   ) => {
     try {
-      const data = await api.createCharacter(name, description, tagIds)
+      const data = await api.createCharacter({ name, description, tag_ids: tagIds, compress_backstory: false })
       setCharacters((prev) => [...prev, data])
       setSelectedCharId(data.id)
       setActiveModal(null)
@@ -235,7 +237,7 @@ function App() {
     tagIds: number[]
   ) => {
     try {
-      const data = await api.updateCharacter(id, name, description, tagIds)
+      const data = await api.updateCharacter(id, { name, description, tag_ids: tagIds, compress_backstory: false })
       setCharacters((prev) => prev.map((c) => (c.id === id ? data : c)))
       setActiveModal(null)
       setEditingCharacter(null)
@@ -281,6 +283,30 @@ function App() {
       showToast('Lost connection to AI.', 'error')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleEditMessage = async (messageId: number, content: string) => {
+    try {
+      await api.editMessage(messageId, content)
+      if (selectedCharId) {
+        const history = await api.fetchHistory(selectedCharId)
+        setMessages(history)
+      }
+    } catch {
+      showToast('Failed to edit message.', 'error')
+    }
+  }
+
+  const handleDeleteMessage = async (messageId: number) => {
+    try {
+      await api.deleteMessage(messageId)
+      if (selectedCharId) {
+        const history = await api.fetchHistory(selectedCharId)
+        setMessages(history)
+      }
+    } catch {
+      showToast('Failed to delete message.', 'error')
     }
   }
 
@@ -499,6 +525,7 @@ function App() {
               selectedCharId={selectedCharId}
               setSelectedCharId={setSelectedCharId}
               onNewCharacter={() => setActiveModal('character')}
+              onCharacterImported={() => fetchCharacters()}
               onChat={handleStartChat}
               onEdit={(id) => {
                 const char = characters.find((c) => c.id === id)
@@ -523,6 +550,8 @@ function App() {
               onUpdateState={handleUpdateState}
               onClearChat={handleClearChat}
               onSendAction={handleSendAction}
+              onEditMessage={handleEditMessage}
+              onDeleteMessage={handleDeleteMessage}
             />
           )}
 

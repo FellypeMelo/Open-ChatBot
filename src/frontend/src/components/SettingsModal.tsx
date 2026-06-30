@@ -8,7 +8,7 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [status, setStatus] = useState<RunnerStatus | null>(null)
-  const [activeTab, setActiveTab] = useState<'inference' | 'embedding'>('inference')
+  const [activeTab, setActiveTab] = useState<'inference' | 'embedding' | 'samplers'>('inference')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,6 +31,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   // Consolidated mode state (whether embedding runs on the same server/port/model)
   const [isConsolidated, setIsConsolidated] = useState(false)
+
+  // Sampler state
+  const [presets, setPresets] = useState<api.SamplerPreset[]>([])
 
   const loadStatus = async () => {
     try {
@@ -57,6 +60,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       
       const consolidated = data.embedding.config.port === data.inference.config.port
       setIsConsolidated(consolidated)
+      
+      const loadedPresets = await api.fetchPresets()
+      setPresets(loadedPresets)
       
       setError(null)
     } catch {
@@ -222,6 +228,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             }`}
           >
             Embedding Vector {status?.embedding.running ? '●' : '○'}
+          </button>
+          <button
+            onClick={() => setActiveTab('samplers')}
+            className={`px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
+              activeTab === 'samplers' 
+                ? 'border-white text-white font-medium' 
+                : 'border-transparent text-[#71717A] hover:text-white'
+            }`}
+          >
+            Samplers
           </button>
         </div>
 
@@ -524,6 +540,56 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   disabled={isConsolidated}
                 />
               </div>
+            </div>
+          )}
+
+          {activeTab === 'samplers' && (
+            <div className="flex flex-col gap-md">
+              <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-[1rem] p-sm relative z-10">
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-label-sm text-xs text-white font-medium">Global Sampler Preset</span>
+                  <span className="font-label-sm text-[10px] text-[#71717A]">
+                    Select the default sampling behavior for text generation.
+                  </span>
+                </div>
+                <select
+                  value={presets.find(p => p.is_default)?.id || ''}
+                  onChange={async (e) => {
+                    const id = parseInt(e.target.value);
+                    if (id) {
+                      setLoading(true);
+                      try {
+                        const preset = presets.find(p => p.id === id);
+                        if (preset) {
+                          await api.updatePreset(id, { ...preset, is_default: true });
+                          const updated = await api.fetchPresets();
+                          setPresets(updated);
+                        }
+                      } catch (err) {
+                        setError('Failed to update default preset.');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }
+                  }}
+                  className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                >
+                  {presets.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {presets.find(p => p.is_default) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-sm mt-sm">
+                  {Object.entries(presets.find(p => p.is_default)!).filter(([k]) => !['id', 'name', 'is_default'].includes(k)).map(([k, v]) => (
+                    <div key={k} className="flex justify-between items-center border border-white/5 p-2 rounded-lg bg-white/[0.02]">
+                      <span className="font-label-sm text-[10px] text-[#71717A] uppercase">{k.replace('_', ' ')}</span>
+                      <span className="font-mono text-[10px] text-white">{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

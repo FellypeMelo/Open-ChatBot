@@ -92,19 +92,19 @@ describe('api service tests', () => {
 
   it('createCharacter should make POST call to /characters/', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
-    await api.createCharacter('Heros', 'A hero', [1, 2]);
+    await api.createCharacter({ name: 'Heros', description: 'A hero', tag_ids: [1, 2], compress_backstory: false });
     expect(fetch).toHaveBeenCalledWith('/characters/', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ name: 'Heros', description: 'A hero', tag_ids: [1, 2] }),
+      body: JSON.stringify({ name: 'Heros', description: 'A hero', tag_ids: [1, 2], compress_backstory: false }),
     }));
   });
 
   it('updateCharacter should make PUT call to /characters/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
-    await api.updateCharacter(3, 'Heros', 'A hero', [1, 2]);
+    await api.updateCharacter(3, { name: 'Heros', description: 'A hero', tag_ids: [1, 2], compress_backstory: false });
     expect(fetch).toHaveBeenCalledWith('/characters/3', expect.objectContaining({
       method: 'PUT',
-      body: JSON.stringify({ name: 'Heros', description: 'A hero', tag_ids: [1, 2] }),
+      body: JSON.stringify({ name: 'Heros', description: 'A hero', tag_ids: [1, 2], compress_backstory: false }),
     }));
   });
 

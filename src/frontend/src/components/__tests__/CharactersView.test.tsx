@@ -23,6 +23,7 @@ describe('CharactersView', () => {
   const mockOnChat = vi.fn();
   const mockOnEdit = vi.fn();
   const mockOnDelete = vi.fn();
+  const mockOnCharacterImported = vi.fn();
 
   const defaultProps = {
     characters: mockCharacters,
@@ -32,6 +33,7 @@ describe('CharactersView', () => {
     onChat: mockOnChat,
     onEdit: mockOnEdit,
     onDelete: mockOnDelete,
+    onCharacterImported: mockOnCharacterImported,
   };
 
   it('should render characters and metadata', () => {
@@ -121,6 +123,7 @@ describe('CharactersView', () => {
         onChat={mockOnChat}
         onEdit={mockOnEdit}
         onDelete={mockOnDelete}
+        onCharacterImported={vi.fn()}
       />
     );
   }

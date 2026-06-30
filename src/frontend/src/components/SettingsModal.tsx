@@ -87,6 +87,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   }, [])
 
   // Synchronize embedding settings when consolidated is active
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (isConsolidated) {
       setEmbPort(infPort)
@@ -97,6 +98,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       setEmbArgs(infArgs)
     }
   }, [isConsolidated, infPort, infModel, infBinary, infThreads, infGpuLayers, infArgs])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleConsolidatedChange = (checked: boolean) => {
     setIsConsolidated(checked)
@@ -565,7 +567,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                           const updated = await api.fetchPresets();
                           setPresets(updated);
                         }
-                      } catch (err) {
+                      } catch {
                         setError('Failed to update default preset.');
                       } finally {
                         setLoading(false);

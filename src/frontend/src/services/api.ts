@@ -106,12 +106,20 @@ export interface LLMConfig {
   preset_id?: number;
 }
 
+export interface Tag {
+  id: number;
+  label: string;
+  instruction: string;
+}
+
 export interface Character {
   id: number;
   name: string;
   description: string;
   is_active: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tags: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   state?: any;
   avatar_url?: string;
 }

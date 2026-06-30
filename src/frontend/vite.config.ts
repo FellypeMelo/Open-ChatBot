@@ -17,12 +17,16 @@ export default defineConfig({
       '/tags': 'http://localhost:8000',
       '/stats': 'http://localhost:8000',
       '/settings': 'http://localhost:8000',
+      '/lore': 'http://localhost:8000',
+      '/presets': 'http://localhost:8000',
+      '/history': 'http://localhost:8000',
     }
   },
   test: {
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    exclude: ['**/e2e/**', '**/node_modules/**', '**/dist/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

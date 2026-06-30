@@ -2,6 +2,7 @@ import pytest
 from src.backend.db.models import MessageNode, Character, User
 from datetime import datetime
 
+
 def test_message_node_branching(db_session):
     # 1. Setup - Create a character and user
     char = Character(name="Test Char", description="A test character")
@@ -16,7 +17,7 @@ def test_message_node_branching(db_session):
         content="Hello!",
         type="speech",
         character_id=char.id,
-        user_id=user.id
+        user_id=user.id,
     )
     db_session.add(root)
     db_session.commit()
@@ -28,10 +29,10 @@ def test_message_node_branching(db_session):
         content="Hi there!",
         type="speech",
         variant_index=0,
-        character_id=char.id
+        character_id=char.id,
     )
     db_session.add(resp1)
-    
+
     # 4. Create Second Response (Assistant - Variant 1 - Branching)
     resp2 = MessageNode(
         parent_id=root.id,
@@ -39,7 +40,7 @@ def test_message_node_branching(db_session):
         content="Greetings!",
         type="speech",
         variant_index=1,
-        character_id=char.id
+        character_id=char.id,
     )
     db_session.add(resp2)
     db_session.commit()
@@ -54,6 +55,7 @@ def test_message_node_branching(db_session):
     assert resp1.variant_index == 0
     assert resp2.variant_index == 1
 
+
 def test_message_node_nested_tree(db_session):
     # Setup
     char = Character(name="Nested Char")
@@ -66,18 +68,22 @@ def test_message_node_nested_tree(db_session):
     db_session.add(root)
     db_session.commit()
 
-    child = MessageNode(parent_id=root.id, role="assistant", content="Child", character_id=char.id)
+    child = MessageNode(
+        parent_id=root.id, role="assistant", content="Child", character_id=char.id
+    )
     db_session.add(child)
     db_session.commit()
 
-    grandchild = MessageNode(parent_id=child.id, role="user", content="Grandchild", character_id=char.id)
+    grandchild = MessageNode(
+        parent_id=child.id, role="user", content="Grandchild", character_id=char.id
+    )
     db_session.add(grandchild)
     db_session.commit()
 
     # Verify
     db_session.refresh(root)
     db_session.refresh(child)
-    
+
     assert len(root.children) == 1
     assert root.children[0].id == child.id
     assert len(child.children) == 1

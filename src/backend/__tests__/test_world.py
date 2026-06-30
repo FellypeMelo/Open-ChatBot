@@ -2,14 +2,16 @@ import pytest
 from src.backend.core.engine.engine import get_time_context, update_needs
 from datetime import datetime, timedelta, timezone
 
+
 def test_time_context_night():
     # Mocking a late night time
     night_time = datetime(2026, 5, 7, 23, 30, tzinfo=timezone.utc)
     context = get_time_context(current_time=night_time)
-    
+
     assert "23:30" in context["time"]
     assert context["is_night"] is True
     assert "sleepy" in context["suggested_mood"].lower()
+
 
 def test_time_context_morning():
     morning_time = datetime(2026, 5, 7, 8, 30, tzinfo=timezone.utc)
@@ -17,11 +19,13 @@ def test_time_context_morning():
     assert context["is_night"] is False
     assert "energetic" in context["suggested_mood"].lower()
 
+
 def test_time_context_afternoon():
     afternoon_time = datetime(2026, 5, 7, 14, 30, tzinfo=timezone.utc)
     context = get_time_context(current_time=afternoon_time)
     assert context["is_night"] is False
     assert "focused" in context["suggested_mood"].lower()
+
 
 def test_time_context_evening():
     evening_time = datetime(2026, 5, 7, 20, 30, tzinfo=timezone.utc)
@@ -29,21 +33,22 @@ def test_time_context_evening():
     assert context["is_night"] is False
     assert "relaxed" in context["suggested_mood"].lower()
 
+
 def test_needs_update():
     start_time = datetime(2026, 5, 7, 10, 0, tzinfo=timezone.utc)
-    end_time = datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc) # 2 hours later
-    
+    end_time = datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)  # 2 hours later
+
     stats = {
         "energy": 100,
         "hunger": 0,
         "happiness": 100,
         "social": 100,
         "is_sleeping": False,
-        "last_update": start_time.isoformat()
+        "last_update": start_time.isoformat(),
     }
-    
+
     updated = update_needs(stats, end_time)
-    
+
     # ENERGY_DRAIN_RATE = 5.0 -> 100 - (2 * 5) = 90
     assert updated["energy"] == 90
     # HUNGER_INCREASE_RATE = 10.0 -> 0 + (2 * 10) = 20
@@ -54,14 +59,30 @@ def test_needs_update():
     assert updated["happiness"] == 96
     assert updated["last_update"] == end_time.isoformat()
 
+
 def test_should_be_sleeping():
     from src.backend.core.engine.engine import should_be_sleeping
-    
+
     # 1. Low energy
-    assert should_be_sleeping({"energy": 10}, datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)) is True
-    
+    assert (
+        should_be_sleeping(
+            {"energy": 10}, datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)
+        )
+        is True
+    )
+
     # 2. Late night
-    assert should_be_sleeping({"energy": 100}, datetime(2026, 5, 7, 23, 30, tzinfo=timezone.utc)) is True
-    
+    assert (
+        should_be_sleeping(
+            {"energy": 100}, datetime(2026, 5, 7, 23, 30, tzinfo=timezone.utc)
+        )
+        is True
+    )
+
     # 3. Normal day, high energy
-    assert should_be_sleeping({"energy": 100}, datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)) is False
+    assert (
+        should_be_sleeping(
+            {"energy": 100}, datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)
+        )
+        is False
+    )

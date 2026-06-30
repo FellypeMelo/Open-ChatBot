@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     LLAMA_SERVER_URL: str = "http://127.0.0.1:8080"
     EMBEDDING_SERVER_URL: str = "http://127.0.0.1:8081"
@@ -7,7 +8,7 @@ class Settings(BaseSettings):
     MODEL_PATH: str = "models/model.gguf"
     DEBUG_LATENCY: bool = False
     E2E_TESTING: bool = False
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if self.E2E_TESTING:
@@ -17,7 +18,7 @@ class Settings(BaseSettings):
     CONTEXT_SIZE: int = 8192
     RESPONSE_SLOT: int = 1024
     TOKEN_PADDING: int = 128
-    
+
     N_PREDICT: int = 3072
     REPEAT_PENALTY: float = 1.12
     REPEAT_LAST_N: int = 512
@@ -33,5 +34,6 @@ class Settings(BaseSettings):
     XTC_PROBABILITY: float = 0.0
 
     model_config = SettingsConfigDict(env_file=".env")
+
 
 settings = Settings()

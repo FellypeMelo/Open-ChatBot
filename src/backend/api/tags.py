@@ -8,16 +8,19 @@ from src.backend.db.models import Tag
 
 router = APIRouter()
 
+
 class TagCreate(BaseModel):
     label: str
     instruction: str
 
+
 class TagResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     label: str
     instruction: str
+
 
 @router.post("/", response_model=TagResponse)
 def create_tag(tag: TagCreate, db: Session = Depends(get_db)):
@@ -27,9 +30,11 @@ def create_tag(tag: TagCreate, db: Session = Depends(get_db)):
     db.refresh(new_tag)
     return new_tag
 
+
 @router.get("/", response_model=List[TagResponse])
 def list_tags(db: Session = Depends(get_db)):
     return db.query(Tag).all()
+
 
 @router.put("/{tag_id}", response_model=TagResponse)
 def update_tag(tag_id: int, tag_data: TagCreate, db: Session = Depends(get_db)):
@@ -41,6 +46,7 @@ def update_tag(tag_id: int, tag_data: TagCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(tag)
     return tag
+
 
 @router.delete("/{tag_id}")
 def delete_tag(tag_id: int, db: Session = Depends(get_db)):

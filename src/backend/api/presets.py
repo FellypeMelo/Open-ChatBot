@@ -7,6 +7,7 @@ from src.backend.db.models import SamplerPreset
 
 router = APIRouter()
 
+
 class PresetSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -23,6 +24,7 @@ class PresetSchema(BaseModel):
     xtc_threshold: float
     xtc_probability: float
 
+
 class PresetCreateSchema(BaseModel):
     name: str
     is_default: Optional[bool] = False
@@ -36,6 +38,7 @@ class PresetCreateSchema(BaseModel):
     dry_range: Optional[int] = 2048
     xtc_threshold: Optional[float] = 0.0
     xtc_probability: Optional[float] = 0.0
+
 
 @router.get("/", response_model=List[PresetSchema])
 def get_presets(db: Session = Depends(get_db)):
@@ -54,7 +57,7 @@ def get_presets(db: Session = Depends(get_db)):
             dry_base=1.75,
             dry_range=4096,
             xtc_threshold=0.1,
-            xtc_probability=0.4
+            xtc_probability=0.4,
         )
         p2 = SamplerPreset(
             name="Focused",
@@ -68,7 +71,7 @@ def get_presets(db: Session = Depends(get_db)):
             dry_base=1.75,
             dry_range=2048,
             xtc_threshold=0.0,
-            xtc_probability=0.0
+            xtc_probability=0.0,
         )
         db.add(p1)
         db.add(p2)
@@ -76,42 +79,47 @@ def get_presets(db: Session = Depends(get_db)):
         presets = db.query(SamplerPreset).all()
     return presets
 
+
 @router.post("/", response_model=PresetSchema)
 def create_preset(request: PresetCreateSchema, db: Session = Depends(get_db)):
     if request.is_default:
         db.query(SamplerPreset).update({SamplerPreset.is_default: False})
-    
+
     preset = SamplerPreset(**request.model_dump())
     db.add(preset)
     db.commit()
     db.refresh(preset)
     return preset
 
+
 @router.put("/{preset_id}", response_model=PresetSchema)
-def update_preset(preset_id: int, request: PresetCreateSchema, db: Session = Depends(get_db)):
+def update_preset(
+    preset_id: int, request: PresetCreateSchema, db: Session = Depends(get_db)
+):
     preset = db.query(SamplerPreset).filter(SamplerPreset.id == preset_id).first()
     if not preset:
         raise HTTPException(status_code=404, detail="Preset not found")
-        
+
     if request.is_default:
         db.query(SamplerPreset).update({SamplerPreset.is_default: False})
-        
+
     for key, value in request.model_dump().items():
         setattr(preset, key, value)
-        
+
     db.commit()
     db.refresh(preset)
     return preset
+
 
 @router.delete("/{preset_id}")
 def delete_preset(preset_id: int, db: Session = Depends(get_db)):
     preset = db.query(SamplerPreset).filter(SamplerPreset.id == preset_id).first()
     if not preset:
         raise HTTPException(status_code=404, detail="Preset not found")
-        
+
     if preset.is_default:
         raise HTTPException(status_code=400, detail="Cannot delete the default preset")
-        
+
     db.delete(preset)
     db.commit()
     return {"status": "deleted"}

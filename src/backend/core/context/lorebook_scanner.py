@@ -2,13 +2,14 @@ import re
 import random
 from typing import List, Dict, Any
 
+
 class LorebookScanner:
     """
-    V2 Lorebook Engine. 
+    V2 Lorebook Engine.
     Replaces basic semantic search with precise regex-based keyword scanning,
     probability checks, and recursion limits (depth).
     """
-    
+
     def __init__(self, db_session):
         self.db = db_session
 
@@ -18,21 +19,27 @@ class LorebookScanner:
         Returns a formatted list of lore texts to inject into the prompt.
         """
         from src.backend.db.models import LorebookEntry
-        
+
         # 1. Fetch relevant entries (character specific + global)
-        entries = self.db.query(LorebookEntry).filter(
-            (LorebookEntry.character_id == character_id) | (LorebookEntry.is_global == True)
-        ).order_by(LorebookEntry.insertion_order.asc()).all()
-        
+        entries = (
+            self.db.query(LorebookEntry)
+            .filter(
+                (LorebookEntry.character_id == character_id)
+                | (LorebookEntry.is_global == True)
+            )
+            .order_by(LorebookEntry.insertion_order.asc())
+            .all()
+        )
+
         active_lore = []
-        
+
         for entry in entries:
             # 1. Check if it's a constant
             if entry.is_constant:
                 if random.randint(1, 100) <= entry.probability:
                     active_lore.append(entry.content)
                 continue
-            
+
             # 2. Check keys via regex
             matched = False
             if entry.keys:
@@ -51,9 +58,9 @@ class LorebookScanner:
                 # If no keys but it's not constant, use keyword as fallback key
                 if entry.keyword and entry.keyword.lower() in recent_text.lower():
                     matched = True
-                        
+
             if matched:
                 if random.randint(1, 100) <= entry.probability:
                     active_lore.append(entry.content)
-                    
+
         return active_lore

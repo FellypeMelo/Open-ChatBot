@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from src.backend.db.database import Base, init_db, vacuum_db, get_db
 from src.backend.db.models import AgentState, Character
 
+
 def test_create_agent_state():
     # Setup in-memory DB for testing
     engine = create_engine("sqlite:///:memory:")
@@ -22,11 +23,11 @@ def test_create_agent_state():
         mood="Happy",
         location="Home",
         clothes="Casual",
-        stats={"energy": 100}
+        stats={"energy": 100},
     )
     db.add(agent)
     db.commit()
-    
+
     saved_agent = db.query(AgentState).first()
     assert saved_agent.character.name == "TestAgent"
     assert saved_agent.stats["energy"] == 100
@@ -39,13 +40,13 @@ def test_database_init_and_vacuum():
         # Mock engine.connect() for vacuum success
         mock_conn = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
-        
+
         init_db()
         vacuum_db()
-        
+
         # Test vacuum_db exception pathway
         mock_engine.connect.side_effect = Exception("DB Lock")
-        vacuum_db() # Should catch Exception and pass silently
+        vacuum_db()  # Should catch Exception and pass silently
 
 
 def test_database_get_db_generator():
@@ -55,11 +56,11 @@ def test_database_get_db_generator():
         db_generator = get_db()
         session = next(db_generator)
         assert session == mock_session
-        
+
         # Clean up / finalize generator
         try:
             next(db_generator)
         except StopIteration:
             pass
-            
+
         mock_session.close.assert_called_once()

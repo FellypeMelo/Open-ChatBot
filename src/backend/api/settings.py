@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 class ServerConfigModel(BaseModel):
     binary_path: str
     model_path: str
@@ -17,9 +18,11 @@ class ServerConfigModel(BaseModel):
     context_size: int = 4096
     additional_args: str
 
+
 class LlamaConfigModel(BaseModel):
     inference: ServerConfigModel
     embedding: ServerConfigModel
+
 
 @router.get("/status")
 async def get_runner_status():
@@ -28,6 +31,7 @@ async def get_runner_status():
     except Exception as e:
         logger.error(f"Failed to get runner status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/save")
 async def save_runner_config(config: LlamaConfigModel):
@@ -40,13 +44,17 @@ async def save_runner_config(config: LlamaConfigModel):
         logger.error(f"Failed to save runner config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/start/inference")
 async def start_inference_server():
     success = runner.start_inference()
     if success:
         return {"status": "success", "message": "Inference server started."}
     else:
-        raise HTTPException(status_code=500, detail="Failed to start inference server. Check logs.")
+        raise HTTPException(
+            status_code=500, detail="Failed to start inference server. Check logs."
+        )
+
 
 @router.post("/stop/inference")
 async def stop_inference_server():
@@ -57,13 +65,17 @@ async def stop_inference_server():
         logger.error(f"Failed to stop inference server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/start/embedding")
 async def start_embedding_server():
     success = runner.start_embedding()
     if success:
         return {"status": "success", "message": "Embedding server started."}
     else:
-        raise HTTPException(status_code=500, detail="Failed to start embedding server. Check logs.")
+        raise HTTPException(
+            status_code=500, detail="Failed to start embedding server. Check logs."
+        )
+
 
 @router.post("/stop/embedding")
 async def stop_embedding_server():
@@ -74,6 +86,7 @@ async def stop_embedding_server():
         logger.error(f"Failed to stop embedding server: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/restart-all")
 async def restart_all_servers():
     try:
@@ -83,7 +96,7 @@ async def restart_all_servers():
             "status": "success",
             "message": "Servers restarted.",
             "inference": inf_success,
-            "embedding": emb_success
+            "embedding": emb_success,
         }
     except Exception as e:
         logger.error(f"Failed to restart servers: {e}")

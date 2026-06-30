@@ -14,6 +14,7 @@ router = APIRouter()
 llama = LlamaClient()
 vector_store = VectorStore(llm_client=llama)
 
+
 class LoreCreate(BaseModel):
     keyword: str
     keys: List[str] = []
@@ -27,9 +28,10 @@ class LoreCreate(BaseModel):
     is_constant: bool = False
     cooldown_turns: int = 0
 
+
 class LoreResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     keyword: str
     keys: List[str]
@@ -42,6 +44,7 @@ class LoreResponse(BaseModel):
     scan_depth: int
     is_constant: bool
     cooldown_turns: int
+
 
 @router.post("/", response_model=LoreResponse)
 async def create_lore_entry(entry: LoreCreate, db: Session = Depends(get_db)):
@@ -56,25 +59,27 @@ async def create_lore_entry(entry: LoreCreate, db: Session = Depends(get_db)):
         probability=entry.probability,
         scan_depth=entry.scan_depth,
         is_constant=entry.is_constant,
-        cooldown_turns=entry.cooldown_turns
+        cooldown_turns=entry.cooldown_turns,
     )
     db.add(db_entry)
     db.commit()
     db.refresh(db_entry)
-    
+
     # Index in vector store for search/retrieval
     metadata = {
         "id": db_entry.id,
         "is_global": db_entry.is_global,
-        "character_id": db_entry.character_id
+        "character_id": db_entry.character_id,
     }
     await vector_store.add_lore(db_entry.keyword, db_entry.content, metadata=metadata)
-    
+
     return db_entry
+
 
 @router.get("/", response_model=List[LoreResponse])
 def list_lore_entries(db: Session = Depends(get_db)):
     return db.query(LorebookEntry).all()
+
 
 @router.delete("/{lore_id}")
 def delete_lore_entry(lore_id: int, db: Session = Depends(get_db)):

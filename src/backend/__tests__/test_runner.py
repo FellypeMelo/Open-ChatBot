@@ -6,14 +6,20 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 from src.backend.core.engine.runner import LlamaServerRunner, DEFAULT_CONFIG
 
+
 def test_runner_load_config_defaults():
     """Verify runner loads defaults if file does not exist."""
     mock_config_file = MagicMock(spec=Path)
     mock_config_file.exists.return_value = False
-    
+
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
-        with patch("src.backend.core.engine.runner.LlamaServerRunner.get_available_models", return_value=[]):
-            with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config") as mock_save:
+        with patch(
+            "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
+            return_value=[],
+        ):
+            with patch(
+                "src.backend.core.engine.runner.LlamaServerRunner.save_config"
+            ) as mock_save:
                 runner = LlamaServerRunner()
                 assert runner.config["inference"]["port"] == 8080
                 assert runner.config["embedding"]["port"] == 8080
@@ -23,12 +29,14 @@ def test_runner_load_config_non_existent_models_path(tmp_path):
     """Verify runner creates models directory if it doesn't exist."""
     mock_config_file = MagicMock(spec=Path)
     mock_config_file.exists.return_value = False
-    
+
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
         with patch("src.backend.core.engine.runner.Path.exists", return_value=False):
             with patch("src.backend.core.engine.runner.Path.mkdir") as mock_mkdir:
                 with patch("src.backend.core.engine.runner.Path.glob", return_value=[]):
-                    with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
+                    with patch(
+                        "src.backend.core.engine.runner.LlamaServerRunner.save_config"
+                    ):
                         runner = LlamaServerRunner()
                         models = runner.get_available_models()
                         assert mock_mkdir.call_count == 2
@@ -39,17 +47,23 @@ def test_runner_load_config_defaults_with_models():
     """Verify default model assignments for single or multiple models."""
     mock_config_file = MagicMock(spec=Path)
     mock_config_file.exists.return_value = False
-    
+
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
         with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
             # Case 1: Only 1 model found
-            with patch("src.backend.core.engine.runner.LlamaServerRunner.get_available_models", return_value=["m1.gguf"]):
+            with patch(
+                "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
+                return_value=["m1.gguf"],
+            ):
                 runner = LlamaServerRunner()
                 assert runner.config["inference"]["model_path"] == "models/m1.gguf"
                 assert runner.config["embedding"]["model_path"] == "models/m1.gguf"
 
             # Case 2: Multiple models found
-            with patch("src.backend.core.engine.runner.LlamaServerRunner.get_available_models", return_value=["m1.gguf", "m2.gguf"]):
+            with patch(
+                "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
+                return_value=["m1.gguf", "m2.gguf"],
+            ):
                 runner = LlamaServerRunner()
                 assert runner.config["inference"]["model_path"] == "models/m1.gguf"
                 assert runner.config["embedding"]["model_path"] == "models/m2.gguf"
@@ -59,11 +73,15 @@ def test_runner_load_config_exceptions():
     """Verify JSON errors, permissions, or general exceptions reload defaults."""
     mock_config_file = MagicMock(spec=Path)
     mock_config_file.exists.return_value = True
-    
+
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
-        with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config") as mock_save:
+        with patch(
+            "src.backend.core.engine.runner.LlamaServerRunner.save_config"
+        ) as mock_save:
             # 1. JSONDecodeError
-            with patch("builtins.open", side_effect=json.JSONDecodeError("msg", "doc", 0)):
+            with patch(
+                "builtins.open", side_effect=json.JSONDecodeError("msg", "doc", 0)
+            ):
                 runner = LlamaServerRunner()
                 assert runner.config == DEFAULT_CONFIG
 
@@ -77,49 +95,53 @@ def test_runner_load_config_migrations():
     """Verify migrations for additional_args and port consolidation."""
     mock_config_file = MagicMock(spec=Path)
     mock_config_file.exists.return_value = True
-    
+
     # Custom config containing old values to trigger all migration code paths
     old_cfg = {
         "inference": {
             "binary_path": "llama-server.exe",
             "model_path": "models/model.gguf",
             "port": 8080,
-            "additional_args": "--extra --cache-type-k q8_0 --cache-type-v q8_0" # triggers replacement
+            "additional_args": "--extra --cache-type-k q8_0 --cache-type-v q8_0",  # triggers replacement
         },
         "embedding": {
             "binary_path": "llama-server.exe",
             "model_path": "models/model.gguf",
-            "port": 8081, # triggers port migration to 8080 since models are identical
-            "additional_args": "--some-arg" # triggers flash-attn injection
-        }
+            "port": 8081,  # triggers port migration to 8080 since models are identical
+            "additional_args": "--some-arg",  # triggers flash-attn injection
+        },
     }
-    
+
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
         with patch("builtins.open", mock_open(read_data=json.dumps(old_cfg))):
-            with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config") as mock_save:
+            with patch(
+                "src.backend.core.engine.runner.LlamaServerRunner.save_config"
+            ) as mock_save:
                 runner = LlamaServerRunner()
-                
+
                 # Check inference migrations
                 inf_args = runner.config["inference"]["additional_args"]
                 assert "q8_0" not in inf_args
                 assert "q4_0" in inf_args
                 assert "--flash-attn" in inf_args
                 assert "--parallel 1" in inf_args
-                
+
                 # Check embedding migrations
                 emb_args = runner.config["embedding"]["additional_args"]
                 assert "--flash-attn" in emb_args
                 assert runner.config["embedding"]["port"] == 8080
-                
-                mock_save.assert_called()
 
+                mock_save.assert_called()
 
 
 def test_runner_save_config_success():
     """Verify saving configuration writes to CONFIG_FILE."""
-    with patch("src.backend.core.engine.runner.LlamaServerRunner.get_available_models", return_value=[]):
+    with patch(
+        "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
+        return_value=[],
+    ):
         runner = LlamaServerRunner()
-        
+
         m = mock_open()
         with patch("builtins.open", m):
             runner.save_config()
@@ -130,30 +152,34 @@ def test_runner_save_config_io_error():
     """Verify IOError inside save_config is caught and logged."""
     runner = LlamaServerRunner()
     with patch("builtins.open", side_effect=IOError("Permission denied")):
-        runner.save_config() # Should catch IOError internally
+        runner.save_config()  # Should catch IOError internally
 
 
 def test_runner_get_available_binaries_variations():
     """Verify iterdir outputs are correctly filtered on Windows and non-Windows."""
     runner = LlamaServerRunner()
-    
+
     with patch("src.backend.core.engine.runner.Path") as mock_path_class:
         mock_bin_dir = MagicMock()
         mock_path_class.return_value = mock_bin_dir
-        
+
         # 1. Directory does not exist
         mock_bin_dir.exists.return_value = False
         assert runner.get_available_binaries() == []
 
         # 2. Files with NT matching rules
         mock_bin_dir.exists.return_value = True
-        
+
         f1, f2, f3, f4 = MagicMock(), MagicMock(), MagicMock(), MagicMock()
-        f1.is_file.return_value = True; f1.name = "llama-server.exe"
-        f2.is_file.return_value = True; f2.name = "llama-server.dll"
-        f3.is_file.return_value = True; f3.name = "llama-server"
-        f4.is_file.return_value = True; f4.name = "unrelated.txt"
-        
+        f1.is_file.return_value = True
+        f1.name = "llama-server.exe"
+        f2.is_file.return_value = True
+        f2.name = "llama-server.dll"
+        f3.is_file.return_value = True
+        f3.name = "llama-server"
+        f4.is_file.return_value = True
+        f4.name = "unrelated.txt"
+
         mock_bin_dir.iterdir.return_value = [f1, f2, f3, f4]
 
         with patch("os.name", "nt"):
@@ -170,14 +196,14 @@ def test_runner_get_available_binaries_variations():
 def test_runner_get_status():
     """Verify runner reports correct running status based on active processes."""
     runner = LlamaServerRunner()
-    
+
     runner.inference_proc = MagicMock()
     runner.inference_proc.poll.return_value = None  # running
-    
+
     runner.config["embedding"]["port"] = 8081
     runner.embedding_proc = MagicMock()
     runner.embedding_proc.poll.return_value = 1  # stopped
-    
+
     status = runner.get_status()
     assert status["inference"]["running"] is True
     assert status["embedding"]["running"] is False
@@ -195,7 +221,7 @@ def test_runner_start_inference_edge_cases(mock_popen):
     # Simulate a running process (poll() returns None = still alive)
     mock_popen.return_value.poll.return_value = None
     runner = LlamaServerRunner()
-    
+
     # Config setup
     runner.config = {
         "inference": {
@@ -203,15 +229,15 @@ def test_runner_start_inference_edge_cases(mock_popen):
             "model_path": "models/model.gguf",
             "port": 8080,
             "threads": 0,  # triggers auto-detect threads
-            "gpu_layers": 16, # triggers -ngl
+            "gpu_layers": 16,  # triggers -ngl
             "context_size": 2048,
-            "additional_args": ""
+            "additional_args": "",
         },
         "embedding": {
             "port": 8080  # triggers consolidated embedding port enablement
-        }
+        },
     }
-    
+
     # 1. Binary path relative check fallback
     def mock_exists_side_effect(self):
         p_str = str(self).replace("\\", "/")
@@ -220,7 +246,7 @@ def test_runner_start_inference_edge_cases(mock_popen):
         if "nonexistent.exe" in p_str:
             return False
         return True
-        
+
     with patch("src.backend.core.engine.runner.Path.exists", mock_exists_side_effect):
         with patch("src.backend.core.engine.runner.Path.is_file", return_value=True):
             with patch("os.cpu_count", return_value=8):
@@ -230,10 +256,10 @@ def test_runner_start_inference_edge_cases(mock_popen):
                 cmd = args[0]
                 assert "llama_bin" in cmd[0].replace("\\", "/")
                 assert "-t" in cmd
-                assert "4" in cmd # 8 // 2
+                assert "4" in cmd  # 8 // 2
                 assert "-ngl" in cmd
                 assert "16" in cmd
-                assert "--embedding" in cmd # due to identical ports
+                assert "--embedding" in cmd  # due to identical ports
                 assert "--parallel" in cmd
                 assert "1" in cmd
 
@@ -244,19 +270,23 @@ def test_runner_start_inference_edge_cases(mock_popen):
     with patch("src.backend.core.engine.runner.Path.exists", return_value=False):
         success = runner.start_inference()
         assert success is False
-        
+
     # 3. Model path invalid check
     # Let's say binary exists, but model does not exist
     def model_not_found_exists(self):
         if "model.gguf" in str(self):
             return False
         return True
+
     with patch("src.backend.core.engine.runner.Path.exists", model_not_found_exists):
         success = runner.start_inference()
         assert success is False
 
     # 4. Hugging Face path format model_str (e.g. username/model-repo)
-    runner.config["inference"]["model_path"] = "MaziyarPanahi/Meta-Llama-3-8B-Instruct-GGUF"
+    runner.config["inference"]["model_path"] = (
+        "MaziyarPanahi/Meta-Llama-3-8B-Instruct-GGUF"
+    )
+
     def binary_exists_only(self):
         p_str = str(self).replace("\\", "/")
         if "nonexistent.exe" in p_str:
@@ -264,6 +294,7 @@ def test_runner_start_inference_edge_cases(mock_popen):
         if "MaziyarPanahi" in p_str:
             return False
         return True
+
     with patch("src.backend.core.engine.runner.Path.exists", binary_exists_only):
         success = runner.start_inference()
         assert success is True
@@ -290,7 +321,7 @@ def test_runner_start_embedding_edge_cases(mock_popen):
     # Simulate a running process (poll() returns None = still alive)
     mock_popen.return_value.poll.return_value = None
     runner = LlamaServerRunner()
-    
+
     # 1. Consolidation check (ports match)
     runner.config = {
         "inference": {
@@ -300,13 +331,13 @@ def test_runner_start_embedding_edge_cases(mock_popen):
             "threads": 4,
             "gpu_layers": -1,
             "context_size": 2048,
-            "additional_args": ""
+            "additional_args": "",
         },
         "embedding": {
-            "port": 8080 # matches
-        }
+            "port": 8080  # matches
+        },
     }
-    
+
     # If inference server is already running, starting embedding should just return True
     runner.inference_proc = MagicMock()
     runner.inference_proc.poll.return_value = None
@@ -315,13 +346,13 @@ def test_runner_start_embedding_edge_cases(mock_popen):
 
     # Reset
     runner.inference_proc = None
-    
+
     # If inference server is not running, starting embedding should launch inference server
     with patch("src.backend.core.engine.runner.Path.exists", return_value=True):
         with patch("src.backend.core.engine.runner.Path.is_file", return_value=True):
             assert runner.start_embedding() is True
             mock_popen.assert_called_once()
-            
+
     # Reset
     mock_popen.reset_mock()
 
@@ -334,8 +365,8 @@ def test_runner_start_embedding_edge_cases(mock_popen):
             "port": 8081,
             "threads": 0,
             "gpu_layers": 8,
-            "additional_args": "--extra"
-        }
+            "additional_args": "--extra",
+        },
     }
 
     # Binary check fallback relative, threads auto-detect, ngl, extra args
@@ -346,7 +377,7 @@ def test_runner_start_embedding_edge_cases(mock_popen):
         if "nonexistent.exe" in p_str:
             return False
         return True
-        
+
     with patch("src.backend.core.engine.runner.Path.exists", mock_exists_side_effect):
         with patch("src.backend.core.engine.runner.Path.is_file", return_value=True):
             with patch("os.cpu_count", return_value=8):
@@ -374,11 +405,13 @@ def test_runner_start_embedding_edge_cases(mock_popen):
         if "emb.gguf" in str(self):
             return False
         return True
+
     with patch("src.backend.core.engine.runner.Path.exists", model_not_found):
         assert runner.start_embedding() is False
 
     # 5. HF model path
     runner.config["embedding"]["model_path"] = "huggingface/repo"
+
     def binary_exists_only(self):
         p_str = str(self).replace("\\", "/")
         if "nonexistent.exe" in p_str:
@@ -386,6 +419,7 @@ def test_runner_start_embedding_edge_cases(mock_popen):
         if "huggingface" in p_str:
             return False
         return True
+
     with patch("src.backend.core.engine.runner.Path.exists", binary_exists_only):
         assert runner.start_embedding() is True
         args, _ = mock_popen.call_args
@@ -407,12 +441,12 @@ def test_runner_start_embedding_edge_cases(mock_popen):
 def test_runner_stop_and_wait_timeouts():
     """Verify TimeoutExpired triggers process kill block for both servers, and handles exceptions."""
     runner = LlamaServerRunner()
-    
+
     # 1. Inference timeout with kill success
     mock_inf = MagicMock()
     mock_inf.wait.side_effect = subprocess.TimeoutExpired("cmd", 3)
     runner.inference_proc = mock_inf
-    
+
     runner.stop_inference()
     mock_inf.terminate.assert_called_once()
     mock_inf.kill.assert_called_once()
@@ -429,11 +463,11 @@ def test_runner_stop_and_wait_timeouts():
     # 3. Embedding timeout (when ports differ)
     runner.config["embedding"]["port"] = 8081
     runner.config["inference"]["port"] = 8080
-    
+
     mock_emb = MagicMock()
     mock_emb.wait.side_effect = subprocess.TimeoutExpired("cmd", 3)
     runner.embedding_proc = mock_emb
-    
+
     runner.stop_embedding()
     mock_emb.terminate.assert_called_once()
     mock_emb.kill.assert_called_once()
@@ -454,8 +488,12 @@ def test_runner_stop_and_wait_timeouts():
     runner.embedding_proc.terminate.assert_not_called()
 
     # 6. Stop all method check
-    with patch("src.backend.core.engine.runner.LlamaServerRunner.stop_inference") as mock_stop_inf:
-        with patch("src.backend.core.engine.runner.LlamaServerRunner.stop_embedding") as mock_stop_emb:
+    with patch(
+        "src.backend.core.engine.runner.LlamaServerRunner.stop_inference"
+    ) as mock_stop_inf:
+        with patch(
+            "src.backend.core.engine.runner.LlamaServerRunner.stop_embedding"
+        ) as mock_stop_emb:
             runner.stop_all()
             mock_stop_inf.assert_called_once()
             mock_stop_emb.assert_called_once()

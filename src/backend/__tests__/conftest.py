@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from src.backend.db.database import Base, get_db
 from src.backend.main import app
 
+
 # Global Testing Isolation Ruleset Enforcement
 @pytest.fixture(scope="session")
 def test_db_setup():
@@ -15,23 +16,24 @@ def test_db_setup():
     db_fd, db_path = tempfile.mkstemp()
     test_db_url = f"sqlite:///{db_path}"
     engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
-    
+
     # Create all tables in the isolated DB
     Base.metadata.create_all(bind=engine)
-    
+
     # Provide the engine to tests
     yield engine
-    
+
     # Cleanup after session
     try:
         Base.metadata.drop_all(bind=engine)
     except Exception:
         pass
-        
+
     os.close(db_fd)
-    
+
     # Use a small delay or try/except to handle Windows file locking
     import time
+
     max_retries = 3
     for i in range(max_retries):
         try:
@@ -44,6 +46,7 @@ def test_db_setup():
             else:
                 print(f"Warning: Could not delete temporary database {db_path}")
 
+
 @pytest.fixture
 def db_session(test_db_setup):
     """
@@ -51,15 +54,16 @@ def db_session(test_db_setup):
     """
     connection = test_db_setup.connect()
     transaction = connection.begin()
-    
+
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=connection)
     session = SessionLocal()
-    
+
     yield session
-    
+
     session.close()
     transaction.rollback()
     connection.close()
+
 
 @pytest.fixture
 def client(db_session):
@@ -67,17 +71,18 @@ def client(db_session):
     Provides a FastAPI test client with the database dependency overridden to use the isolated test DB.
     """
     from fastapi.testclient import TestClient
-    
+
     def override_get_db():
         try:
             yield db_session
         finally:
             pass
-            
+
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
 
 @pytest.fixture(autouse=True)
 def mock_vector_store_path(tmp_path, monkeypatch):
@@ -87,7 +92,7 @@ def mock_vector_store_path(tmp_path, monkeypatch):
     """
     from src.backend.api import chat
     from src.backend.core.memory.vector_store import VectorStore
-    
+
     # Create a temporary VectorStore instance for the chat router
     test_vs = VectorStore(llm_client=chat.llama, path=str(tmp_path / "test_chroma_db"))
     monkeypatch.setattr(chat, "vector_store", test_vs)

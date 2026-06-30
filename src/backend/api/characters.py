@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
@@ -13,6 +13,8 @@ router = APIRouter()
 llama = LlamaClient()
 vector_store = VectorStore(llm_client=llama)
 brain = Brain(vector_store=vector_store)
+
+from src.backend.core.context.compressor import compress_character_backstory
 
 class DescriptionRequest(BaseModel):
     description: str
@@ -40,11 +42,13 @@ class CharacterCreate(BaseModel):
     name: str
     description: str
     tag_ids: List[int] = []
+    compress_backstory: bool = False
 
 class CharacterUpdate(BaseModel):
     name: str
     description: str
     tag_ids: List[int] = []
+    compress_backstory: bool = False
 
 class CharacterResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -55,12 +59,17 @@ class CharacterResponse(BaseModel):
     is_active: bool
     tags: List[TagSchema] = []
     state: Optional[StateResponse] = None
+    avatar_url: Optional[str] = None
 
 @router.post("/", response_model=CharacterResponse)
-def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
+async def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
+    description = char.description
+    if char.compress_backstory:
+        description = await compress_character_backstory(description, llama)
+        
     new_char = Character(
         name=char.name,
-        description=char.description
+        description=description
     )
     
     # Associate tags
@@ -79,14 +88,76 @@ def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
     
     return new_char
 
+@router.post("/import-png", response_model=CharacterResponse)
+async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    content = await file.read()
+    try:
+        from src.backend.core.importer.png_parser import parse_png_character_card
+        card = parse_png_character_card(content)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse PNG card: {str(e)}")
+        
+    description = card.data.description
+    if card.data.personality:
+        description += "\n\n" + card.data.personality
+    if card.data.scenario:
+        description += "\n\nScenario: " + card.data.scenario
+        
+    # Combine system_prompt if any
+    if card.data.system_prompt:
+        description += "\n\nSystem: " + card.data.system_prompt
+        
+    new_char = Character(
+        name=card.data.name,
+        description=description
+    )
+    db.add(new_char)
+    db.commit()
+    db.refresh(new_char)
+    
+    # Save the original image
+    import os
+    os.makedirs("static/avatars", exist_ok=True)
+    with open(f"static/avatars/{new_char.id}.png", "wb") as f:
+        f.write(content)
+        
+    # Initialize state
+    new_state = AgentState(character_id=new_char.id)
+    if card.data.first_mes:
+        new_state.mood = "Neutral (start of conversation)"
+    db.add(new_state)
+    db.commit()
+    
+    # Import Lorebook (character_book)
+    if card.data.character_book and "entries" in card.data.character_book:
+        from src.backend.db.models import LorebookEntry
+        entries = card.data.character_book["entries"]
+        for entry in entries:
+            db_entry = LorebookEntry(
+                character_id=new_char.id,
+                keyword=",".join(entry.get("keys", [])),
+                content=entry.get("content", ""),
+                is_global=False
+            )
+            db.add(db_entry)
+        db.commit()
+        
+    db.refresh(new_char)
+    new_char.avatar_url = f"/avatars/{new_char.id}.png"
+    return new_char
+
 @router.put("/{char_id}", response_model=CharacterResponse)
-def update_character(char_id: int, char: CharacterUpdate, db: Session = Depends(get_db)):
+async def update_character(char_id: int, char: CharacterUpdate, db: Session = Depends(get_db)):
     existing = db.query(Character).filter(Character.id == char_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail="Character not found")
     
+    description = char.description
+    if char.compress_backstory:
+        description = await compress_character_backstory(description, llama)
+        
     existing.name = char.name
-    existing.description = char.description
+    existing.description = description
     
     if char.tag_ids is not None:
         tags = db.query(Tag).filter(Tag.id.in_(char.tag_ids)).all()
@@ -98,13 +169,21 @@ def update_character(char_id: int, char: CharacterUpdate, db: Session = Depends(
 
 @router.get("/", response_model=List[CharacterResponse])
 def list_characters(db: Session = Depends(get_db)):
-    return db.query(Character).all()
+    chars = db.query(Character).all()
+    import os
+    for char in chars:
+        if os.path.exists(f"static/avatars/{char.id}.png"):
+            char.avatar_url = f"/avatars/{char.id}.png"
+    return chars
 
 @router.get("/{char_id}", response_model=CharacterResponse)
 def get_character(char_id: int, db: Session = Depends(get_db)):
     char = db.query(Character).filter(Character.id == char_id).first()
     if not char:
         raise HTTPException(status_code=404, detail="Character not found")
+    import os
+    if os.path.exists(f"static/avatars/{char.id}.png"):
+        char.avatar_url = f"/avatars/{char.id}.png"
     return char
 
 @router.delete("/{char_id}")

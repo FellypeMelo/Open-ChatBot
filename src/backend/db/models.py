@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, Table, DateTime
+from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, Table, DateTime, Float
 from sqlalchemy.orm import relationship, backref
 from src.backend.db.database import Base
 from datetime import datetime, timezone
@@ -19,10 +19,14 @@ class Tag(Base):
 
 class User(Base):
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     gender = Column(String)
     is_active = Column(Boolean, default=True)
+    
+    persona_description = Column(Text, default="")
+    appearance = Column(Text, default="")
 
 class Character(Base):
     __tablename__ = "characters"
@@ -53,6 +57,9 @@ class AgentState(Base):
     
     # Needs, Relationships, etc.
     stats = Column(JSON)
+    
+    # Active summary of past interactions
+    active_summary = Column(Text, default="")
 
     character = relationship("Character", back_populates="state")
     current_message = relationship("MessageNode", foreign_keys=[current_message_id])
@@ -90,6 +97,7 @@ class MessageNode(Base):
     character_id = Column(Integer, ForeignKey("characters.id"), index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    is_active = Column(Boolean, default=True)
 
     # Relationships
     children = relationship("MessageNode", backref=backref("parent", remote_side=[id]))
@@ -99,10 +107,18 @@ class MessageNode(Base):
 class LorebookEntry(Base):
     __tablename__ = "lorebook_entries"
     id = Column(Integer, primary_key=True, index=True)
-    keyword = Column(String, index=True)
+    keyword = Column(String, index=True) # Used as title/name
+    keys = Column(JSON, default=list) # Primary keys/regexes for matching
+    secondary_keys = Column(JSON, default=list)
     content = Column(Text)
     character_id = Column(Integer, ForeignKey("characters.id"), nullable=True, index=True)
     is_global = Column(Boolean, default=False)
+    
+    insertion_order = Column(Integer, default=100)
+    probability = Column(Integer, default=100)
+    scan_depth = Column(Integer, default=5)
+    is_constant = Column(Boolean, default=False)
+    cooldown_turns = Column(Integer, default=0)
 
     character = relationship("Character")
 
@@ -118,3 +134,25 @@ class JournalEntry(Base):
     energy_level = Column(Integer)
 
     character = relationship("Character")
+
+class SamplerPreset(Base):
+    __tablename__ = "sampler_presets"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    is_default = Column(Boolean, default=False)
+    
+    # Standard samplers
+    temperature = Column(Float, default=1.0)
+    min_p = Column(Float, default=0.05)
+    top_k = Column(Integer, default=0)
+    top_p = Column(Float, default=1.0)
+    repeat_penalty = Column(Float, default=1.0)
+    
+    # DRY (Don't Repeat Yourself)
+    dry_multiplier = Column(Float, default=0.0)
+    dry_base = Column(Float, default=1.75)
+    dry_range = Column(Integer, default=2048)
+    
+    # XTC (Exclude Top Choice)
+    xtc_threshold = Column(Float, default=0.0)
+    xtc_probability = Column(Float, default=0.0)

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from src.backend.api import chat, characters, tags, users, settings as api_settings, lore
+from src.backend.api import chat, characters, tags, users, settings as api_settings, lore, presets
 from src.backend.db.database import init_db
 from src.backend.core.engine.llm import LlamaClient
 from src.backend.core.engine.runner import runner
@@ -21,6 +21,9 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize DB
     logger.info("Initializing database...")
     init_db()
+    
+    import os
+    os.makedirs("static/avatars", exist_ok=True)
     
     # Reclaim unused database space
     from src.backend.db.database import vacuum_db
@@ -80,9 +83,13 @@ app.include_router(tags.router, prefix="/tags", tags=["Tags"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(api_settings.router, prefix="/settings", tags=["Settings"])
 app.include_router(lore.router, prefix="/lore", tags=["Lore"])
+app.include_router(presets.router, prefix="/presets", tags=["Presets"])
 
 # Mount static files (Frontend) - API routes MUST come first
+import os
+os.makedirs("static/avatars", exist_ok=True)
 app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+app.mount("/avatars", StaticFiles(directory="static/avatars"), name="avatars")
 
 @app.get("/favicon.svg")
 async def favicon():

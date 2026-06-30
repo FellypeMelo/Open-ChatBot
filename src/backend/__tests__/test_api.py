@@ -75,7 +75,7 @@ def test_chat_stream_with_config(client, db_session):
     db_session.commit()
 
     with patch("src.backend.core.engine.llm.LlamaClient.complete_stream") as mock_stream:
-        async def mock_iter(prompt, url=None, model=None):
+        async def mock_iter(prompt, url=None, model=None, preset=None):
             yield "Hello"
             yield "!"
         
@@ -380,7 +380,7 @@ def test_chat_stream_with_action_ids(client, db_session):
     db_session.commit()
 
     with patch("src.backend.core.engine.llm.LlamaClient.complete_stream") as mock_stream:
-        async def mock_iter(prompt, url=None, model=None):
+        async def mock_iter(prompt, url=None, model=None, preset=None):
             yield "Thanks!"
             
         mock_stream.side_effect = mock_iter

@@ -168,6 +168,7 @@ ACTIONS_CONFIG = {
 class LLMConfig(BaseModel):
     base_url: Optional[str] = None
     model_name: Optional[str] = None
+    preset_id: Optional[int] = None
 
 class ChatRequest(BaseModel):
     message: Optional[str] = None
@@ -175,6 +176,9 @@ class ChatRequest(BaseModel):
     parent_id: Optional[int] = None
     config: Optional[LLMConfig] = None
     action_id: Optional[str] = None
+
+class MessageEditRequest(BaseModel):
+    content: str
 
 class ChatResponse(BaseModel):
     reply: str
@@ -184,7 +188,10 @@ class ChatResponse(BaseModel):
 
 @router.get("/history/{character_id}", response_model=List[Dict[str, Any]])
 async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
-    messages = db.query(MessageNode).filter(MessageNode.character_id == character_id).order_by(MessageNode.timestamp.desc()).limit(100).all()
+    messages = db.query(MessageNode).filter(
+        MessageNode.character_id == character_id,
+        MessageNode.is_active == True
+    ).order_by(MessageNode.timestamp.desc()).limit(100).all()
     return [{
         "id": m.id,
         "parent_id": m.parent_id,
@@ -290,21 +297,44 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks, db: Sess
 
         history = []
         curr_id = effective_parent_id
-        while curr_id and len(history) < 11:
-            m = db.query(MessageNode).filter(MessageNode.id == curr_id).first()
+        while curr_id and len(history) < 50:
+            m = db.query(MessageNode).filter(MessageNode.id == curr_id, MessageNode.is_active == True).first()
             if not m: break
             history.append({"role": m.role, "content": m.content})
             curr_id = m.parent_id
         history.reverse()
 
-        prompt = await brain.build_prompt(user_message_content or "", character, {"location": state.location, "mood": state.mood, "stats": state.stats}, user=user, history=history[:-1] if request.message else history)
+        prompt = await brain.build_prompt(user_message_content or "", character, {"location": state.location, "mood": state.mood, "stats": state.stats, "active_summary": getattr(state, "active_summary", "")}, user=user, history=history[:-1] if request.message else history, db=db)
         
         # Extract config for dynamic LLM routing
         config = request.config or LLMConfig()
+        
+        from src.backend.db.models import SamplerPreset
+        if config.preset_id:
+            preset_obj = db.query(SamplerPreset).filter(SamplerPreset.id == config.preset_id).first()
+        else:
+            preset_obj = db.query(SamplerPreset).filter(SamplerPreset.is_default == True).first()
+            
+        preset_dict = None
+        if preset_obj:
+            preset_dict = {
+                "temperature": preset_obj.temperature,
+                "min_p": preset_obj.min_p,
+                "top_k": preset_obj.top_k,
+                "top_p": preset_obj.top_p,
+                "repeat_penalty": preset_obj.repeat_penalty,
+                "dry_multiplier": preset_obj.dry_multiplier,
+                "dry_base": preset_obj.dry_base,
+                "dry_range": preset_obj.dry_range,
+                "xtc_threshold": preset_obj.xtc_threshold,
+                "xtc_probability": preset_obj.xtc_probability,
+            }
+
         result = await llama.complete(
             prompt, 
             url=config.base_url, 
-            model=config.model_name
+            model=config.model_name,
+            preset=preset_dict
         )
         reply = result.get("content", "...").strip()
 
@@ -405,17 +435,38 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, d
 
     history = []
     curr_id = effective_parent_id
-    while curr_id and len(history) < 11:
-        m = db.query(MessageNode).filter(MessageNode.id == curr_id).first()
+    while curr_id and len(history) < 50:
+        m = db.query(MessageNode).filter(MessageNode.id == curr_id, MessageNode.is_active == True).first()
         if not m: break
         history.append({"role": m.role, "content": m.content})
         curr_id = m.parent_id
     history.reverse()
 
-    prompt = await brain.build_prompt(user_message_content or "", character, {"location": state.location, "mood": state.mood, "stats": state.stats}, user=user, history=history[:-1] if request.message else history)
+    prompt = await brain.build_prompt(user_message_content or "", character, {"location": state.location, "mood": state.mood, "stats": state.stats, "active_summary": getattr(state, "active_summary", "")}, user=user, history=history[:-1] if request.message else history, db=db)
 
     # Extract config for dynamic LLM routing
     config = request.config or LLMConfig()
+    
+    from src.backend.db.models import SamplerPreset
+    if config.preset_id:
+        preset_obj = db.query(SamplerPreset).filter(SamplerPreset.id == config.preset_id).first()
+    else:
+        preset_obj = db.query(SamplerPreset).filter(SamplerPreset.is_default == True).first()
+        
+    preset_dict = None
+    if preset_obj:
+        preset_dict = {
+            "temperature": preset_obj.temperature,
+            "min_p": preset_obj.min_p,
+            "top_k": preset_obj.top_k,
+            "top_p": preset_obj.top_p,
+            "repeat_penalty": preset_obj.repeat_penalty,
+            "dry_multiplier": preset_obj.dry_multiplier,
+            "dry_base": preset_obj.dry_base,
+            "dry_range": preset_obj.dry_range,
+            "xtc_threshold": preset_obj.xtc_threshold,
+            "xtc_probability": preset_obj.xtc_probability,
+        }
 
     async def generate():
         full_reply = ""
@@ -423,7 +474,8 @@ async def chat_stream(request: ChatRequest, background_tasks: BackgroundTasks, d
             async for token in llama.complete_stream(
                 prompt, 
                 url=config.base_url, 
-                model=config.model_name
+                model=config.model_name,
+                preset=preset_dict
             ):
                 full_reply += token
                 yield f"data: {json.dumps({'token': token})}\n\n"
@@ -488,3 +540,46 @@ async def get_journal_entries(character_id: int, db: Session = Depends(get_db)):
         "relationship_score": e.relationship_score,
         "energy_level": e.energy_level
     } for e in entries]
+
+def deactivate_subtree(node_id: int, db: Session):
+    children = db.query(MessageNode).filter(MessageNode.parent_id == node_id).all()
+    for child in children:
+        child.is_active = False
+        deactivate_subtree(child.id, db)
+
+@router.put("/chat/message/{message_id}")
+async def edit_message(message_id: int, req: MessageEditRequest, db: Session = Depends(get_db)):
+    msg = db.query(MessageNode).filter(MessageNode.id == message_id, MessageNode.is_active == True).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found or inactive")
+        
+    msg.content = req.content
+    
+    # If a user message is edited, invalidate all subsequent assistant responses (and their subtrees)
+    if msg.role == "user":
+        deactivate_subtree(msg.id, db)
+        
+        # Update current_message_id to the edited message so tree can resume from here
+        state = db.query(AgentState).filter(AgentState.character_id == msg.character_id).first()
+        if state:
+            state.current_message_id = msg.id
+            
+    db.commit()
+    return {"status": "success", "message": "Message edited successfully"}
+
+@router.delete("/chat/message/{message_id}")
+async def delete_message(message_id: int, db: Session = Depends(get_db)):
+    msg = db.query(MessageNode).filter(MessageNode.id == message_id, MessageNode.is_active == True).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found or inactive")
+        
+    msg.is_active = False
+    deactivate_subtree(msg.id, db)
+    
+    # Update current_message_id to parent if this was the current message
+    state = db.query(AgentState).filter(AgentState.character_id == msg.character_id).first()
+    if state and state.current_message_id == msg.id:
+        state.current_message_id = msg.parent_id
+        
+    db.commit()
+    return {"status": "success", "message": "Message deleted successfully"}

@@ -16,26 +16,47 @@ vector_store = VectorStore(llm_client=llama)
 
 class LoreCreate(BaseModel):
     keyword: str
+    keys: List[str] = []
+    secondary_keys: List[str] = []
     content: str
     character_id: Optional[int] = None
     is_global: bool = False
+    insertion_order: int = 100
+    probability: int = 100
+    scan_depth: int = 5
+    is_constant: bool = False
+    cooldown_turns: int = 0
 
 class LoreResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: int
     keyword: str
+    keys: List[str]
+    secondary_keys: List[str]
     content: str
     character_id: Optional[int]
     is_global: bool
+    insertion_order: int
+    probability: int
+    scan_depth: int
+    is_constant: bool
+    cooldown_turns: int
 
 @router.post("/", response_model=LoreResponse)
 async def create_lore_entry(entry: LoreCreate, db: Session = Depends(get_db)):
     db_entry = LorebookEntry(
         keyword=entry.keyword,
+        keys=entry.keys,
+        secondary_keys=entry.secondary_keys,
         content=entry.content,
         character_id=entry.character_id,
-        is_global=entry.is_global
+        is_global=entry.is_global,
+        insertion_order=entry.insertion_order,
+        probability=entry.probability,
+        scan_depth=entry.scan_depth,
+        is_constant=entry.is_constant,
+        cooldown_turns=entry.cooldown_turns
     )
     db.add(db_entry)
     db.commit()

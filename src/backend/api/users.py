@@ -14,10 +14,14 @@ class UserSchema(BaseModel):
     name: str
     gender: str
     is_active: bool
+    persona_description: str = ""
+    appearance: str = ""
 
 class UserUpdateSchema(BaseModel):
     name: Optional[str] = None
     gender: Optional[str] = None
+    persona_description: Optional[str] = None
+    appearance: Optional[str] = None
 
 @router.get("/me", response_model=UserSchema)
 def get_me(db: Session = Depends(get_db)):
@@ -41,6 +45,10 @@ def update_me(request: UserUpdateSchema, db: Session = Depends(get_db)):
         user.name = request.name
     if request.gender is not None:
         user.gender = request.gender
+    if request.persona_description is not None:
+        user.persona_description = request.persona_description
+    if request.appearance is not None:
+        user.appearance = request.appearance
     
     db.commit()
     db.refresh(user)

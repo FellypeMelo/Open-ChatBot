@@ -89,6 +89,7 @@ app.include_router(presets.router, prefix="/presets", tags=["Presets"])
 # Mount static files (Frontend) - API routes MUST come first
 import os
 os.makedirs("static/avatars", exist_ok=True)
+os.makedirs("static/assets", exist_ok=True)
 app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
 app.mount("/avatars", StaticFiles(directory="static/avatars"), name="avatars")
 

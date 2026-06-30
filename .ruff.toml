@@ -13,4 +13,6 @@ ignore = [
     "F841", # Unused local variables
     "E722", # Do not use bare except
     "F541", # f-string without placeholders
+    "E501", # Line too long
+    "W293", # Blank line contains whitespace
 ]

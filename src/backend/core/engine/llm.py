@@ -39,16 +39,21 @@ class LlamaClient:
     async def close(self):
         await self.client.aclose()
 
-    async def complete(self, prompt: str, grammar: str = None, url: str = None, model: str = None):
+    async def complete(self, prompt: str, grammar: str = None, url: str = None, model: str = None, preset: dict = None):
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
         
         extra_body = {
-            "repeat_penalty": settings.REPEAT_PENALTY,
+            "repeat_penalty": preset.get("repeat_penalty", settings.REPEAT_PENALTY) if preset else settings.REPEAT_PENALTY,
             "repeat_last_n": settings.REPEAT_LAST_N,
-            "min_p": settings.MIN_P,
-            "top_k": settings.TOP_K,
-            "smoothing_factor": settings.SMOOTHING_FACTOR
+            "min_p": preset.get("min_p", settings.MIN_P) if preset else settings.MIN_P,
+            "top_k": preset.get("top_k", settings.TOP_K) if preset else settings.TOP_K,
+            "smoothing_factor": settings.SMOOTHING_FACTOR,
+            "dry_multiplier": preset.get("dry_multiplier", settings.DRY_MULTIPLIER) if preset else settings.DRY_MULTIPLIER,
+            "dry_base": preset.get("dry_base", settings.DRY_BASE) if preset else settings.DRY_BASE,
+            "dry_range": preset.get("dry_range", settings.DRY_RANGE) if preset else settings.DRY_RANGE,
+            "xtc_threshold": preset.get("xtc_threshold", settings.XTC_THRESHOLD) if preset else settings.XTC_THRESHOLD,
+            "xtc_probability": preset.get("xtc_probability", settings.XTC_PROBABILITY) if preset else settings.XTC_PROBABILITY,
         }
         if grammar:
             extra_body["grammar"] = grammar
@@ -57,8 +62,8 @@ class LlamaClient:
             base_url=base_url,
             openai_api_key="sk-anything",
             model_name=model_name,
-            temperature=settings.TEMPERATURE,
-            top_p=settings.TOP_P,
+            temperature=preset.get("temperature", settings.TEMPERATURE) if preset else settings.TEMPERATURE,
+            top_p=preset.get("top_p", settings.TOP_P) if preset else settings.TOP_P,
             max_tokens=settings.N_PREDICT,
             extra_body=extra_body,
             timeout=120.0
@@ -77,17 +82,22 @@ class LlamaClient:
             logger.exception(f"Error during LangChain completion: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def complete_stream(self, prompt: str, grammar: str = None, url: str = None, model: str = None):
+    async def complete_stream(self, prompt: str, grammar: str = None, url: str = None, model: str = None, preset: dict = None):
         """Async generator that yields tokens from llama.cpp via LangChain ChatOpenAI."""
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
         
         extra_body = {
-            "repeat_penalty": settings.REPEAT_PENALTY,
+            "repeat_penalty": preset.get("repeat_penalty", settings.REPEAT_PENALTY) if preset else settings.REPEAT_PENALTY,
             "repeat_last_n": settings.REPEAT_LAST_N,
-            "min_p": settings.MIN_P,
-            "top_k": settings.TOP_K,
-            "smoothing_factor": settings.SMOOTHING_FACTOR
+            "min_p": preset.get("min_p", settings.MIN_P) if preset else settings.MIN_P,
+            "top_k": preset.get("top_k", settings.TOP_K) if preset else settings.TOP_K,
+            "smoothing_factor": settings.SMOOTHING_FACTOR,
+            "dry_multiplier": preset.get("dry_multiplier", settings.DRY_MULTIPLIER) if preset else settings.DRY_MULTIPLIER,
+            "dry_base": preset.get("dry_base", settings.DRY_BASE) if preset else settings.DRY_BASE,
+            "dry_range": preset.get("dry_range", settings.DRY_RANGE) if preset else settings.DRY_RANGE,
+            "xtc_threshold": preset.get("xtc_threshold", settings.XTC_THRESHOLD) if preset else settings.XTC_THRESHOLD,
+            "xtc_probability": preset.get("xtc_probability", settings.XTC_PROBABILITY) if preset else settings.XTC_PROBABILITY,
         }
         if grammar:
             extra_body["grammar"] = grammar
@@ -96,8 +106,8 @@ class LlamaClient:
             base_url=base_url,
             openai_api_key="sk-anything",
             model_name=model_name,
-            temperature=settings.TEMPERATURE,
-            top_p=settings.TOP_P,
+            temperature=preset.get("temperature", settings.TEMPERATURE) if preset else settings.TEMPERATURE,
+            top_p=preset.get("top_p", settings.TOP_P) if preset else settings.TOP_P,
             max_tokens=settings.N_PREDICT,
             extra_body=extra_body,
             timeout=300.0

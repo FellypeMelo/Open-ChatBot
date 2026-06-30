@@ -107,6 +107,13 @@ def evolve_character(db: Session, character_id: int, reflection: dict):
         
         if summary:
             current_stats["last_reflection_summary"] = summary
+            # Append to rolling active summary
+            current_active = agent.active_summary or ""
+            new_active = f"{current_active}\n- {summary}".strip()
+            # Prevent infinite growth: keep last 1000 chars roughly
+            if len(new_active) > 1500:
+                new_active = "..." + new_active[-1000:]
+            agent.active_summary = new_active
             
         if facts:
             if "facts" not in current_stats:

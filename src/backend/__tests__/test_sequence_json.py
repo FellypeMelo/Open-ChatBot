@@ -100,5 +100,5 @@ async def test_build_prompt_user_info(db_session):
     prompt = await brain.build_prompt("Hi", char, state_data, user=user)
     
     # Updated to match actual template in bridge.py
-    assert "INTERACTING WITH: Alice (Female)" in prompt
-    assert "DYNAMIC BIOLOGICAL MODIFIERS:" in prompt
+    assert "Alice: Hi" in prompt
+    assert "Rel:50%" in prompt

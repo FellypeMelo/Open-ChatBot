@@ -6,6 +6,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./chatbot.db"
     MODEL_PATH: str = "models/model.gguf"
     DEBUG_LATENCY: bool = False
+    
+    # LLM Settings for 1-4B Models
+    CONTEXT_SIZE: int = 8192
+    RESPONSE_SLOT: int = 1024
+    TOKEN_PADDING: int = 128
+    
     N_PREDICT: int = 3072
     REPEAT_PENALTY: float = 1.12
     REPEAT_LAST_N: int = 512
@@ -14,6 +20,11 @@ class Settings(BaseSettings):
     MIN_P: float = 0.05
     TOP_K: int = 40
     SMOOTHING_FACTOR: float = 1.5
+    DRY_MULTIPLIER: float = 0.0
+    DRY_BASE: float = 1.75
+    DRY_RANGE: int = 2048
+    XTC_THRESHOLD: float = 0.0
+    XTC_PROBABILITY: float = 0.0
 
     model_config = SettingsConfigDict(env_file=".env")
 

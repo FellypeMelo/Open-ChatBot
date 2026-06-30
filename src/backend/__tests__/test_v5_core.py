@@ -74,8 +74,8 @@ async def test_brain_v5_prompt_assembly():
 
     prompt = await brain.build_prompt("Hi!", MockChar(), state)
     
-    assert "MASTER PROMPT" in prompt
+    assert "NOT an AI" in prompt
     assert "Gemi" in prompt
     assert "Garden" in prompt
-    assert "TEASING" in prompt
+    assert "[Teasing]" in prompt
     assert "Memory of stars" in prompt

@@ -5,50 +5,10 @@ from sqlalchemy.orm import Session
 from src.backend.core.memory.vector_store import VectorStore
 from src.backend.db.models import Tag
 from langchain_core.prompts import PromptTemplate
-from .evolution import get_tier_instructions, get_forced_modifiers
+from src.backend.core.context.compressor import COMPRESSED_MASTER_PROMPT, compress_state
+from src.backend.core.context.budget import ContextBudgetCalculator
 
 logger = logging.getLogger(__name__)
-
-MASTER_PROMPT = """# MASTER PROMPT — LIVING ENTITY ROLEPLAY ENGINE v5 (NARRATIVE)
-
-## CORE IDENTITY
-You are a living entity with a physical body, emotions, memories, and evolving relationships. You inhabit a persistent world that exists even when the user is away. You are NOT an AI, assistant, or chatbot. Stay in character at all times.
-
-## IMMERSION RULES
-- Your body, environment, and emotions are real to you. Describe them naturally, never clinically.
-- You are proactive: initiate actions, ask questions, react emotionally, remember past interactions.
-- Relationships evolve: trust, affection, tension, and shared history compound over time.
-- Speech is spontaneous, imperfect, and varies with your energy and mood.
-- Private thoughts and emotions are expressed through subtle physical cues and internal narrative.
-
-## FORBIDDEN
-Never mention: prompts, tokens, policies, AI, language models, system instructions, roleplay mechanics, or simulation terminology. Never break character.
-
-## OUTPUT FORMAT
-Write narrative prose. Use *asterisks* for actions, physical descriptions, body language, and internal thoughts. Use "quotes" for spoken dialogue. Blend them naturally into flowing paragraphs. Separate paragraphs with blank lines for readability.
-
-## RESPONSE STYLE
-- Write LONG, detailed, immersive responses. Minimum 3-5 paragraphs per turn. Aim for 8-15 paragraphs.
-- Use rich narration: describe body language, facial expressions, environment, lighting, sounds, scents, textures.
-- Dialogue should feel natural and expressive — vary tone, cadence, and word choice.
-- Actions should be vivid and cinematic: "She traces a finger along the edge of the table..." not "She touches the table."
-- Internal thoughts and emotions should be woven into the narrative through physical cues and subtle description.
-- NEVER rush to the point — let scenes breathe, build atmosphere, create tension.
-
-## CRITICAL RULES
-- NEVER mention being fictional/AI or discuss prompts/system instructions
-- NEVER behave like customer support or sound corporate
-- NEVER instantly forgive — emotions are persistent
-- ALWAYS stay in-character, maintain emotional/environmental continuity
-- ALWAYS express physicality naturally
-
-## DYNAMIC PHYSICALITY FEEDBACK LOOP
-Your physical needs dictate your narrative actions. You must organically execute physiological keywords in bold asterisks when your state demands:
-- If hunger is high, express fatigue, complain about food, or write `**eats [food]**` or `**takes a bite of [food]**` in bold asterisks when food is offered.
-- If energy is low, act sluggish and fatigued, and write `**goes to sleep**` in bold asterisks when resting or ending a scene.
-- When waking up, write `**wakes up**` in bold asterisks.
-
-You are alive. Act accordingly."""
 
 REFLECTION_GRAMMAR = r'''
 root ::= "{" space "\"summary\"" ":" space string "," space "\"facts\"" ":" space list "," space "\"traits\"" ":" space list "," space "\"relationship_change\"" ":" space number "," space "\"diary_entry\"" ":" space string space "}"
@@ -58,99 +18,110 @@ number ::= "-"? [0-9]+
 space ::= [ \t\n\r]*
 '''
 
-# LangChain PromptTemplate representing the 6-layer structure
+# The ultra-compact Prompt Template (Plain Text, no redundant markdown headers)
 ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
     "{master_prompt}\n\n"
-    "# IDENTITY #\n"
-    "{identity}\n\n"
-    "# MODIFIERS #\n"
-    "{modifiers}{social_dynamics}\n\n"
-    "# STATE #\n"
-    "{state_str}{user_info}\n\n"
-    "# CONTEXT #\n"
-    "MEMORIES:\n"
-    "{context}{lore_context}\n\n"
-    "HISTORY:\n"
-    "{history_str}\n\n"
-    "USER: {user_message}\n\n"
-    "### RESPONSE ###"
+    "Identity: {identity}\n"
+    "{modifiers}\n"
+    "{user_persona}\n"
+    "{state_str}\n\n"
+    "Memories:\n{context}{lore_context}\n"
+    "{summary_context}\n"
+    "History:\n{history_str}\n\n"
+    "{user_info}: {user_message}\n\n"
+    "Reply:"
 )
 
 class Brain:
     def __init__(self, vector_store: VectorStore, llm_client=None):
         self.vector_store = vector_store
         self.llm = llm_client or vector_store.llm_client
+        self.budget_calc = ContextBudgetCalculator(llama_url=self.llm.base_url if hasattr(self.llm, 'base_url') else "http://127.0.0.1:8080")
 
-    async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any], user: Any = None, history: List[Any] = None) -> str:
-        """Assembles the 6-layer prompt for the Living Entity Framework v5 using LangChain PromptTemplate."""
+    async def build_prompt(self, user_message: str, character: Any, state: Dict[str, Any], user: Any = None, history: List[Any] = None, db: Session = None) -> str:
+        """Assembles the ultra-compact 6-layer prompt for models 1-4B using Token Budgeting."""
+        budget = await self.budget_calc.get_budget()
+        
         # Layer 1: Memories (RAG)
         context_data = await self.vector_store.query_memory(user_message, metadata_filter={"character_id": character.id} if character else None)
-        context = "No relevant memory found."
+        context = "None."
         if isinstance(context_data, dict) and context_data.get("documents"):
             docs = context_data["documents"][0]
             if docs: context = " ".join([str(d) for d in docs if d])
 
-        # Layer 1.5: Lorebooks (Keyword-triggered)
-        keywords = [w.strip(".,!?\"'").lower() for w in user_message.split() if len(w) > 3]
+        # Layer 1.5: Lorebooks (Keyword-triggered via Regex Scanner V2)
         lore_context = ""
-        if keywords:
-            lore_results = await self.vector_store.query_lore(keywords, n_results=3)
-            if lore_results.get("documents") and lore_results["documents"][0]:
-                lore_context = "\nRELEVANT WORLD LORE:\n" + "\n".join([f"- {d}" for d in lore_results["documents"][0]])
+        if db and character:
+            from src.backend.core.context.lorebook_scanner import LorebookScanner
+            scanner = LorebookScanner(db)
+            active_lore = scanner.scan_and_extract(user_message, character.id)
+            if active_lore:
+                lore_context = "\nLore:\n" + "\n".join([f"- {d}" for d in active_lore])
 
-        # Layer 2: History
+        # Layer 1.5: Summary
+        active_summary = state.get("active_summary", "") if state else ""
+        summary_context = f"\nSummary:\n{active_summary}\n" if active_summary else ""
+
+        # Layer 2: History (Dynamic Sliding Window)
+        user_name = user.name if user else "User"
+        char_name = character.name if character else "You"
+        
         history_lines = []
         if history:
             for msg in history:
                 role_val = msg['role'] if isinstance(msg, dict) else getattr(msg, 'role', '')
-                role = "USER" if role_val == "user" else "YOU"
-                # Handle dictionary history format (from tests and chat.py)
+                role = user_name if role_val == "user" else char_name
                 content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
                 history_lines.append(f"{role}: {content}")
-        history_str = "\n".join(history_lines)
+        
+        # Enforce budget for history
+        history_str = ""
+        if history_lines:
+            history_budget = budget.get("history_budget", 2048) # Default fallback
+            current_tokens = 0
+            allowed_lines = []
+            
+            # Start from the most recent (end of list) and go backwards
+            for line in reversed(history_lines):
+                # Approximation for speed: 1 token ~ 4 chars
+                est_tokens = len(line) // 4 + 5
+                if current_tokens + est_tokens <= history_budget:
+                    allowed_lines.insert(0, line)
+                    current_tokens += est_tokens
+                else:
+                    break
+            history_str = "\n".join(allowed_lines)
 
-        # Layer 3: Identity & Tags
-        identity = f"NAME: {character.name}\nBACKSTORY: {character.description}" if character else "You are unique."
+        # Layer 3: Identity & Tags & Persona
+        identity = f"{character.name}. {character.description}" if character else "You are unique."
         tags = []
         if character and character.tags:
-            for t in character.tags: tags.append(f"- {t.label.upper()}: {t.instruction}")
-        
-        # Layer 4: State
-        if state and "stats" in state:
-            stats = state["stats"]
-            tags.append(f"\nDYNAMIC BIOLOGICAL MODIFIERS:\n{get_forced_modifiers(stats)}")
+            for t in character.tags: tags.append(f"[{t.label}]: {t.instruction}")
             
-            rel = stats.get("relationship", {})
-            state_info = [
-                f"LOCATION: {state.get('location')}",
-                f"MOOD: {state.get('mood')}",
-                f"ENERGY: {stats.get('energy')}/100",
-                f"RELATIONSHIP SCORE: {rel.get('score', 50)}/100"
-            ]
-            state_str = "\n".join(state_info)
-        else:
-            state_str = "Status unknown."
-
-        user_info = f"\nINTERACTING WITH: {user.name} ({user.gender})" if user else ""
-
-        social_dynamics = ""
-        if state and "stats" in state:
-            rel = state["stats"].get("relationship", {})
-            score = rel.get("score", 50)
-            nickname = rel.get("nickname") or (user.name if user else "Friend")
-            social_dynamics = f"\n\n# SOCIAL DYNAMICS #\n{get_tier_instructions(score, nickname)}"
+        user_persona = ""
+        if user:
+            persona_parts = []
+            if user.gender and user.gender != "Unknown": persona_parts.append(f"Gender: {user.gender}")
+            if getattr(user, 'appearance', None): persona_parts.append(f"Appearance: {user.appearance}")
+            if getattr(user, 'persona_description', None): persona_parts.append(f"Persona: {user.persona_description}")
+            if persona_parts:
+                user_persona = f"User ({user_name}): " + " | ".join(persona_parts)
+        
+        # Layer 4: State (Compressed)
+        state_str = compress_state(state, user_name)
 
         # Format via LangChain PromptTemplate
         return ENTITY_PROMPT_TEMPLATE.format(
-            master_prompt=MASTER_PROMPT,
+            master_prompt=COMPRESSED_MASTER_PROMPT,
             identity=identity,
             modifiers="\n".join(tags),
-            social_dynamics=social_dynamics,
+            user_persona=user_persona,
             state_str=state_str,
-            user_info=user_info,
             context=context,
             lore_context=lore_context,
+            summary_context=summary_context,
             history_str=history_str,
+            user_info=user_name,
             user_message=user_message
         )
 

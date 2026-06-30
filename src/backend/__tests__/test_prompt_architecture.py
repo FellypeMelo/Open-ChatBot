@@ -35,13 +35,12 @@ async def test_prompt_assembly_with_user_and_tags():
     prompt = await brain.build_prompt("Hello!", char, state, user=user)
     
     # Assertions
-    assert "NAME: Gemi" in prompt
+    assert "Gemi" in prompt
     assert "Alice" in prompt
-    assert "Female" in prompt
-    assert "PLAYFUL: Be teasing." in prompt
+    assert "[Playful]: Be teasing." in prompt
     assert "Old memory" in prompt
     # Updated to match new template
-    assert "RELATIONSHIP SCORE: 80/100" in prompt
+    assert "Rel:80%" in prompt
 
 @pytest.mark.asyncio
 async def test_prompt_behavioral_modifiers_injection():
@@ -65,38 +64,41 @@ async def test_prompt_behavioral_modifiers_injection():
     
     prompt = await brain.build_prompt("Hi", char, state)
     
-    assert "EXHAUSTED" in prompt
+    assert "EXHAUSTION" in prompt
     assert "STARVING" in prompt
 
 
-from src.backend.core.orchestration.bridge import MASTER_PROMPT
+from src.backend.core.context.compressor import COMPRESSED_MASTER_PROMPT
 
 def test_master_prompt_content():
-    """Verify master prompt contains critical instructions."""
-    assert "MASTER PROMPT" in MASTER_PROMPT
-    assert "CORE IDENTITY" in MASTER_PROMPT
-    assert "IMMERSION RULES" in MASTER_PROMPT
-    assert "*asterisks*" in MASTER_PROMPT
-    assert "quotes" in MASTER_PROMPT
+    """Verify compressed master prompt contains critical instructions."""
+    assert "NOT an AI" in COMPRESSED_MASTER_PROMPT
+    assert "asterisks" in COMPRESSED_MASTER_PROMPT
+    assert "quotes" in COMPRESSED_MASTER_PROMPT
+    assert "physicality" in COMPRESSED_MASTER_PROMPT
 
 @pytest.mark.asyncio
 async def test_lorebook_injection_in_prompt():
     """Verify that matching lorebook entries are injected into the prompt."""
+    from unittest.mock import patch
+    
     mock_vector_store = MagicMock()
     mock_vector_store.query_memory = AsyncMock(return_value={})
-    mock_vector_store.query_lore = AsyncMock(return_value={
-        "documents": [["Sword of Destiny lore content"]]
-    })
     brain = Brain(vector_store=mock_vector_store)
 
     char = Character(name="Gemi", description="Test")
     char.id = 5
     state = {"stats": {"energy": 100, "hunger": 0, "relationship": {"score": 50}}}
 
-    prompt = await brain.build_prompt("I draw my sword", char, state)
+    with patch("src.backend.core.context.lorebook_scanner.LorebookScanner") as mock_scanner_class:
+        mock_scanner = MagicMock()
+        mock_scanner.scan_and_extract.return_value = ["Sword of Destiny lore content"]
+        mock_scanner_class.return_value = mock_scanner
 
-    assert "RELEVANT WORLD LORE:" in prompt
-    assert "Sword of Destiny lore content" in prompt
+        prompt = await brain.build_prompt("I draw my sword", char, state, db=MagicMock())
+
+        assert "Lore:" in prompt
+        assert "Sword of Destiny lore content" in prompt
 
 
 @pytest.mark.asyncio
@@ -120,11 +122,11 @@ async def test_prompt_assembly_history_and_empty_state():
         MockMessage("assistant", "Hi there")
     ]
 
-    # Empty state compiles to "Status unknown."
+    # Empty state compiles to "State: Unknown"
     prompt = await brain.build_prompt("How are you?", char, state=None, history=history)
-    assert "USER: Hello" in prompt
-    assert "YOU: Hi there" in prompt
-    assert "Status unknown." in prompt
+    assert "User: Hello" in prompt
+    assert "Gemi: Hi there" in prompt
+    assert "State: Unknown" in prompt
 
 
 @pytest.mark.asyncio

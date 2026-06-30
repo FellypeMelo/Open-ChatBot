@@ -1,0 +1,117 @@
+name: QA & Code Quality
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+  schedule:
+    # Run daily at 02:00 UTC (Retroactive regression testing)
+    - cron: '0 2 * * *'
+
+jobs:
+  static-checks:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Ruff
+      run: pip install ruff==0.9.9
+
+    - name: Run Ruff Linter
+      run: ruff check .
+
+    - name: Run Ruff Formatter check
+      run: ruff format --check .
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: './src/frontend/pnpm-lock.yaml'
+
+    - name: Install frontend dependencies
+      working-directory: ./src/frontend
+      run: pnpm install
+
+    - name: Run Frontend Linter
+      working-directory: ./src/frontend
+      run: pnpm run lint
+
+    - name: Verify Compilation (TypeScript)
+      working-directory: ./src/frontend
+      run: pnpm run build
+
+  backend-tests:
+    name: Backend Unit Tests (Pytest)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Run Pytest with Coverage
+      env:
+        PYTHONPATH: .
+      run: pytest --cov=src --cov-report=xml --cov-report=term-missing
+
+    - name: Upload Python Coverage Report
+      uses: actions/upload-artifact@v7
+      with:
+        name: python-coverage-report
+        path: coverage.xml
+        retention-days: 14
+
+  frontend-tests:
+    name: Frontend Unit Tests (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+        cache: 'pnpm'
+        cache-dependency-path: './src/frontend/pnpm-lock.yaml'
+
+    - name: Install frontend dependencies
+      working-directory: ./src/frontend
+      run: pnpm install
+
+    - name: Run Vitest with Coverage
+      working-directory: ./src/frontend
+      run: pnpm run coverage
+
+    - name: Upload Frontend Coverage Report
+      uses: actions/upload-artifact@v7
+      with:
+        name: frontend-coverage-report
+        path: src/frontend/coverage/
+        retention-days: 14

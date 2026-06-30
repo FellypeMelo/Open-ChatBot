@@ -95,8 +95,8 @@ async def test_llama_client_embed_pytest_mode():
     """Embedding in pytest mode returns default mock values."""
     client = LlamaClient()
     result = await client.embed("test text")
-    assert len(result) == 128
-    assert result == [0.1] * 128
+    assert len(result) == 2560
+    assert result == [0.1] * 2560
     await client.close()
 
 @pytest.mark.asyncio

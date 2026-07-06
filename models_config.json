@@ -5,8 +5,8 @@
     "port": 8080,
     "threads": 0,
     "gpu_layers": 99,
-    "context_size": 8192,
-    "additional_args": "--cache-type-k q4_0 --cache-type-v q4_0 --flash-attn auto --parallel 1 --ubatch-size 2048"
+    "context_size": 65536,
+    "additional_args": "--cache-type-k turbo3 --cache-type-v turbo3 --flash-attn on --parallel 1 --ubatch-size 2048"
   },
   "embedding": {
     "binary_path": "llama_bin/llama-server.exe",
@@ -14,7 +14,7 @@
     "port": 8080,
     "threads": 0,
     "gpu_layers": 99,
-    "context_size": 4096,
-    "additional_args": "--cache-type-k q4_0 --cache-type-v q4_0 --flash-attn auto --parallel 1 --ubatch-size 2048"
+    "context_size": 65536,
+    "additional_args": "--cache-type-k turbo3 --cache-type-v turbo3 --flash-attn on --parallel 1 --ubatch-size 2048"
   }
 }

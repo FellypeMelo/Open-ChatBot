@@ -115,7 +115,7 @@ class LlamaServerRunner:
                 if "q8_0" in inf_args:
                     inf_args = inf_args.replace("q8_0", "q4_0")
                     updated = True
-                if "q4_0" not in inf_args:
+                if "--cache-type-k" not in inf_args:
                     inf_args = (
                         inf_args + " --cache-type-k q4_0 --cache-type-v q4_0"
                     ).strip()
@@ -354,6 +354,10 @@ class LlamaServerRunner:
                     f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir
                 )
 
+            # SYCL JIT-compiles turbo kernels on first run; cache them to disk so
+            # later starts don't blow past the health-check warmup window.
+            spawn_env.setdefault("SYCL_CACHE_PERSISTENT", "1")
+
             # Log critical env vars for diagnosis
             sycl_vars = {
                 k: v
@@ -511,6 +515,8 @@ class LlamaServerRunner:
                 spawn_env["PATH"] = (
                     f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir
                 )
+
+            spawn_env.setdefault("SYCL_CACHE_PERSISTENT", "1")
 
             self.embedding_proc = subprocess.Popen(
                 args,

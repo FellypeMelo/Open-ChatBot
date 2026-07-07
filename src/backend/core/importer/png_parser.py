@@ -72,6 +72,10 @@ def parse_png_character_card(file_bytes: bytes) -> Optional[TavernV2Card]:
         chunk_length = struct.unpack(">I", file_bytes[offset : offset + 4])[0]
         chunk_type = file_bytes[offset + 4 : offset + 8]
 
+        if chunk_length > length - offset - 12:
+            logger.error("PNG chunk length exceeds remaining file size")
+            raise ValueError("Corrupt PNG: chunk length exceeds file size")
+
         if chunk_type == b"tEXt":
             chunk_data = file_bytes[offset + 8 : offset + 8 + chunk_length]
             try:

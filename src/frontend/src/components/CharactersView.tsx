@@ -61,7 +61,7 @@ const CharactersView: React.FC<CharactersViewProps> = ({
   )
 
   return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#050505] text-[#F4F4F5] relative">
+    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#050505] text-[#F4F4F5] relative">
       {/* Background ambient orbs */}
       <div className="absolute top-20 right-20 w-96 h-96 bg-white/5 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-20 left-20 w-96 h-96 bg-white/5 rounded-full blur-[120px] pointer-events-none" />

@@ -5,32 +5,8 @@ import type { MessageNode } from '../hooks/useMessageTree'
 import { useTokenQueue } from '../hooks/useTokenQueue'
 import { useAtmosphere } from '../hooks/useAtmosphere'
 import { useAudio } from '../hooks/useAudio'
-
-interface Character {
-  id: number
-  name: string
-  description: string
-  tags: { id: number; label: string }[]
-  state?: {
-    location: string
-    clothes: string
-    mood: string
-    interaction_count: number
-    stats: {
-      energy: number
-      hunger: number
-      happiness?: number
-      social?: number
-      is_sleeping?: boolean
-      relationship: {
-        score: number
-      }
-    }
-  }
-}
-
 import { fetchJournal } from '../services/api'
-import type { JournalEntry } from '../services/api'
+import type { JournalEntry, Character } from '../services/api'
 
 const ACTIONS = [
   { id: 'hug', name: 'Hug', icon: 'favorite', effect: 'HAPPINESS +5 • SOCIAL +10 • RELATION +2' },
@@ -178,8 +154,13 @@ const ChatView: React.FC<ChatViewProps> = ({
     onSendAction(actionId)
   }
 
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
   const handleCopyID = (id: string) => {
+    if (!id) return
     navigator.clipboard.writeText(id)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500)
   }
 
   return (
@@ -264,7 +245,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.hunger}%` }} />
+                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.hunger}%` }} />
                 </div>
               </div>
 
@@ -292,7 +273,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-yellow-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.happiness ?? 100}%` }} />
+                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.happiness ?? 100}%` }} />
                 </div>
               </div>
 
@@ -320,7 +301,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                   </div>
                 </div>
                 <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-sky-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.social ?? 100}%` }} />
+                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.social ?? 100}%` }} />
                 </div>
               </div>
 
@@ -597,13 +578,16 @@ const ChatView: React.FC<ChatViewProps> = ({
                           Delete
                         </button>
                       )}
-                      <button 
+                      <button
                         onClick={() => handleCopyID(msg.request_id || '')}
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer"
-                        title="Copy Request ID"
+                        disabled={!msg.request_id}
+                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[#71717A]"
+                        title={msg.request_id ? 'Copy Request ID' : 'Request ID not available yet'}
                       >
-                        <span className="material-symbols-outlined text-[11px]">content_copy</span>
-                        Copy ID
+                        <span className="material-symbols-outlined text-[11px]">
+                          {msg.request_id && copiedId === msg.request_id ? 'check' : 'content_copy'}
+                        </span>
+                        {msg.request_id && copiedId === msg.request_id ? 'Copied' : 'Copy ID'}
                       </button>
                       {msg.request_id && (
                         <span className="font-mono text-[8px] text-[#71717A]/30 ml-auto uppercase tracking-wider select-none">
@@ -758,7 +742,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                       disabled={isLoading}
                       className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
                     >
-                      <span className="material-symbols-outlined text-[20px] text-amber-400 group-hover:scale-110 transition-transform duration-300">
+                      <span className="material-symbols-outlined text-[20px] text-emerald-400 group-hover:scale-110 transition-transform duration-300">
                         {gift.icon}
                       </span>
                       <span className="font-mono text-[10px] text-zinc-200 font-medium">

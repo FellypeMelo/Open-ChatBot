@@ -26,9 +26,9 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-background custom-scrollbar">
-      <header className="w-full px-md h-16 max-w-container-max mx-auto flex justify-between items-center shrink-0 mt-md">
+      <header className="w-full px-md h-16 max-w-[1200px] mx-auto flex justify-between items-center shrink-0 mt-md">
         <div>
-          <h2 className="font-display text-display font-semibold text-primary">Tag Management</h2>
+          <h2 className="font-heading-md text-heading-md font-semibold text-primary">Tag Management</h2>
           <p className="font-label-sm text-label-sm text-on-surface-variant mt-1 uppercase tracking-wider">System Taxonomy</p>
         </div>
         <div className="flex gap-sm items-center">
@@ -37,14 +37,14 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="bg-transparent border-b border-outline-variant focus:border-outline focus:outline-none text-on-surface pl-8 pr-3 py-xs font-body-md text-body-md w-48 placeholder-on-surface-variant transition-colors bg-transparent h-full pb-1 focus:ring-0"
+              className="bg-transparent border-b border-outline focus:border-primary focus:outline-none text-on-surface pl-8 pr-3 py-xs font-body-md text-body-md w-48 placeholder-on-surface-variant transition-colors bg-transparent h-full pb-1 focus:ring-0"
               placeholder="Filter tags..."
               type="text"
             />
           </div>
           <button
             onClick={onCreateTag}
-            className="bg-transparent border border-outline-variant text-on-surface rounded px-sm py-xs font-body-md text-body-md hover:border-outline hover:text-primary transition-colors flex items-center gap-2"
+            className="bg-transparent border border-outline text-on-surface rounded px-sm py-xs font-body-md text-body-md hover:border-primary hover:text-primary transition-colors flex items-center gap-2"
           >
             <span className="material-symbols-outlined text-[18px]">add</span>
             Create New Tag
@@ -52,7 +52,7 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
         </div>
       </header>
 
-      <div className="flex-1 w-full max-w-container-max mx-auto px-md py-lg space-y-xl">
+      <div className="flex-1 w-full max-w-[1200px] mx-auto px-md py-lg space-y-xl">
         <section>
           <div className="mb-sm border-b border-surface-container-high pb-xs flex justify-between items-end">
             <h3 className="font-body-lg text-body-lg text-on-surface">Personality Traits</h3>
@@ -62,10 +62,10 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
             {filteredTags.map((tag) => (
               <div
                 key={tag.id}
-                className="group border border-surface-container-high hover:border-outline-variant rounded p-sm transition-colors flex flex-col gap-3 bg-background"
+                className="group border border-surface-container-high hover:border-outline rounded p-sm transition-colors flex flex-col gap-3 bg-background"
               >
                 <div className="flex justify-between items-start gap-2">
-                  <span className="font-label-sm text-label-sm text-on-surface border border-outline-variant rounded px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-outline transition-colors">
+                  <span className="font-label-sm text-label-sm text-on-surface border border-outline rounded px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-primary transition-colors">
                     {tag.label}
                   </span>
                   <div className="flex items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
@@ -93,7 +93,7 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
                     Used: {usage[tag.id] ?? 0}x
                   </span>
                   <span className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-surface-tint"></div>
+                    <div className="w-1.5 h-1.5 rounded-full bg-secondary"></div>
                     Global
                   </span>
                 </div>

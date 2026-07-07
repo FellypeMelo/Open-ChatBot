@@ -2,7 +2,6 @@ import pytest
 import asyncio
 import tempfile
 import shutil
-import os
 from unittest.mock import MagicMock, AsyncMock
 from src.backend.core.orchestration.bridge import Brain
 from src.backend.core.memory.vector_store import VectorStore

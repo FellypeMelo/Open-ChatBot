@@ -1,6 +1,4 @@
 import json
-import pytest
-import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
@@ -17,9 +15,7 @@ def test_runner_load_config_defaults():
             "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
             return_value=[],
         ):
-            with patch(
-                "src.backend.core.engine.runner.LlamaServerRunner.save_config"
-            ) as mock_save:
+            with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
                 runner = LlamaServerRunner()
                 assert runner.config["inference"]["port"] == 8080
                 assert runner.config["embedding"]["port"] == 8080
@@ -75,9 +71,7 @@ def test_runner_load_config_exceptions():
     mock_config_file.exists.return_value = True
 
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
-        with patch(
-            "src.backend.core.engine.runner.LlamaServerRunner.save_config"
-        ) as mock_save:
+        with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
             # 1. JSONDecodeError
             with patch(
                 "builtins.open", side_effect=json.JSONDecodeError("msg", "doc", 0)

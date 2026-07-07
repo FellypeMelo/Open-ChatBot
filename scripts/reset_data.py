@@ -7,7 +7,6 @@ Run from the project root directory.
 
 import sqlite3
 import shutil
-import os
 from pathlib import Path
 
 

@@ -9,8 +9,11 @@ from sqlalchemy import (
     Table,
     DateTime,
     Float,
+    Index,
+    text,
 )
-from sqlalchemy.orm import relationship, backref
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import relationship, backref, Session
 from src.backend.db.database import Base
 from datetime import datetime, timezone
 
@@ -32,6 +35,18 @@ class Tag(Base):
 
 class User(Base):
     __tablename__ = "users"
+    # Only one row may ever be the active local-user persona. Backed by a
+    # partial unique index (SQLite only -- this app has a single production
+    # backend) so concurrent get-or-create calls fail fast on the second
+    # insert instead of silently creating two "active" users.
+    __table_args__ = (
+        Index(
+            "uq_users_single_active",
+            "is_active",
+            unique=True,
+            sqlite_where=text("is_active"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
@@ -40,6 +55,20 @@ class User(Base):
 
     persona_description = Column(Text, default="")
     appearance = Column(Text, default="")
+
+    @classmethod
+    def get_or_create_active(cls, db: Session) -> "User":
+        user = db.query(cls).filter(cls.is_active == True).first()  # noqa: E712
+        if user:
+            return user
+        user = cls(name="User", gender="Unknown", is_active=True)
+        db.add(user)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            user = db.query(cls).filter(cls.is_active == True).first()  # noqa: E712
+        return user
 
 
 class Character(Base):
@@ -62,7 +91,13 @@ class Character(Base):
 
     @classmethod
     def get_default(cls, db):
-        return db.query(cls).first() or cls(name="Gemi", description="Playful entity.")
+        existing = db.query(cls).first()
+        if existing:
+            return existing
+        default = cls(name="Gemi", description="Playful entity.")
+        db.add(default)
+        db.flush()
+        return default
 
 
 class AgentState(Base):
@@ -81,7 +116,15 @@ class AgentState(Base):
     # Active summary of past interactions
     active_summary = Column(Text, default="")
 
+    # Optimistic-concurrency guard: overlapping /chat or /chat/stream calls for
+    # the same character (double-send, regenerate-while-streaming) each load
+    # their own copy of this row; without this, whichever commits last silently
+    # clobbers the other's stats/interaction_count instead of failing loudly.
+    version = Column(Integer, nullable=False, default=1)
+
     character = relationship("Character", back_populates="state")
+
+    __mapper_args__ = {"version_id_col": version}
     current_message = relationship("MessageNode", foreign_keys=[current_message_id])
 
     def __init__(self, **kwargs):

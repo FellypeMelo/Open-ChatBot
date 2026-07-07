@@ -1,11 +1,8 @@
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from pathlib import Path
-import numpy as np
 
 from src.backend.core.memory.vector_store import VectorStore, LlamaCppEmbeddings
-from turbovec.langchain import TurboQuantVectorStore
 
 
 @pytest.mark.asyncio

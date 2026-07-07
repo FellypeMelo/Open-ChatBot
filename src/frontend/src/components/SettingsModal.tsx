@@ -352,7 +352,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     id="inf-gpu-layers"
                     type="number"
                     value={infGpuLayers}
-                    onChange={e => setInfGpuLayers(parseInt(e.target.value) ?? -1)}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      setInfGpuLayers(Number.isNaN(v) ? -1 : v)
+                    }}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
                     required
                   />
@@ -522,7 +525,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     id="emb-gpu-layers"
                     type="number"
                     value={embGpuLayers}
-                    onChange={e => setEmbGpuLayers(parseInt(e.target.value) ?? -1)}
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      setEmbGpuLayers(Number.isNaN(v) ? -1 : v)
+                    }}
                     className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
                     required
                     disabled={isConsolidated}
@@ -599,7 +605,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             <button 
               onClick={onClose}
               disabled={loading}
-              className="font-label-sm text-xs text-[#71717A] hover:text-white px-md py-xs border border-transparent hover:border-white/10 rounded-full transition-all duration-300 disabled:opacity-50" 
+              className="font-label-sm text-xs text-on-surface hover:text-white px-md py-xs border border-transparent hover:border-white/10 rounded-full transition-all duration-300 disabled:opacity-50"
               type="button"
             >
               Cancel

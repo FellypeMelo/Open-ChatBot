@@ -79,16 +79,16 @@ const LorebookView: React.FC = () => {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden p-md">
-      <div className="max-w-container-max mx-auto w-full flex flex-col h-full gap-md">
+      <div className="max-w-[1200px] mx-auto w-full flex flex-col h-full gap-md">
         <header className="flex-none flex justify-between items-end">
           <div>
-            <h1 className="font-display text-headline-md font-semibold text-primary">Lorebook & Knowledge</h1>
+            <h1 className="font-heading-md text-heading-md font-semibold text-primary">Lorebook & Knowledge</h1>
             <p className="text-on-surface-variant text-body-md mt-1">
               Define keywords that trigger character memories.
             </p>
           </div>
           <div className="flex flex-col items-end gap-xs">
-            <div className="flex bg-surface-container-high rounded-full p-1 border border-outline-variant/30">
+            <div className="flex bg-surface-container-high rounded-full p-1 border border-outline/30">
               <button 
                 onClick={() => setFilter('all')}
                 className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all ${filter === 'all' ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-primary'}`}
@@ -115,13 +115,13 @@ const LorebookView: React.FC = () => {
                 placeholder="Search lore..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="bg-surface-container-low border border-outline-variant rounded-full pl-8 pr-md py-1 text-label-sm focus:border-primary outline-none w-48 transition-all focus:w-64"
+                className="bg-surface-container-low border border-outline rounded-full pl-8 pr-md py-1 text-label-sm focus:border-primary outline-none w-48 transition-all focus:w-64"
               />
             </div>
           </div>
         </header>
 
-        <section className="bg-surface-container-low border border-outline-variant rounded-xl p-md">
+        <section className="bg-surface-container-low border border-outline rounded-xl p-md">
           <form onSubmit={handleSubmit} className="flex flex-col gap-sm">
             <div className="flex gap-sm">
               <input
@@ -129,7 +129,7 @@ const LorebookView: React.FC = () => {
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 placeholder="Keyword (e.g. 'Silver Dragon')"
-                className="flex-1 bg-surface-container border border-outline-variant rounded-lg px-md py-sm focus:border-primary outline-none text-on-surface"
+                className="flex-1 bg-surface-container border border-outline rounded-lg px-md py-sm focus:border-primary outline-none text-on-surface"
               />
               <label className="flex items-center gap-xs cursor-pointer select-none px-md">
                 <input
@@ -146,7 +146,7 @@ const LorebookView: React.FC = () => {
               onChange={(e) => setContent(e.target.value)}
               placeholder="What should the character remember when this keyword is mentioned?"
               rows={3}
-              className="bg-surface-container border border-outline-variant rounded-lg px-md py-sm focus:border-primary outline-none text-on-surface resize-none"
+              className="bg-surface-container border border-outline rounded-lg px-md py-sm focus:border-primary outline-none text-on-surface resize-none"
             />
             <button
               type="submit"
@@ -161,9 +161,9 @@ const LorebookView: React.FC = () => {
         <main className="flex-1 overflow-y-auto custom-scrollbar pr-xs">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-sm">
             {filteredEntries.map((entry) => (
-              <div key={entry.id} className="bg-surface-container border border-outline-variant rounded-xl p-md flex flex-col group animate-in">
+              <div key={entry.id} className="bg-surface-container border border-outline rounded-xl p-md flex flex-col group animate-in">
                 <div className="flex justify-between items-start">
-                  <span className="bg-primary-container text-on-primary-container px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
+                  <span className="bg-surface-container-high text-on-surface px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
                     {entry.keyword}
                   </span>
                   <button 

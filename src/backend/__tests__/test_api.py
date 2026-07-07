@@ -58,7 +58,7 @@ def test_chat_with_config(client, db_session):
         mock_complete.return_value = {"content": "Hello!"}
 
         config = {
-            "base_url": "http://custom-server:1234/v1",
+            "base_url": "http://127.0.0.1:1234/v1",
             "model_name": "custom-model",
         }
         response = client.post(
@@ -95,7 +95,7 @@ def test_chat_stream_with_config(client, db_session):
         mock_stream.side_effect = mock_iter
 
         config = {
-            "base_url": "http://stream-server:1234/v1",
+            "base_url": "http://127.0.0.1:5678/v1",
             "model_name": "stream-model",
         }
         response = client.post(
@@ -144,7 +144,7 @@ def test_user_endpoints(client, db_session):
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "User"
-    assert data["gender"] == "Male"
+    assert data["gender"] == "Unknown"
 
     # POST /me (updates user)
     update_payload = {"name": "Elara", "gender": "Female"}
@@ -198,6 +198,14 @@ def test_settings_endpoints(client):
         patch("src.backend.api.settings.runner.stop_inference") as mock_stop_inf,
         patch("src.backend.api.settings.runner.start_embedding") as mock_start_emb,
         patch("src.backend.api.settings.runner.stop_embedding") as mock_stop_emb,
+        patch(
+            "src.backend.api.settings.runner.get_available_binaries",
+            return_value=["llama-server.exe"],
+        ),
+        patch(
+            "src.backend.api.settings.runner.get_available_models",
+            return_value=["qwen.gguf", "qwen-emb.gguf"],
+        ),
     ):
         mock_status.return_value = {
             "inference": {"running": False},
@@ -268,6 +276,14 @@ def test_settings_endpoints_failures(client):
         patch("src.backend.api.settings.runner.save_config") as mock_save,
         patch("src.backend.api.settings.runner.start_inference") as mock_start_inf,
         patch("src.backend.api.settings.runner.start_embedding") as mock_start_emb,
+        patch(
+            "src.backend.api.settings.runner.get_available_binaries",
+            return_value=["llama-server.exe"],
+        ),
+        patch(
+            "src.backend.api.settings.runner.get_available_models",
+            return_value=["qwen.gguf"],
+        ),
     ):
         # Test status raising exception -> 500
         mock_status.side_effect = Exception("Status error")
@@ -278,16 +294,16 @@ def test_settings_endpoints_failures(client):
         mock_save.side_effect = Exception("Save error")
         cfg_payload = {
             "inference": {
-                "binary_path": "",
-                "model_path": "",
+                "binary_path": "llama-server.exe",
+                "model_path": "qwen.gguf",
                 "port": 8080,
                 "threads": 4,
                 "gpu_layers": -1,
                 "additional_args": "",
             },
             "embedding": {
-                "binary_path": "",
-                "model_path": "",
+                "binary_path": "llama-server.exe",
+                "model_path": "qwen.gguf",
                 "port": 8080,
                 "threads": 4,
                 "gpu_layers": -1,

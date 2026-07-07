@@ -24,7 +24,9 @@ jobs:
         cache: 'pip'
 
     - name: Install Ruff
-      run: pip install ruff==0.9.9
+      # Installs the exact version pinned in requirements.txt -- single source
+      # of truth, instead of a second hardcoded version literal here.
+      run: pip install -r requirements.txt
 
     - name: Run Ruff Linter
       run: ruff check .
@@ -74,7 +76,7 @@ jobs:
     - name: Run Pytest with Coverage
       env:
         PYTHONPATH: .
-      run: pytest --cov=src --cov-report=xml --cov-report=term-missing
+      run: pytest --cov=src --cov-report=xml --cov-report=term-missing --cov-fail-under=80
 
     - name: Upload Python Coverage Report
       uses: actions/upload-artifact@v7
@@ -82,6 +84,31 @@ jobs:
         name: python-coverage-report
         path: coverage.xml
         retention-days: 14
+
+  backend-tests-windows:
+    # This project targets Windows/PowerShell in production (see CLAUDE.md) and
+    # has real win32-only code paths (src/backend/core/engine/runner.py). A
+    # Windows-specific bug (commit b95a5dd) already slipped past an
+    # ubuntu-only matrix once; this job catches the next one instead of
+    # requiring a human to notice on a real Windows machine.
+    name: Backend Unit Tests (Pytest, Windows)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Run Pytest
+      env:
+        PYTHONPATH: .
+      run: pytest --cov=src --cov-report=term-missing --cov-fail-under=80
 
   frontend-tests:
     name: Frontend Unit Tests (Vitest)

@@ -1,9 +1,8 @@
-import os
 import uuid
 import logging
 import asyncio
 import numpy as np
-from typing import List, Dict, Any, Optional, Iterable
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 from langchain_core.embeddings import Embeddings
 from turbovec.langchain import TurboQuantVectorStore

@@ -27,7 +27,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   ]
 
   return (
-    <nav className={`fixed md:sticky top-0 bottom-0 left-0 z-50 flex h-screen w-64 flex-col bg-[#0A0A0B]/95 md:bg-[#0A0A0B]/85 backdrop-blur-md text-white border-r border-white/5 py-lg px-md transition-transform duration-300 md:translate-x-0 flex-shrink-0 overflow-hidden ${
+    <nav className={`fixed md:sticky top-0 bottom-0 left-0 z-50 flex md:h-[100dvh] w-64 flex-col bg-[#0A0A0B]/95 md:bg-[#0A0A0B]/85 backdrop-blur-md text-white border-r border-white/5 py-lg px-md transition-transform duration-300 md:translate-x-0 flex-shrink-0 overflow-hidden ${
       isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full md:translate-x-0'
     }`}>
       {/* Ambient background glow inside sidebar */}

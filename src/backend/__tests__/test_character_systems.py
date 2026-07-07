@@ -1,5 +1,5 @@
 import pytest
-from src.backend.db.models import Character, Tag
+from src.backend.db.models import Tag
 
 
 def test_character_crud(client, db_session):

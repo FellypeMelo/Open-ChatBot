@@ -1,16 +1,14 @@
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
 from sqlalchemy.orm import Session
 
 from src.backend.core.engine.engine import (
     get_time_context,
     update_needs,
     evolve_character,
-    get_behavioral_modifiers,
     should_be_sleeping,
 )
-from src.backend.db.models import AgentState, Character, Tag, JournalEntry
+from src.backend.db.models import AgentState, Character, Tag
 
 
 def test_get_time_context():
@@ -215,25 +213,6 @@ def test_evolve_character_tag_swaps():
 
     evolve_character(mock_db, 1, {"relationship_change": 5})
     mock_db.rollback.assert_called_once()
-
-
-def test_get_behavioral_modifiers():
-    # Test all coverage branches of get_behavioral_modifiers
-    assert "EXHAUSTED" in get_behavioral_modifiers({"energy": 10})
-    assert "Tired" in get_behavioral_modifiers({"energy": 40})
-    assert "STARVING" in get_behavioral_modifiers({"hunger": 90})
-
-    assert "cold, distant" in get_behavioral_modifiers({"relationship": {"score": 10}})
-    assert "polite but guarded" in get_behavioral_modifiers(
-        {"relationship": {"score": 40}}
-    )
-    assert "warm, open" in get_behavioral_modifiers({"relationship": {"score": 70}})
-    assert "deeply affectionate" in get_behavioral_modifiers(
-        {"relationship": {"score": 90}}
-    )
-
-    # Non-dict relationship fallback
-    assert "polite but guarded" in get_behavioral_modifiers({"relationship": 40})
 
 
 def test_should_be_sleeping():

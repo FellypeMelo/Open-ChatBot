@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from src.backend.core.memory.vector_store import VectorStore
 from src.backend.db.models import Tag
@@ -37,11 +37,7 @@ class Brain:
     def __init__(self, vector_store: VectorStore, llm_client=None):
         self.vector_store = vector_store
         self.llm = llm_client or vector_store.llm_client
-        self.budget_calc = ContextBudgetCalculator(
-            llama_url=self.llm.base_url
-            if hasattr(self.llm, "base_url")
-            else "http://127.0.0.1:8080"
-        )
+        self.budget_calc = ContextBudgetCalculator(llama_url=self.llm.url)
 
     async def build_prompt(
         self,

@@ -29,10 +29,10 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
 
   return (
     <div className="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-sm z-50 flex items-center justify-center p-sm md:p-md">
-      <div className="w-full max-w-[500px] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50 animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-[500px] rounded-[1.5rem] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50 animate-in zoom-in-95 duration-200">
         <div className="flex justify-between items-start w-full">
           <div className="flex flex-col gap-xs">
-            <h2 className="font-headline-lg text-headline-lg text-primary tracking-tight">User Profile</h2>
+            <h2 className="font-heading-lg text-heading-lg text-primary tracking-tight">User Profile</h2>
             <p className="font-body-md text-body-md text-on-surface-variant">Update your narrative presence.</p>
           </div>
           <button 
@@ -51,8 +51,8 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
             <input 
               value={name}
               onChange={e => setName(e.target.value)}
-              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30" 
-              id="user_name" 
+              className="input-premium w-full font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30"
+              id="user_name"
               placeholder="How should the AI address you?" 
               type="text"
               required
@@ -79,8 +79,8 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
             <textarea 
               value={appearance}
               onChange={e => setAppearance(e.target.value)}
-              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none" 
-              id="user_appearance" 
+              className="input-premium w-full font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none"
+              id="user_appearance"
               placeholder="e.g., Tall, dark hair, wearing a leather jacket..." 
               rows={2}
             />
@@ -91,8 +91,8 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
             <textarea 
               value={persona}
               onChange={e => setPersona(e.target.value)}
-              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none" 
-              id="user_persona" 
+              className="input-premium w-full font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none"
+              id="user_persona"
               placeholder="e.g., Sarcastic, former mercenary, secretly loves cats..." 
               rows={2}
             />

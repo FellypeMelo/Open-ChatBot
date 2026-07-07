@@ -109,5 +109,5 @@ def test_e2e_database_migration():
     if os.path.exists(db_path):
         try:
             os.remove(db_path)
-        except:
+        except OSError:
             pass

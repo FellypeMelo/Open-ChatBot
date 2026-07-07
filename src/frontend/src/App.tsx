@@ -11,33 +11,8 @@ import TagCreator from './components/TagCreator'
 import ErrorBoundary from './components/ErrorBoundary'
 import * as api from './services/api'
 import type { MessageNode } from './hooks/useMessageTree'
+import type { Character, Tag } from './services/api'
 import { useSettings } from './hooks/useSettings'
-
-interface Tag {
-  id: number
-  label: string
-  instruction: string
-}
-
-interface Character {
-  id: number
-  name: string
-  description: string
-  tags: Tag[]
-  state?: {
-    location: string
-    clothes: string
-    mood: string
-    interaction_count: number
-    stats: {
-      energy: number
-      hunger: number
-      relationship: {
-        score: number
-      }
-    }
-  }
-}
 
 interface User {
   id: number
@@ -73,6 +48,7 @@ function App() {
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null)
   const [user, setUser] = useState<User | null>(null)
+  const [actionsMessages, setActionsMessages] = useState<Record<string, string>>({})
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type })
@@ -92,13 +68,16 @@ function App() {
     try {
       const data = await api.fetchCharacters()
       setCharacters(data)
-      if (data.length > 0 && !selectedCharId) {
-        setSelectedCharId(data[0].id)
-      }
+      // Functional update reads the latest selectedCharId without needing it
+      // in this callback's dependencies -- keeps fetchCharacters' identity
+      // stable so the mount effect below doesn't re-fire on every character
+      // switch (selectedCharId changing would otherwise recreate this
+      // callback and re-trigger the effect that depends on it).
+      setSelectedCharId((prev) => (prev === null && data.length > 0 ? data[0].id : prev))
     } catch {
       showToast('Failed to fetch characters.', 'error')
     }
-  }, [selectedCharId])
+  }, [])
 
   const fetchTags = useCallback(async () => {
     try {
@@ -106,6 +85,16 @@ function App() {
       setTags(data)
     } catch {
       showToast('Failed to fetch tags.', 'error')
+    }
+  }, [])
+
+  const fetchActions = useCallback(async () => {
+    try {
+      const data = await api.fetchActions()
+      setActionsMessages(data)
+    } catch {
+      // Non-critical: handleSendAction falls back to a generic placeholder.
+      console.error('Failed to fetch actions')
     }
   }, [])
 
@@ -117,13 +106,14 @@ function App() {
         fetchCharacters()
         fetchUser()
         fetchTags()
+        fetchActions()
       }
     }
     init()
     return () => {
       active = false
     }
-  }, [fetchCharacters, fetchUser, fetchTags])
+  }, [fetchCharacters, fetchUser, fetchTags, fetchActions])
 
   const fetchHistory = useCallback(async (charId: number) => {
     try {
@@ -316,17 +306,6 @@ function App() {
 
     const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
 
-    const actionsMessages: Record<string, string> = {
-      "hug": "*I step forward and wrap my arms around you in a warm, gentle hug.*",
-      "pat_head": "*I reach out and pat your head gently, smiling softly.*",
-      "tease": "*I look at you with a playful smirk, teasing you lightly.*",
-      "hold_hand": "*I slide my hand into yours, holding it gently.*",
-      "coffee": "*I hand you a hot, freshly brewed cup of black coffee.*",
-      "croissant": "*I offer you a warm, freshly baked chocolate croissant.*",
-      "book": "*I present you with a beautifully bound, vintage book.*",
-      "necklace": "*I hand you a small velvet box containing a delicate silver necklace.*"
-    }
-
     const actionMessage = actionsMessages[actionId] || `*Performs action: ${actionId}*`
     const userMsgId = generateMessageId()
     const assistantMsgId = userMsgId + 1
@@ -478,7 +457,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="flex h-screen w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased relative">
+      <div className="flex h-full w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased relative">
         {/* Mobile Backdrop Overlay */}
         {isSidebarOpen && (
           <div 
@@ -497,7 +476,7 @@ function App() {
           onClose={() => setIsSidebarOpen(false)}
         />
 
-        <main className="flex-1 h-screen overflow-hidden flex flex-col min-w-0">
+        <main className="flex-1 h-full overflow-hidden flex flex-col min-w-0">
           {/* Mobile Top Header */}
           <header className="md:hidden flex items-center justify-between px-md py-sm bg-[#0A0A0B]/90 backdrop-blur border-b border-white/5 z-30 shrink-0">
             <button 

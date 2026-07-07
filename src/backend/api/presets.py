@@ -42,42 +42,9 @@ class PresetCreateSchema(BaseModel):
 
 @router.get("/", response_model=List[PresetSchema])
 def get_presets(db: Session = Depends(get_db)):
-    presets = db.query(SamplerPreset).all()
-    if not presets:
-        # Create default presets
-        p1 = SamplerPreset(
-            name="Creative",
-            is_default=True,
-            temperature=1.05,
-            min_p=0.03,
-            top_k=0,
-            top_p=1.0,
-            repeat_penalty=1.0,
-            dry_multiplier=0.8,
-            dry_base=1.75,
-            dry_range=4096,
-            xtc_threshold=0.1,
-            xtc_probability=0.4,
-        )
-        p2 = SamplerPreset(
-            name="Focused",
-            is_default=False,
-            temperature=0.7,
-            min_p=0.05,
-            top_k=0,
-            top_p=1.0,
-            repeat_penalty=1.0,
-            dry_multiplier=0.6,
-            dry_base=1.75,
-            dry_range=2048,
-            xtc_threshold=0.0,
-            xtc_probability=0.0,
-        )
-        db.add(p1)
-        db.add(p2)
-        db.commit()
-        presets = db.query(SamplerPreset).all()
-    return presets
+    # Default presets are seeded once at app startup (see database._seed_default_presets),
+    # not lazily here -- this endpoint just reads what already exists.
+    return db.query(SamplerPreset).all()
 
 
 @router.post("/", response_model=PresetSchema)
@@ -103,7 +70,11 @@ def update_preset(
     if request.is_default:
         db.query(SamplerPreset).update({SamplerPreset.is_default: False})
 
-    for key, value in request.model_dump().items():
+    # exclude_unset: only overwrite fields the caller actually sent, so a
+    # partial PUT doesn't silently reset every omitted field back to
+    # PresetCreateSchema's defaults (frontend always sends the full object
+    # today, but this makes the endpoint correct regardless of caller).
+    for key, value in request.model_dump(exclude_unset=True).items():
         setattr(preset, key, value)
 
     db.commit()

@@ -9,7 +9,7 @@ Base = declarative_base()
 
 
 def init_db():
-    import src.backend.db.models
+    import src.backend.db.models  # noqa: F401 -- registers all models on Base.metadata before create_all()
 
     Base.metadata.create_all(bind=engine)
 
@@ -51,6 +51,12 @@ def init_db():
                         "ALTER TABLE agent_states ADD COLUMN clothes TEXT DEFAULT 'Casual'"
                     )
                 )
+            if "version" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE agent_states ADD COLUMN version INTEGER DEFAULT 1"
+                    )
+                )
 
         if "users" in insp.get_table_names():
             columns = [col["name"] for col in insp.get_columns("users")]
@@ -83,6 +89,57 @@ def init_db():
                         "ALTER TABLE characters ADD COLUMN persona_prompt TEXT DEFAULT ''"
                     )
                 )
+
+
+def seed_default_presets():
+    """Guarantee at least one SamplerPreset (with is_default=True) exists from
+    app startup -- not lazily on first GET /presets -- so llm.py's
+    Settings.TEMPERATURE-etc fallback (used only when no preset row exists at
+    all) stays a true last-resort, not something that depends on request
+    ordering. Called from main.py's lifespan (gated behind is_testing, same as
+    init_db/vacuum_db) rather than from init_db() itself, since it needs a
+    real SessionLocal() and must never run against a test's mocked engine."""
+    from src.backend.db.models import SamplerPreset
+
+    db = SessionLocal()
+    try:
+        if db.query(SamplerPreset).count() > 0:
+            return
+        db.add(
+            SamplerPreset(
+                name="Creative",
+                is_default=True,
+                temperature=1.05,
+                min_p=0.03,
+                top_k=0,
+                top_p=1.0,
+                repeat_penalty=1.0,
+                dry_multiplier=0.8,
+                dry_base=1.75,
+                dry_range=4096,
+                xtc_threshold=0.1,
+                xtc_probability=0.4,
+            )
+        )
+        db.add(
+            SamplerPreset(
+                name="Focused",
+                is_default=False,
+                temperature=0.7,
+                min_p=0.05,
+                top_k=0,
+                top_p=1.0,
+                repeat_penalty=1.0,
+                dry_multiplier=0.6,
+                dry_base=1.75,
+                dry_range=2048,
+                xtc_threshold=0.0,
+                xtc_probability=0.0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def vacuum_db():

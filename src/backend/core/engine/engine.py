@@ -264,42 +264,6 @@ def evolve_character(db: Session, character_id: int, reflection: dict):
         logger.error(f"Evolution failed: {e}")
 
 
-def get_behavioral_modifiers(stats: dict) -> str:
-    """Converts numerical stats into prompt descriptors."""
-    mods = []
-    energy = stats.get("energy", 100)
-    if energy < 20:
-        mods.append(
-            "EXHAUSTED: You are barely able to speak. Short sentences, slurred words."
-        )
-    elif energy <= 50:
-        mods.append("Tired, low initiative.")
-
-    hunger = stats.get("hunger", 0)
-    if hunger > 80:
-        mods.append(
-            "STARVING: You are irritable, distracted by thoughts of food, and very impatient."
-        )
-
-    relationship = stats.get("relationship", {})
-    rel_score = relationship.get("score", 50) if isinstance(relationship, dict) else 50
-
-    if rel_score <= 20:
-        mods.append("You are cold, distant, and formal. You don't trust the user.")
-    elif rel_score <= 50:
-        mods.append("You are polite but guarded. You keep things professional.")
-    elif rel_score <= 80:
-        mods.append(
-            "You are warm, open, and enjoy their company. You can be more yourself."
-        )
-    else:
-        mods.append(
-            "You are deeply affectionate, playful, and vulnerable. You trust them completely."
-        )
-
-    return "\n".join(mods)
-
-
 def should_be_sleeping(stats: Dict[str, Any], current_time: datetime) -> bool:
     """Returns True if energy < 20 OR it's between 11 PM and 6 AM."""
     energy = stats.get("energy", 100)

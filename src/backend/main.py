@@ -13,7 +13,7 @@ from src.backend.api import (
     lore,
     presets,
 )
-from src.backend.db.database import init_db
+from src.backend.db.database import init_db, seed_default_presets
 from src.backend.core.engine.llm import LlamaClient
 from src.backend.core.engine.runner import runner
 
@@ -24,24 +24,36 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DB
-    logger.info("Initializing database...")
-    init_db()
-
     import os
+    import sys
+
+    # Pytest's TestClient overrides the DB dependency with its own isolated
+    # engine (see conftest.py) while this app's own module-level `engine`
+    # still points at the real chatbot.db -- running init_db()/vacuum_db()
+    # here would touch production data on every test that spins up the app
+    # (violates the test-isolation rule). E2E runs are different: E2E_TESTING
+    # redirects DATABASE_URL to its own e2e_test.db (see core/config.py), so
+    # init_db() there is creating schema in that isolated file, not touching
+    # anything real -- skipping it would leave e2e_test.db with no tables.
+    is_pytest = "pytest" in sys.modules
+    is_e2e = os.environ.get("E2E_TESTING") == "1"
+    is_testing = is_pytest or is_e2e
 
     os.makedirs("static/avatars", exist_ok=True)
 
-    # Reclaim unused database space
-    from src.backend.db.database import vacuum_db
+    if not is_pytest:
+        # Startup: Initialize DB
+        logger.info("Initializing database...")
+        init_db()
+        seed_default_presets()
 
-    vacuum_db()
+        # Reclaim unused database space
+        from src.backend.db.database import vacuum_db
 
-    # Auto-start servers using LlamaServerRunner (unless running tests or E2E mode)
-    import sys
-    import os
+        vacuum_db()
 
-    is_testing = "pytest" in sys.modules or os.environ.get("E2E_TESTING") == "1"
+    # Auto-start the real llama-server (unless running tests or E2E mode --
+    # E2E_TESTING bypasses LLM server boot in the backend entirely).
     if not is_testing:
         logger.info("Auto-starting Llama servers from settings...")
         inf_ok = runner.start_inference()

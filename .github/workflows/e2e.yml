@@ -42,18 +42,47 @@ jobs:
     - name: Install frontend dependencies
       working-directory: ./src/frontend
       run: pnpm install
-      
+
+    - name: Build frontend
+      # Playwright's specs run against the Vite dev server (see baseURL in
+      # playwright.config.ts), so they never exercise the backend's real
+      # StaticFiles mount. Build it anyway and smoke-check it below so an
+      # empty/broken static/assets dir doesn't only get caught in production.
+      working-directory: ./src/frontend
+      run: pnpm run build
+
     - name: Install Playwright Browsers
       working-directory: ./src/frontend
       run: pnpm exec playwright install --with-deps
-      
+
     - name: Run Playwright tests
       working-directory: ./src/frontend
       # E2E_TESTING=1 is explicitly set here to bypass LLM server boot in the backend
       run: pnpm exec playwright test
       env:
         E2E_TESTING: "1"
-        
+
+    - name: Smoke-test the backend serving the built frontend
+      # Exercises the production deployment path (FastAPI StaticFiles serving
+      # static/assets + static/index.html) that the Playwright specs above
+      # don't touch at all.
+      run: |
+        python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8010 &
+        SERVER_PID=$!
+        for i in $(seq 1 30); do
+          if curl -sf http://127.0.0.1:8010/ -o /dev/null; then break; fi
+          sleep 1
+        done
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8010/)
+        kill $SERVER_PID
+        if [ "$STATUS" != "200" ]; then
+          echo "Backend did not serve the built frontend (status=$STATUS)"
+          exit 1
+        fi
+        echo "Backend served the built frontend OK (status=$STATUS)"
+      env:
+        E2E_TESTING: "1"
+
     - uses: actions/upload-artifact@v7
       if: ${{ !cancelled() }}
       with:

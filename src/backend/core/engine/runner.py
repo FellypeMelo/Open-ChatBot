@@ -67,7 +67,7 @@ CONFIG_FILE = Path("models_config.json")
 DEFAULT_CONFIG = {
     "inference": {
         "binary_path": "llama_bin/llama-server.exe",
-        "model_path": "",
+        "model_path": "models/model.gguf",
         "port": 8080,
         "threads": 4,
         "gpu_layers": -1,
@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     },
     "embedding": {
         "binary_path": "llama_bin/llama-server.exe",
-        "model_path": "",
+        "model_path": "models/model.gguf",
         "port": 8080,
         "threads": 4,
         "gpu_layers": -1,

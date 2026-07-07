@@ -432,6 +432,16 @@ describe('SettingsModal', () => {
       await waitFor(() => {
         expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
       })
+      // loadStatus() populates form fields from fetchRunnerStatus() *then* awaits
+      // fetchPresets() before clearing the loading flag that disables Save --
+      // wait for that second fetch too, or a slower CI run can click while the
+      // button is still disabled/mid-load, and saveRunnerConfig never fires.
+      await waitFor(() => {
+        expect(api.fetchPresets).toHaveBeenCalled()
+      })
+      await waitFor(() => {
+        expect(screen.getByText('Save & Restart AI')).not.toBeDisabled()
+      })
 
       fireEvent.click(screen.getByText('Save & Restart AI'))
 
@@ -483,6 +493,9 @@ describe('SettingsModal', () => {
       await waitFor(() => {
         expect(screen.getByText('Managed by Inference')).toBeInTheDocument()
       })
+      await waitFor(() => {
+        expect(screen.getByText('Save & Restart AI')).not.toBeDisabled()
+      })
 
       fireEvent.click(screen.getByText('Save & Restart AI'))
 
@@ -509,6 +522,9 @@ describe('SettingsModal', () => {
       await waitFor(() => {
         expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
       })
+      await waitFor(() => {
+        expect(screen.getByText('Save & Restart AI')).not.toBeDisabled()
+      })
 
       fireEvent.click(screen.getByText('Save & Restart AI'))
 
@@ -523,6 +539,9 @@ describe('SettingsModal', () => {
       render(<SettingsModal onClose={mockOnClose} />)
       await waitFor(() => {
         expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(screen.getByText('Save & Restart AI')).not.toBeDisabled()
       })
 
       fireEvent.click(screen.getByText('Save & Restart AI'))

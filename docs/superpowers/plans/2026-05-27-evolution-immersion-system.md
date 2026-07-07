@@ -24,7 +24,7 @@
 - [ ] **Step 1: Implement tier logic in evolution.py**
 ```python
 def get_tier_instructions(score: int) -> str:
-    if score >= 80: return "You are deeply intimate with the user."
+    if score >= 80: return "You are highly familiar and trusted by the user."
     if score >= 50: return "You are warm and friendly."
     return "You are professional and distant."
 ```

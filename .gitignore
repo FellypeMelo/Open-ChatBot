@@ -24,6 +24,9 @@ llama_bin/
 /models/
 *.gguf
 
+# Local model config (points to your machine's model; ship models_config.example.json instead)
+models_config.json
+
 # Tools
 .omg/
 **/.omg/

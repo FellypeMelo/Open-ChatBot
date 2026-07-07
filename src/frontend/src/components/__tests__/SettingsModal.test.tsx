@@ -422,8 +422,8 @@ describe('SettingsModal', () => {
       expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('No models in ./models directory. Add GGUF files.')).toBeInTheDocument()
-    expect(screen.getByText('llama-server.exe (Default)')).toBeInTheDocument()
+    expect(await screen.findByText('No models in ./models directory. Add GGUF files.')).toBeInTheDocument()
+    expect(await screen.findByText('llama-server.exe (Default)')).toBeInTheDocument()
   })
 
   describe('Save & Restart flow', () => {

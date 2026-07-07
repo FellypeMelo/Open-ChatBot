@@ -2,16 +2,16 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 from typing import List, Dict, Any, Optional
 
-from src.backend.core.engine.llm import LlamaClient
-from src.backend.core.orchestration.bridge import Brain
+from src.backend.core.deps import llama_client as llama, vector_store, brain
 from src.backend.core.orchestration.validator import validate_narrative_formatting
-from src.backend.core.memory.vector_store import VectorStore
 from src.backend.core.engine.engine import update_needs, evolve_character
 from src.backend.db.database import get_db, SessionLocal
 from src.backend.db.models import AgentState, Character, User, MessageNode
@@ -93,9 +93,6 @@ def parse_actions_to_state(ai_response: str, state: AgentState):
 
 
 router = APIRouter()
-llama = LlamaClient()
-vector_store = VectorStore(llm_client=llama)
-brain = Brain(vector_store=vector_store)
 
 
 async def run_consciousness_layer(
@@ -175,10 +172,26 @@ ACTIONS_CONFIG = {
 }
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
 class LLMConfig(BaseModel):
     base_url: Optional[str] = None
     model_name: Optional[str] = None
     preset_id: Optional[int] = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_must_be_loopback(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        host = urlparse(v).hostname
+        if host not in _LOOPBACK_HOSTS:
+            raise ValueError(
+                "base_url must point at a loopback address (127.0.0.1/localhost) "
+                "— the local llama-server, not an arbitrary remote host"
+            )
+        return v
 
 
 class ChatRequest(BaseModel):
@@ -187,6 +200,14 @@ class ChatRequest(BaseModel):
     parent_id: Optional[int] = None
     config: Optional[LLMConfig] = None
     action_id: Optional[str] = None
+
+
+@router.get("/chat/actions", response_model=Dict[str, str])
+async def list_actions():
+    """The message text for each quick-action button, single-sourced from
+    ACTIONS_CONFIG so the frontend never has to keep its own copy in sync
+    (stat deltas stay server-side/internal -- the client only needs the text)."""
+    return {action_id: cfg["message"] for action_id, cfg in ACTIONS_CONFIG.items()}
 
 
 class MessageEditRequest(BaseModel):
@@ -198,6 +219,187 @@ class ChatResponse(BaseModel):
     request_id: str
     stats: Dict[str, Any] = {}
     latency: Dict[str, float] = {}
+
+
+class ChatTurnContext:
+    """Everything /chat and /chat/stream need after setup, so both routes can
+    share one code path instead of re-implementing it (see _prepare_chat_turn)."""
+
+    def __init__(
+        self,
+        user: User,
+        character: Character,
+        state: AgentState,
+        prompt: str,
+        config: "LLMConfig",
+        preset_dict: Optional[Dict[str, Any]],
+        effective_parent_id: Optional[int],
+        user_message_content: Optional[str],
+        force_reflect: bool,
+    ):
+        self.user = user
+        self.character = character
+        self.state = state
+        self.prompt = prompt
+        self.config = config
+        self.preset_dict = preset_dict
+        self.effective_parent_id = effective_parent_id
+        self.user_message_content = user_message_content
+        self.force_reflect = force_reflect
+
+
+def _apply_action_stats(
+    stats: Optional[Dict[str, Any]], stat_mod: Dict[str, Any]
+) -> Dict[str, Any]:
+    stats = dict(stats) if stats else {}
+    stats["energy"] = max(
+        0, min(100, stats.get("energy", 100) + stat_mod.get("energy", 0))
+    )
+    stats["hunger"] = max(
+        0, min(100, stats.get("hunger", 0) + stat_mod.get("hunger", 0))
+    )
+    stats["happiness"] = max(
+        0, min(100, stats.get("happiness", 100) + stat_mod.get("happiness", 0))
+    )
+    stats["social"] = max(
+        0, min(100, stats.get("social", 100) + stat_mod.get("social", 0))
+    )
+
+    relationship = stats.get("relationship", {})
+    if not isinstance(relationship, dict):
+        relationship = {"score": 50}
+    old_score = relationship.get("score", 50)
+    relationship["score"] = max(
+        0, min(100, old_score + stat_mod.get("relationship_score", 0))
+    )
+    stats["relationship"] = relationship
+    return stats
+
+
+async def _prepare_chat_turn(
+    request: ChatRequest, db: Session, request_id: str
+) -> ChatTurnContext:
+    """Shared setup for /chat and /chat/stream: resolve user/character/state,
+    apply action stat deltas, persist the user message, walk history, and
+    build the prompt. Raises on failure -- callers decide how to surface it."""
+    user = User.get_or_create_active(db)
+
+    character = db.query(Character).filter(
+        Character.id == request.character_id
+    ).first() or Character.get_default(db)
+    state = character.state or AgentState(character_id=character.id)
+    if not state.id:
+        db.add(state)
+        db.flush()
+
+    state.stats = update_needs(state.stats, datetime.now(timezone.utc))
+    state.interaction_count += 1
+    force_reflect = state.interaction_count % 20 == 0
+    # Commit the decay/counter bump now, unconditionally -- a message-less
+    # "regenerate" call never reaches the request.message commit below, and
+    # this session gets closed (without a commit) once the request ends.
+    db.commit()
+
+    effective_parent_id = (
+        request.parent_id if request.parent_id is not None else state.current_message_id
+    )
+    user_message_content = request.message
+
+    if request.action_id and request.action_id in ACTIONS_CONFIG:
+        action_cfg = ACTIONS_CONFIG[request.action_id]
+        user_message_content = action_cfg["message"]
+        request.message = user_message_content
+        state.stats = _apply_action_stats(state.stats, action_cfg.get("stats", {}))
+
+    if not user_message_content and effective_parent_id:
+        last_msg = (
+            db.query(MessageNode).filter(MessageNode.id == effective_parent_id).first()
+        )
+        if last_msg and last_msg.role == "user":
+            user_message_content = last_msg.content
+
+    if request.message:
+        user_msg = MessageNode(
+            character_id=character.id,
+            user_id=user.id,
+            role="user",
+            content=request.message,
+            parent_id=effective_parent_id,
+            request_id=request_id,
+        )
+        db.add(user_msg)
+        db.flush()
+        effective_parent_id = user_msg.id
+        state.current_message_id = user_msg.id
+        db.commit()
+
+    history = []
+    curr_id = effective_parent_id
+    while curr_id and len(history) < 50:
+        m = (
+            db.query(MessageNode)
+            .filter(MessageNode.id == curr_id, MessageNode.is_active == True)
+            .first()
+        )
+        if not m:
+            break
+        history.append({"role": m.role, "content": m.content})
+        curr_id = m.parent_id
+    history.reverse()
+
+    prompt = await brain.build_prompt(
+        user_message_content or "",
+        character,
+        {
+            "location": state.location,
+            "mood": state.mood,
+            "stats": state.stats,
+            "active_summary": getattr(state, "active_summary", ""),
+        },
+        user=user,
+        history=history[:-1] if request.message else history,
+        db=db,
+    )
+
+    config = request.config or LLMConfig()
+
+    from src.backend.db.models import SamplerPreset
+
+    if config.preset_id:
+        preset_obj = (
+            db.query(SamplerPreset).filter(SamplerPreset.id == config.preset_id).first()
+        )
+    else:
+        preset_obj = (
+            db.query(SamplerPreset).filter(SamplerPreset.is_default == True).first()
+        )
+
+    preset_dict = None
+    if preset_obj:
+        preset_dict = {
+            "temperature": preset_obj.temperature,
+            "min_p": preset_obj.min_p,
+            "top_k": preset_obj.top_k,
+            "top_p": preset_obj.top_p,
+            "repeat_penalty": preset_obj.repeat_penalty,
+            "dry_multiplier": preset_obj.dry_multiplier,
+            "dry_base": preset_obj.dry_base,
+            "dry_range": preset_obj.dry_range,
+            "xtc_threshold": preset_obj.xtc_threshold,
+            "xtc_probability": preset_obj.xtc_probability,
+        }
+
+    return ChatTurnContext(
+        user=user,
+        character=character,
+        state=state,
+        prompt=prompt,
+        config=config,
+        preset_dict=preset_dict,
+        effective_parent_id=effective_parent_id,
+        user_message_content=user_message_content,
+        force_reflect=force_reflect,
+    )
 
 
 @router.get("/history/{character_id}", response_model=List[Dict[str, Any]])
@@ -268,147 +470,13 @@ async def chat(
     request_id = str(uuid.uuid4())
     try:
         logger.info(f"[{request_id}] Chat Request: character_id={request.character_id}")
-        user = db.query(User).filter(User.is_active == True).first() or User(
-            name="User", gender="Unknown"
-        )
-        if not user.id:
-            db.add(user)
-            db.flush()
-
-        character = db.query(Character).filter(
-            Character.id == request.character_id
-        ).first() or Character.get_default(db)
-        state = character.state or AgentState(character_id=character.id)
-        if not state.id:
-            db.add(state)
-            db.flush()
-
-        state.stats = update_needs(state.stats, datetime.now(timezone.utc))
-        state.interaction_count += 1
-        force_reflect = state.interaction_count % 20 == 0
-
-        effective_parent_id = (
-            request.parent_id
-            if request.parent_id is not None
-            else state.current_message_id
-        )
-        user_message_content = request.message
-
-        if request.action_id and request.action_id in ACTIONS_CONFIG:
-            action_cfg = ACTIONS_CONFIG[request.action_id]
-            user_message_content = action_cfg["message"]
-            request.message = user_message_content
-
-            stat_mod = action_cfg.get("stats", {})
-            stats = dict(state.stats) if state.stats else {}
-            stats["energy"] = max(
-                0, min(100, stats.get("energy", 100) + stat_mod.get("energy", 0))
-            )
-            stats["hunger"] = max(
-                0, min(100, stats.get("hunger", 0) + stat_mod.get("hunger", 0))
-            )
-            stats["happiness"] = max(
-                0, min(100, stats.get("happiness", 100) + stat_mod.get("happiness", 0))
-            )
-            stats["social"] = max(
-                0, min(100, stats.get("social", 100) + stat_mod.get("social", 0))
-            )
-
-            relationship = stats.get("relationship", {})
-            if not isinstance(relationship, dict):
-                relationship = {"score": 50}
-            old_score = relationship.get("score", 50)
-            relationship["score"] = max(
-                0, min(100, old_score + stat_mod.get("relationship_score", 0))
-            )
-            stats["relationship"] = relationship
-
-            state.stats = stats
-
-        if not user_message_content and effective_parent_id:
-            last_msg = (
-                db.query(MessageNode)
-                .filter(MessageNode.id == effective_parent_id)
-                .first()
-            )
-            if last_msg and last_msg.role == "user":
-                user_message_content = last_msg.content
-
-        if request.message:
-            user_msg = MessageNode(
-                character_id=character.id,
-                user_id=user.id,
-                role="user",
-                content=request.message,
-                parent_id=effective_parent_id,
-                request_id=request_id,
-            )
-            db.add(user_msg)
-            db.flush()
-            effective_parent_id = user_msg.id
-            state.current_message_id = user_msg.id
-
-        history = []
-        curr_id = effective_parent_id
-        while curr_id and len(history) < 50:
-            m = (
-                db.query(MessageNode)
-                .filter(MessageNode.id == curr_id, MessageNode.is_active == True)
-                .first()
-            )
-            if not m:
-                break
-            history.append({"role": m.role, "content": m.content})
-            curr_id = m.parent_id
-        history.reverse()
-
-        prompt = await brain.build_prompt(
-            user_message_content or "",
-            character,
-            {
-                "location": state.location,
-                "mood": state.mood,
-                "stats": state.stats,
-                "active_summary": getattr(state, "active_summary", ""),
-            },
-            user=user,
-            history=history[:-1] if request.message else history,
-            db=db,
-        )
-
-        # Extract config for dynamic LLM routing
-        config = request.config or LLMConfig()
-
-        from src.backend.db.models import SamplerPreset
-
-        if config.preset_id:
-            preset_obj = (
-                db.query(SamplerPreset)
-                .filter(SamplerPreset.id == config.preset_id)
-                .first()
-            )
-        else:
-            preset_obj = (
-                db.query(SamplerPreset).filter(SamplerPreset.is_default == True).first()
-            )
-
-        preset_dict = None
-        if preset_obj:
-            preset_dict = {
-                "temperature": preset_obj.temperature,
-                "min_p": preset_obj.min_p,
-                "top_k": preset_obj.top_k,
-                "top_p": preset_obj.top_p,
-                "repeat_penalty": preset_obj.repeat_penalty,
-                "dry_multiplier": preset_obj.dry_multiplier,
-                "dry_base": preset_obj.dry_base,
-                "dry_range": preset_obj.dry_range,
-                "xtc_threshold": preset_obj.xtc_threshold,
-                "xtc_probability": preset_obj.xtc_probability,
-            }
+        ctx = await _prepare_chat_turn(request, db, request_id)
 
         result = await llama.complete(
-            prompt, url=config.base_url, model=config.model_name, preset=preset_dict
+            ctx.prompt,
+            url=ctx.config.base_url,
+            model=ctx.config.model_name,
+            preset=ctx.preset_dict,
         )
         reply = result.get("content", "...").strip()
 
@@ -422,33 +490,33 @@ async def chat(
             # For now, we log and proceed to maintain responsiveness,
             # but could append a correction instruction to the next prompt.
 
-        parse_actions_to_state(reply, state)
+        parse_actions_to_state(reply, ctx.state)
 
         variant_count = (
             db.query(MessageNode)
-            .filter(MessageNode.parent_id == effective_parent_id)
+            .filter(MessageNode.parent_id == ctx.effective_parent_id)
             .count()
         )
         ai_msg = MessageNode(
-            character_id=character.id,
-            user_id=user.id,
+            character_id=ctx.character.id,
+            user_id=ctx.user.id,
             role="assistant",
             content=reply,
-            parent_id=effective_parent_id,
+            parent_id=ctx.effective_parent_id,
             variant_index=variant_count,
             request_id=request_id,
         )
         db.add(ai_msg)
         db.flush()
-        state.current_message_id = ai_msg.id
+        ctx.state.current_message_id = ai_msg.id
         db.commit()
 
         background_tasks.add_task(
             run_consciousness_layer,
-            character.id,
-            user_message_content or "",
+            ctx.character.id,
+            ctx.user_message_content or "",
             reply,
-            force_reflect=force_reflect,
+            force_reflect=ctx.force_reflect,
         )
 
         latency = (
@@ -458,7 +526,16 @@ async def chat(
             f"[{request_id}] Chat Success: duration={latency.get('total', 0):.3f}s"
         )
         return ChatResponse(
-            reply=reply, request_id=request_id, stats=state.stats, latency=latency
+            reply=reply, request_id=request_id, stats=ctx.state.stats, latency=latency
+        )
+    except StaleDataError:
+        db.rollback()
+        logger.warning(
+            f"[{request_id}] Chat Conflict: character state changed concurrently"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Character state changed concurrently -- please retry.",
         )
     except Exception as e:
         db.rollback()
@@ -475,145 +552,41 @@ async def chat_stream(
 ):
     request_id = str(uuid.uuid4())
     logger.info(f"[{request_id}] Stream Request: character_id={request.character_id}")
-    user = db.query(User).filter(User.is_active == True).first() or User(
-        name="User", gender="Unknown"
-    )
-    if not user.id:
-        db.add(user)
-        db.flush()
 
-    character = db.query(Character).filter(
-        Character.id == request.character_id
-    ).first() or Character.get_default(db)
-    state = character.state or AgentState(character_id=character.id)
-    if not state.id:
-        db.add(state)
-        db.flush()
-
-    state.stats = update_needs(state.stats, datetime.now(timezone.utc))
-    state.interaction_count += 1
-    force_reflect = state.interaction_count % 20 == 0
-
-    effective_parent_id = (
-        request.parent_id if request.parent_id is not None else state.current_message_id
-    )
-    user_message_content = request.message
-
-    if request.action_id and request.action_id in ACTIONS_CONFIG:
-        action_cfg = ACTIONS_CONFIG[request.action_id]
-        user_message_content = action_cfg["message"]
-        request.message = user_message_content
-
-        stat_mod = action_cfg.get("stats", {})
-        stats = dict(state.stats) if state.stats else {}
-        stats["energy"] = max(
-            0, min(100, stats.get("energy", 100) + stat_mod.get("energy", 0))
+    try:
+        ctx = await _prepare_chat_turn(request, db, request_id)
+    except StaleDataError:
+        db.rollback()
+        logger.warning(
+            f"[{request_id}] Stream Conflict: character state changed concurrently"
         )
-        stats["hunger"] = max(
-            0, min(100, stats.get("hunger", 0) + stat_mod.get("hunger", 0))
+        error_msg = "Character state changed concurrently -- please retry."
+
+        async def conflict_stream():
+            yield f"data: {json.dumps({'error': error_msg, 'request_id': request_id})}\n\n"
+
+        return StreamingResponse(
+            conflict_stream(), media_type="text/event-stream", status_code=409
         )
-        stats["happiness"] = max(
-            0, min(100, stats.get("happiness", 100) + stat_mod.get("happiness", 0))
-        )
-        stats["social"] = max(
-            0, min(100, stats.get("social", 100) + stat_mod.get("social", 0))
-        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[{request_id}] Stream setup error: {e}")
+        logger.exception(e)
+        error_msg = str(e)
 
-        relationship = stats.get("relationship", {})
-        if not isinstance(relationship, dict):
-            relationship = {"score": 50}
-        old_score = relationship.get("score", 50)
-        relationship["score"] = max(
-            0, min(100, old_score + stat_mod.get("relationship_score", 0))
-        )
-        stats["relationship"] = relationship
+        async def error_stream():
+            yield f"data: {json.dumps({'error': error_msg, 'request_id': request_id})}\n\n"
 
-        state.stats = stats
-
-    if not user_message_content and effective_parent_id:
-        last_msg = (
-            db.query(MessageNode).filter(MessageNode.id == effective_parent_id).first()
-        )
-        if last_msg and last_msg.role == "user":
-            user_message_content = last_msg.content
-
-    if request.message:
-        user_msg = MessageNode(
-            character_id=character.id,
-            user_id=user.id,
-            role="user",
-            content=request.message,
-            parent_id=effective_parent_id,
-            request_id=request_id,
-        )
-        db.add(user_msg)
-        db.flush()
-        effective_parent_id = user_msg.id
-        state.current_message_id = user_msg.id
-        db.commit()
-
-    history = []
-    curr_id = effective_parent_id
-    while curr_id and len(history) < 50:
-        m = (
-            db.query(MessageNode)
-            .filter(MessageNode.id == curr_id, MessageNode.is_active == True)
-            .first()
-        )
-        if not m:
-            break
-        history.append({"role": m.role, "content": m.content})
-        curr_id = m.parent_id
-    history.reverse()
-
-    prompt = await brain.build_prompt(
-        user_message_content or "",
-        character,
-        {
-            "location": state.location,
-            "mood": state.mood,
-            "stats": state.stats,
-            "active_summary": getattr(state, "active_summary", ""),
-        },
-        user=user,
-        history=history[:-1] if request.message else history,
-        db=db,
-    )
-
-    # Extract config for dynamic LLM routing
-    config = request.config or LLMConfig()
-
-    from src.backend.db.models import SamplerPreset
-
-    if config.preset_id:
-        preset_obj = (
-            db.query(SamplerPreset).filter(SamplerPreset.id == config.preset_id).first()
-        )
-    else:
-        preset_obj = (
-            db.query(SamplerPreset).filter(SamplerPreset.is_default == True).first()
-        )
-
-    preset_dict = None
-    if preset_obj:
-        preset_dict = {
-            "temperature": preset_obj.temperature,
-            "min_p": preset_obj.min_p,
-            "top_k": preset_obj.top_k,
-            "top_p": preset_obj.top_p,
-            "repeat_penalty": preset_obj.repeat_penalty,
-            "dry_multiplier": preset_obj.dry_multiplier,
-            "dry_base": preset_obj.dry_base,
-            "dry_range": preset_obj.dry_range,
-            "xtc_threshold": preset_obj.xtc_threshold,
-            "xtc_probability": preset_obj.xtc_probability,
-        }
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
 
     async def generate():
         full_reply = ""
         try:
             async for token in llama.complete_stream(
-                prompt, url=config.base_url, model=config.model_name, preset=preset_dict
+                ctx.prompt,
+                url=ctx.config.base_url,
+                model=ctx.config.model_name,
+                preset=ctx.preset_dict,
             ):
                 full_reply += token
                 yield f"data: {json.dumps({'token': token})}\n\n"
@@ -623,20 +596,20 @@ async def chat_stream(
                 try:
                     inner_state = (
                         inner_db.query(AgentState)
-                        .filter(AgentState.id == state.id)
+                        .filter(AgentState.id == ctx.state.id)
                         .first()
                     )
                     variant_count = (
                         inner_db.query(MessageNode)
-                        .filter(MessageNode.parent_id == effective_parent_id)
+                        .filter(MessageNode.parent_id == ctx.effective_parent_id)
                         .count()
                     )
                     ai_msg = MessageNode(
-                        character_id=character.id,
-                        user_id=user.id,
+                        character_id=ctx.character.id,
+                        user_id=ctx.user.id,
                         role="assistant",
                         content=full_reply,
-                        parent_id=effective_parent_id,
+                        parent_id=ctx.effective_parent_id,
                         variant_index=variant_count,
                         request_id=request_id,
                     )
@@ -656,10 +629,10 @@ async def chat_stream(
 
                     background_tasks.add_task(
                         run_consciousness_layer,
-                        character.id,
-                        user_message_content or "",
+                        ctx.character.id,
+                        ctx.user_message_content or "",
                         full_reply,
-                        force_reflect=force_reflect,
+                        force_reflect=ctx.force_reflect,
                     )
                     # Return full state for reactive HUD
                     updated_state = {
@@ -682,30 +655,6 @@ async def chat_stream(
             yield f"data: {json.dumps({'error': str(e), 'request_id': request_id})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-@router.get("/characters/{character_id}/journal")
-async def get_journal_entries(character_id: int, db: Session = Depends(get_db)):
-    from src.backend.db.models import JournalEntry
-
-    entries = (
-        db.query(JournalEntry)
-        .filter(JournalEntry.character_id == character_id)
-        .order_by(JournalEntry.timestamp.desc())
-        .all()
-    )
-    return [
-        {
-            "id": e.id,
-            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-            "content": e.content,
-            "summary": e.summary,
-            "mood_at_time": e.mood_at_time,
-            "relationship_score": e.relationship_score,
-            "energy_level": e.energy_level,
-        }
-        for e in entries
-    ]
 
 
 def deactivate_subtree(node_id: int, db: Session):

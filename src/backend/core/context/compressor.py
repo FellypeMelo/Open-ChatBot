@@ -54,29 +54,3 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
         )
 
     return " | ".join(parts)
-
-
-async def compress_character_backstory(raw_text: str, llm_client: Any) -> str:
-    """
-    Takes a verbose character definition (up to 4000 tokens) and uses the LLM to compress it
-    into a dense, highly optimized format (target ~300 tokens) while retaining core traits.
-    """
-    if not raw_text or len(raw_text.strip()) < 300:
-        return raw_text  # Already short enough
-
-    prompt = (
-        "You are an expert prompt engineer. Your task is to compress the following character backstory/definition "
-        "into an ultra-dense, minimal-token format without losing ANY critical personality traits, facts, or mannerisms. "
-        "Remove all filler words, narrative fluff, and redundant descriptions. Use bullet points or key-value pairs if necessary. "
-        "The output MUST be under 150 words.\n\n"
-        f"RAW DEFINITION:\n{raw_text}\n\n"
-        "COMPRESSED DEFINITION:"
-    )
-
-    result = await llm_client.complete(prompt, max_tokens=300, temperature=0.3)
-    compressed = result.get("content", "").strip()
-
-    if not compressed:
-        return raw_text[:1000]  # Fallback truncation if LLM fails
-
-    return compressed

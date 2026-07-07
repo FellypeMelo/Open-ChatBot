@@ -22,6 +22,15 @@ export const fetchHistory = async (charId: number) => {
   return response.json()
 }
 
+// Single-sourced from the backend's ACTIONS_CONFIG (src/backend/api/chat.py)
+// so the optimistic-UI placeholder text never drifts from what the server
+// actually sends.
+export const fetchActions = async (): Promise<Record<string, string>> => {
+  const response = await fetch('/chat/actions')
+  if (!response.ok) throw new Error('Failed to fetch actions')
+  return response.json()
+}
+
 export const updateUser = async (name: string, gender: string, persona_description?: string, appearance?: string) => {
   const response = await fetch('/users/me', {
     method: 'POST',
@@ -112,15 +121,32 @@ export interface Tag {
   instruction: string;
 }
 
+export interface CharacterStats {
+  energy: number;
+  hunger: number;
+  happiness?: number;
+  social?: number;
+  is_sleeping?: boolean;
+  relationship: {
+    score: number;
+  };
+}
+
+export interface CharacterState {
+  location: string;
+  mood: string;
+  clothes: string;
+  interaction_count: number;
+  stats: CharacterStats;
+}
+
 export interface Character {
   id: number;
   name: string;
   description: string;
   is_active: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tags: any[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  state?: any;
+  tags: Tag[];
+  state?: CharacterState;
   avatar_url?: string;
 }
 

@@ -56,10 +56,10 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({
 
   return (
     <div className="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-sm z-50 flex items-center justify-center p-sm md:p-md">
-      <div className="w-full max-w-[620px] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50 animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-[620px] rounded-[1.5rem] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50 animate-in zoom-in-95 duration-200">
         <div className="flex justify-between items-start w-full">
           <div className="flex flex-col gap-xs">
-            <h2 className="font-headline-lg text-headline-lg text-primary tracking-tight">
+            <h2 className="font-heading-lg text-heading-lg text-primary tracking-tight">
               {isEditing ? 'Edit Character' : 'Create Character'}
             </h2>
             <p className="font-body-md text-body-md text-on-surface-variant">Define the core attributes and narrative stance.</p>
@@ -81,7 +81,7 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30"
+                className="input-premium w-full font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30"
                 id="char_name"
                 placeholder="e.g. Architect, Elara, Kaelen"
                 type="text"
@@ -94,7 +94,7 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none"
+                className="input-premium w-full font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none"
                 id="char_description"
                 placeholder="Describe the character's personality, backstory, and behavior..."
                 rows={4}
@@ -117,7 +117,7 @@ const CharacterCreator: React.FC<CharacterCreatorProps> = ({
                       className={`px-3 py-1.5 rounded-sm border text-label-sm transition-colors ${
                         selectedTagIds.includes(tag.id)
                           ? 'bg-primary text-surface-container-lowest border-primary'
-                          : 'bg-transparent text-on-surface-variant border-outline-variant hover:border-primary hover:text-primary'
+                          : 'bg-transparent text-on-surface-variant border-outline hover:border-primary hover:text-primary'
                       }`}
                     >
                       {tag.label}

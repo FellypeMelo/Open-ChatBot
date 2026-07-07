@@ -13,7 +13,7 @@ from src.backend.api import (
     lore,
     presets,
 )
-from src.backend.db.database import init_db
+from src.backend.db.database import init_db, seed_default_presets
 from src.backend.core.engine.llm import LlamaClient
 from src.backend.core.engine.runner import runner
 
@@ -24,24 +24,29 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize DB
-    logger.info("Initializing database...")
-    init_db()
-
     import os
+    import sys
+
+    # Tests (pytest's TestClient) and E2E runs supply their own isolated DB via
+    # a dependency override -- init_db()/vacuum_db() operate on the real
+    # chatbot.db engine, so running them here too would touch production data
+    # on every test that spins up the app (violates the test-isolation rule).
+    is_testing = "pytest" in sys.modules or os.environ.get("E2E_TESTING") == "1"
 
     os.makedirs("static/avatars", exist_ok=True)
 
-    # Reclaim unused database space
-    from src.backend.db.database import vacuum_db
+    if not is_testing:
+        # Startup: Initialize DB
+        logger.info("Initializing database...")
+        init_db()
+        seed_default_presets()
 
-    vacuum_db()
+        # Reclaim unused database space
+        from src.backend.db.database import vacuum_db
+
+        vacuum_db()
 
     # Auto-start servers using LlamaServerRunner (unless running tests or E2E mode)
-    import sys
-    import os
-
-    is_testing = "pytest" in sys.modules or os.environ.get("E2E_TESTING") == "1"
     if not is_testing:
         logger.info("Auto-starting Llama servers from settings...")
         inf_ok = runner.start_inference()

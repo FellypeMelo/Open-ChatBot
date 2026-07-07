@@ -1,12 +1,21 @@
+import asyncio
 import logging
+import re
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Dict, Any, List
+from pydantic import BaseModel, field_validator
 from src.backend.core.engine.runner import runner
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Reject shell/control metacharacters in additional_args. args.split() already
+# passes tokens straight into Popen's argv (never through a shell), so this
+# isn't closing a shell-injection hole -- it's a defensive floor in case that
+# ever changes, and it catches obviously-malformed input either way.
+_UNSAFE_ARG_CHARS = re.compile(r"[;&|`$<>\n\r]")
 
 
 class ServerConfigModel(BaseModel):
@@ -17,6 +26,40 @@ class ServerConfigModel(BaseModel):
     gpu_layers: int
     context_size: int = 4096
     additional_args: str
+
+    @field_validator("binary_path")
+    @classmethod
+    def _binary_must_be_known(cls, v: str) -> str:
+        name = Path(v).name
+        available = runner.get_available_binaries()
+        if name not in available:
+            raise ValueError(
+                f"binary_path must be one of the binaries in llama_bin/: {available}"
+            )
+        return f"llama_bin/{name}"
+
+    @field_validator("model_path")
+    @classmethod
+    def _model_must_be_known_or_hf(cls, v: str) -> str:
+        if not v:
+            return v
+        p = Path(v)
+        is_hf = "/" in v and not v.startswith("models/") and not p.is_absolute()
+        if is_hf:
+            return v
+        name = p.name
+        if name not in runner.get_available_models():
+            raise ValueError(
+                f"model_path must be a file in models/, or an org/repo HuggingFace id: {v}"
+            )
+        return f"models/{name}"
+
+    @field_validator("additional_args")
+    @classmethod
+    def _no_shell_metacharacters(cls, v: str) -> str:
+        if _UNSAFE_ARG_CHARS.search(v):
+            raise ValueError("additional_args contains disallowed characters")
+        return v
 
 
 class LlamaConfigModel(BaseModel):
@@ -47,7 +90,7 @@ async def save_runner_config(config: LlamaConfigModel):
 
 @router.post("/start/inference")
 async def start_inference_server():
-    success = runner.start_inference()
+    success = await asyncio.to_thread(runner.start_inference)
     if success:
         return {"status": "success", "message": "Inference server started."}
     else:
@@ -59,7 +102,7 @@ async def start_inference_server():
 @router.post("/stop/inference")
 async def stop_inference_server():
     try:
-        runner.stop_inference()
+        await asyncio.to_thread(runner.stop_inference)
         return {"status": "success", "message": "Inference server stopped."}
     except Exception as e:
         logger.error(f"Failed to stop inference server: {e}")
@@ -68,7 +111,7 @@ async def stop_inference_server():
 
 @router.post("/start/embedding")
 async def start_embedding_server():
-    success = runner.start_embedding()
+    success = await asyncio.to_thread(runner.start_embedding)
     if success:
         return {"status": "success", "message": "Embedding server started."}
     else:
@@ -80,7 +123,7 @@ async def start_embedding_server():
 @router.post("/stop/embedding")
 async def stop_embedding_server():
     try:
-        runner.stop_embedding()
+        await asyncio.to_thread(runner.stop_embedding)
         return {"status": "success", "message": "Embedding server stopped."}
     except Exception as e:
         logger.error(f"Failed to stop embedding server: {e}")
@@ -90,8 +133,8 @@ async def stop_embedding_server():
 @router.post("/restart-all")
 async def restart_all_servers():
     try:
-        inf_success = runner.start_inference()
-        emb_success = runner.start_embedding()
+        inf_success = await asyncio.to_thread(runner.start_inference)
+        emb_success = await asyncio.to_thread(runner.start_embedding)
         return {
             "status": "success",
             "message": "Servers restarted.",

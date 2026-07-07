@@ -60,7 +60,7 @@ done
 echo "Starting Open-ChatBot Backend..."
 if [ "$DEBUG_MODE" = true ]; then
     echo "DEBUG MODE ENABLED: Full detailed logs and latency tracking active."
-    DEBUG_LATENCY=True python -m uvicorn src.backend.main:app --host 0.0.0.0 --port 8000 --log-level debug
+    DEBUG_LATENCY=True python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000 --log-level debug
 else
-    python -m uvicorn src.backend.main:app --host 0.0.0.0 --port 8000
+    python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000
 fi

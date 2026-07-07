@@ -1,3 +1,4 @@
+import copy
 import os
 import subprocess
 import logging
@@ -154,11 +155,11 @@ class LlamaServerRunner:
                 logger.warning(
                     f"Could not load models_config.json, using defaults: {e}"
                 )
-                self.config = DEFAULT_CONFIG.copy()
+                self.config = copy.deepcopy(DEFAULT_CONFIG)
                 updated = True
             except Exception:
                 logger.exception("Unexpected error loading models_config.json")
-                self.config = DEFAULT_CONFIG.copy()
+                self.config = copy.deepcopy(DEFAULT_CONFIG)
                 updated = True
         else:
             self.config = DEFAULT_CONFIG.copy()
@@ -368,6 +369,7 @@ class LlamaServerRunner:
                 f"[start_inference] Key env vars: ONEAPI_ROOT={spawn_env.get('ONEAPI_ROOT', '<MISSING>')}, "
                 f"SETVARS_COMPLETED={spawn_env.get('SETVARS_COMPLETED', '<MISSING>')}"
             )
+            logger.debug(f"[start_inference] Full SYCL/oneAPI env: {sycl_vars}")
 
             self.inference_proc = subprocess.Popen(
                 args,
@@ -411,9 +413,11 @@ class LlamaServerRunner:
             return True
         except OSError as e:
             logger.exception(f"[start_inference] OSError spawning process: {e}")
+            self._close_log_file("inf_log_file")
             return False
         except Exception as e:
             logger.exception(f"[start_inference] Unexpected error: {e}")
+            self._close_log_file("inf_log_file")
             return False
 
     def start_embedding(self) -> bool:
@@ -555,32 +559,48 @@ class LlamaServerRunner:
             return True
         except OSError as e:
             logger.exception(f"[start_embedding] OSError spawning process: {e}")
+            self._close_log_file("emb_log_file")
             return False
         except Exception as e:
             logger.exception(f"[start_embedding] Unexpected error: {e}")
+            self._close_log_file("emb_log_file")
             return False
+
+    def _close_log_file(self, attr_name: str):
+        f = getattr(self, attr_name, None)
+        if f:
+            try:
+                f.close()
+            except Exception:
+                pass
+        setattr(self, attr_name, None)
+
+    @staticmethod
+    def _terminate_and_reap(proc: subprocess.Popen, label: str):
+        """terminate() -> wait(); on timeout kill() -> wait() again so the
+        child is always reaped and the port/GPU memory it held is actually
+        freed before the caller starts a replacement process."""
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            return
+        try:
+            proc.kill()
+            proc.wait(timeout=3)
+        except Exception:
+            logger.warning(f"{label}: process did not reap after kill()")
 
     def stop_inference(self):
         if self.inference_proc is not None:
             logger.info("Stopping Llama Inference Server...")
-            try:
-                self.inference_proc.terminate()
-                self.inference_proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                try:
-                    self.inference_proc.kill()
-                except Exception:
-                    pass
-            except Exception:
-                pass
+            self._terminate_and_reap(self.inference_proc, "stop_inference")
             self.inference_proc = None
 
-        if hasattr(self, "inf_log_file") and self.inf_log_file:
-            try:
-                self.inf_log_file.close()
-            except Exception:
-                pass
-            self.inf_log_file = None
+        self._close_log_file("inf_log_file")
 
     def stop_embedding(self):
         # Consolidation check: if sharing port, stop_embedding is a noop
@@ -590,24 +610,10 @@ class LlamaServerRunner:
 
         if self.embedding_proc is not None:
             logger.info("Stopping Llama Embedding Server...")
-            try:
-                self.embedding_proc.terminate()
-                self.embedding_proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                try:
-                    self.embedding_proc.kill()
-                except Exception:
-                    pass
-            except Exception:
-                pass
+            self._terminate_and_reap(self.embedding_proc, "stop_embedding")
             self.embedding_proc = None
 
-        if hasattr(self, "emb_log_file") and self.emb_log_file:
-            try:
-                self.emb_log_file.close()
-            except Exception:
-                pass
-            self.emb_log_file = None
+        self._close_log_file("emb_log_file")
 
     def stop_all(self):
         self.stop_inference()

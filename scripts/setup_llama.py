@@ -6,7 +6,6 @@ Usage: python scripts/setup_llama.py
 Run from the project root directory.
 """
 
-import os
 import sys
 import shutil
 import zipfile

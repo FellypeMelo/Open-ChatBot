@@ -94,6 +94,7 @@ class LlamaClient:
             max_tokens=settings.N_PREDICT,
             extra_body=extra_body,
             timeout=120.0,
+            http_async_client=self.client,
         )
 
         message = HumanMessage(content=prompt)
@@ -169,6 +170,7 @@ class LlamaClient:
             max_tokens=settings.N_PREDICT,
             extra_body=extra_body,
             timeout=300.0,
+            http_async_client=self.client,
         )
 
         message = HumanMessage(content=prompt)
@@ -193,6 +195,7 @@ class LlamaClient:
             openai_api_key="sk-anything",
             model=model_name,
             check_embedding_ctx_length=False,
+            http_async_client=self.client,
         )
         try:
             t0 = time.perf_counter()

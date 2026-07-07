@@ -33,10 +33,10 @@ const TagCreator: React.FC<TagCreatorProps> = ({ onClose, onSubmit, tag }) => {
 
   return (
     <div className="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-sm z-50 flex items-center justify-center p-sm md:p-md">
-      <div className="w-full max-w-[500px] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50 animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-[500px] rounded-[1.5rem] bg-[#111111] border border-[#1A1A1A] p-lg md:p-xl flex flex-col gap-lg z-50 animate-in zoom-in-95 duration-200">
         <div className="flex justify-between items-start w-full">
           <div className="flex flex-col gap-xs">
-            <h2 className="font-headline-lg text-headline-lg text-primary tracking-tight">
+            <h2 className="font-heading-lg text-heading-lg text-primary tracking-tight">
               {tag ? 'Edit Tag' : 'Create New Tag'}
             </h2>
             <p className="font-body-md text-body-md text-on-surface-variant">
@@ -59,7 +59,7 @@ const TagCreator: React.FC<TagCreatorProps> = ({ onClose, onSubmit, tag }) => {
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30"
+              className="input-premium w-full font-body-lg text-body-lg text-primary placeholder-on-surface-variant/30"
               id="tag_label"
               placeholder="e.g. Sarcastic, Tactical..."
               type="text"
@@ -72,7 +72,7 @@ const TagCreator: React.FC<TagCreatorProps> = ({ onClose, onSubmit, tag }) => {
             <textarea
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
-              className="input-line w-full bg-transparent border-0 border-b pb-xs font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none"
+              className="input-premium w-full font-body-md text-body-md text-primary placeholder-on-surface-variant/30 resize-none"
               id="tag_instruction"
               placeholder="Detailed instructions for the AI on how to embody this tag..."
               rows={4}

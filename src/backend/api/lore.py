@@ -5,14 +5,9 @@ from pydantic import BaseModel, ConfigDict
 
 from src.backend.db.database import get_db
 from src.backend.db.models import LorebookEntry
-from src.backend.core.memory.vector_store import VectorStore
-from src.backend.core.engine.llm import LlamaClient
+from src.backend.core.deps import vector_store
 
 router = APIRouter()
-
-# Instantiate LLM and VectorStore
-llama = LlamaClient()
-vector_store = VectorStore(llm_client=llama)
 
 
 class LoreCreate(BaseModel):

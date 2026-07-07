@@ -4,17 +4,14 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 
 from src.backend.db.database import get_db
-from src.backend.db.models import Character, AgentState, Tag
-from src.backend.core.engine.llm import LlamaClient
-from src.backend.core.orchestration.bridge import Brain
-from src.backend.core.memory.vector_store import VectorStore
+from src.backend.db.models import Character, AgentState, Tag, JournalEntry
+from src.backend.core.deps import brain
+
+MAX_IMPORT_PNG_BYTES = (
+    5 * 1024 * 1024
+)  # character-card PNGs are a few KB of text; 5MB is generous
 
 router = APIRouter()
-llama = LlamaClient()
-vector_store = VectorStore(llm_client=llama)
-brain = Brain(vector_store=vector_store)
-
-from src.backend.core.context.compressor import compress_character_backstory
 
 
 class DescriptionRequest(BaseModel):
@@ -43,18 +40,10 @@ class StateResponse(BaseModel):
     stats: dict
 
 
-class CharacterCreate(BaseModel):
+class CharacterUpsert(BaseModel):
     name: str
     description: str
     tag_ids: List[int] = []
-    compress_backstory: bool = False
-
-
-class CharacterUpdate(BaseModel):
-    name: str
-    description: str
-    tag_ids: List[int] = []
-    compress_backstory: bool = False
 
 
 class CharacterResponse(BaseModel):
@@ -70,12 +59,8 @@ class CharacterResponse(BaseModel):
 
 
 @router.post("/", response_model=CharacterResponse)
-async def create_character(char: CharacterCreate, db: Session = Depends(get_db)):
-    description = char.description
-    if char.compress_backstory:
-        description = await compress_character_backstory(description, llama)
-
-    new_char = Character(name=char.name, description=description)
+async def create_character(char: CharacterUpsert, db: Session = Depends(get_db)):
+    new_char = Character(name=char.name, description=char.description)
 
     # Associate tags
     if char.tag_ids:
@@ -96,7 +81,12 @@ async def create_character(char: CharacterCreate, db: Session = Depends(get_db))
 
 @router.post("/import-png", response_model=CharacterResponse)
 async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    content = await file.read()
+    content = await file.read(MAX_IMPORT_PNG_BYTES + 1)
+    if len(content) > MAX_IMPORT_PNG_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Character card exceeds the {MAX_IMPORT_PNG_BYTES // (1024 * 1024)}MB limit",
+        )
     try:
         from src.backend.core.importer.png_parser import parse_png_character_card
 
@@ -157,18 +147,14 @@ async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)
 
 @router.put("/{char_id}", response_model=CharacterResponse)
 async def update_character(
-    char_id: int, char: CharacterUpdate, db: Session = Depends(get_db)
+    char_id: int, char: CharacterUpsert, db: Session = Depends(get_db)
 ):
     existing = db.query(Character).filter(Character.id == char_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    description = char.description
-    if char.compress_backstory:
-        description = await compress_character_backstory(description, llama)
-
     existing.name = char.name
-    existing.description = description
+    existing.description = char.description
 
     if char.tag_ids is not None:
         tags = db.query(Tag).filter(Tag.id.in_(char.tag_ids)).all()
@@ -272,3 +258,25 @@ def update_character_state(
     db.commit()
     db.refresh(char)
     return char
+
+
+@router.get("/{character_id}/journal")
+async def get_journal_entries(character_id: int, db: Session = Depends(get_db)):
+    entries = (
+        db.query(JournalEntry)
+        .filter(JournalEntry.character_id == character_id)
+        .order_by(JournalEntry.timestamp.desc())
+        .all()
+    )
+    return [
+        {
+            "id": e.id,
+            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            "content": e.content,
+            "summary": e.summary,
+            "mood_at_time": e.mood_at_time,
+            "relationship_score": e.relationship_score,
+            "energy_level": e.energy_level,
+        }
+        for e in entries
+    ]

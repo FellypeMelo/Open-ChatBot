@@ -29,7 +29,7 @@ A new utility layer will translate raw `AgentState` values into descriptive prom
 - **Hunger (0-100):**
     - > 80: "Starving, irritable, distracted by food."
 - **Relationship (0-100):**
-    - Tiers: Stranger (0-20), Acquaintance (21-50), Friend (51-80), Intimate (81-100).
+    - Tiers: Stranger (0-20), Acquaintance (21-50), Friend (51-80), Close (81-100).
 
 ## 4. Interaction Logic
 

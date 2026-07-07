@@ -17,8 +17,8 @@ import json
 
 # Configuration
 LLAMA_VERSION = "b4800"  # Stable pinned release tag
-DEFAULT_MODEL_URL = "https://huggingface.co/DavidAU/Qwen3-4B-Hivemind-Instruct-Heretic-Abliterated-Uncensored-GGUF/resolve/main/Qwen3-4B-Hivemind-Inst-Hrtic-Ablit-Uncensored-Q4_K_M-imat.gguf"
-DEFAULT_MODEL_NAME = "Qwen3-4B-Hivemind-Inst-Hrtic-Ablit-Uncensored-Q4_K_M-imat.gguf"
+DEFAULT_MODEL_URL = "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+DEFAULT_MODEL_NAME = "Qwen2.5-3B-Instruct-Q4_K_M.gguf"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BIN_DIR = PROJECT_ROOT / "llama_bin"
@@ -287,7 +287,7 @@ def main() -> None:
         try:
             download_opt = (
                 input(
-                    f"Do you want to download the default 4B Abliterated model ({DEFAULT_MODEL_NAME})? [Y/n]: "
+                    f"Do you want to download the default 3B instruct model ({DEFAULT_MODEL_NAME})? [Y/n]: "
                 )
                 .strip()
                 .lower()

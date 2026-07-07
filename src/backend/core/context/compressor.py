@@ -47,10 +47,10 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
     elif score <= 50:
         parts.append(f"Rel(Acquaintance): Polite but reserved with {user_name}.")
     elif score <= 80:
-        parts.append(f"Rel(Friend): Warm, open, casual touch with {user_name}.")
+        parts.append(f"Rel(Friend): Warm, open, and casual with {user_name}.")
     else:
         parts.append(
-            f"Rel(Intimate): Deeply bonded, vulnerable, highly affectionate with {user_name}."
+            f"Rel(Close): Highly familiar, trusting, and at ease with {user_name}."
         )
 
     return " | ".join(parts)

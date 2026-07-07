@@ -27,10 +27,10 @@ graph TD
 
 O motor cognitivo do chatbot baseia-se em um template dinâmico de 6 camadas (definido no componente [Brain](file:///G:/Programas/Open-ChatBot/src/backend/core/orchestration/bridge.py#L79)):
 
-1.  **Master Prompt:** Define as regras rígidas de imersão e persona.
+1.  **Master Prompt:** Define as regras rígidas de consistência e persona do agente.
 2.  **Identity:** Características permanentes da persona do agente.
 3.  **Modifiers & Social Dynamics:** Dinâmicas sociais contextuais e regras comportamentais derivadas de interações passadas.
-4.  **State & User Info:** Estados internos fisiológicos/emocionais (fome, fadiga, afeição) e metadados sobre o usuário conectado.
+4.  **State & User Info:** Variáveis de estado da simulação comportamental (energia, disponibilidade, rapport social) e metadados sobre o usuário conectado.
 5.  **Context (RAG + Lorebook):** Memórias episódicas injetadas via similaridade de cossenos no Vector Store e informações de lore ativadas por palavras-chave.
 6.  **History & Short-term Memory:** Janela deslizante do histórico recente da sessão atual.
 

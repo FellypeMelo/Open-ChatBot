@@ -9,9 +9,6 @@ ignore = [
     "E712", # Avoid equality comparisons to True (needed for SQLAlchemy syntax)
     "E402", # Module level import not at top of file (lifespans/scripts)
     "E741", # Ambiguous variable name
-    "F401", # Unused imports
-    "F841", # Unused local variables
-    "E722", # Do not use bare except
     "F541", # f-string without placeholders
     "E501", # Line too long
     "W293", # Blank line contains whitespace

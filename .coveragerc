@@ -1,0 +1,8 @@
+[run]
+omit =
+    */__tests__/*
+    */site-packages/*
+
+[report]
+fail_under = 80
+show_missing = true

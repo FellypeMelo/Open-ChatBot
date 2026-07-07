@@ -38,7 +38,11 @@ export default defineConfig({
       command: 'cd ../.. && node -e "const fs=require(\'fs\'); try{ fs.unlinkSync(\'e2e_test.db\'); }catch(e){}" && python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000',
       port: 8000,
       timeout: 120 * 1000,
-      reuseExistingServer: !process.env.CI,
+      // Always spin up a fresh, E2E_TESTING=1 backend -- never reuse whatever
+      // happens to already be listening on 8000 (e.g. a developer's normal
+      // `run.bat` instance), which would point e2e specs at the real
+      // chatbot.db/chroma_db instead of the isolated e2e_test.db.
+      reuseExistingServer: false,
       env: { E2E_TESTING: '1' }
     },
     {

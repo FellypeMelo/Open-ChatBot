@@ -1,6 +1,4 @@
-import pytest
 from src.backend.db.models import MessageNode, Character, User
-from datetime import datetime
 
 
 def test_message_node_branching(db_session):

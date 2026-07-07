@@ -1,6 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
-from sqlalchemy.orm import Session
+from unittest.mock import patch
 from src.backend.db.models import AgentState, Character
 from src.backend.core.engine.engine import evolve_character
 from src.backend.api.chat import run_consciousness_layer

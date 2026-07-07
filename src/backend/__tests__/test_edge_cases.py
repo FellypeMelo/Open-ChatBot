@@ -1,4 +1,3 @@
-import pytest
 from src.backend.db.models import Character, User, AgentState
 
 

@@ -27,15 +27,21 @@ async def lifespan(app: FastAPI):
     import os
     import sys
 
-    # Tests (pytest's TestClient) and E2E runs supply their own isolated DB via
-    # a dependency override -- init_db()/vacuum_db() operate on the real
-    # chatbot.db engine, so running them here too would touch production data
-    # on every test that spins up the app (violates the test-isolation rule).
-    is_testing = "pytest" in sys.modules or os.environ.get("E2E_TESTING") == "1"
+    # Pytest's TestClient overrides the DB dependency with its own isolated
+    # engine (see conftest.py) while this app's own module-level `engine`
+    # still points at the real chatbot.db -- running init_db()/vacuum_db()
+    # here would touch production data on every test that spins up the app
+    # (violates the test-isolation rule). E2E runs are different: E2E_TESTING
+    # redirects DATABASE_URL to its own e2e_test.db (see core/config.py), so
+    # init_db() there is creating schema in that isolated file, not touching
+    # anything real -- skipping it would leave e2e_test.db with no tables.
+    is_pytest = "pytest" in sys.modules
+    is_e2e = os.environ.get("E2E_TESTING") == "1"
+    is_testing = is_pytest or is_e2e
 
     os.makedirs("static/avatars", exist_ok=True)
 
-    if not is_testing:
+    if not is_pytest:
         # Startup: Initialize DB
         logger.info("Initializing database...")
         init_db()
@@ -46,7 +52,8 @@ async def lifespan(app: FastAPI):
 
         vacuum_db()
 
-    # Auto-start servers using LlamaServerRunner (unless running tests or E2E mode)
+    # Auto-start the real llama-server (unless running tests or E2E mode --
+    # E2E_TESTING bypasses LLM server boot in the backend entirely).
     if not is_testing:
         logger.info("Auto-starting Llama servers from settings...")
         inf_ok = runner.start_inference()

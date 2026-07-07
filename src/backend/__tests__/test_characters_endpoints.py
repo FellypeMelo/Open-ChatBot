@@ -13,6 +13,9 @@ fallback branches, and the journal endpoint ordering.
 
 from unittest.mock import patch
 
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
+
 from src.backend.api.characters import MAX_IMPORT_PNG_BYTES
 from src.backend.core.importer.png_parser import TavernV2Card, TavernV2Data
 from src.backend.db.models import (
@@ -301,6 +304,93 @@ def test_update_character_state_clamps_stats_and_fixes_bad_relationship(
     assert stats["social"] == 0
     assert stats["is_sleeping"] is True
     assert stats["relationship"]["score"] == 100
+
+
+def test_update_character_state_retries_once_on_conflict():
+    # Regression test: AgentState carries an optimistic-concurrency version
+    # column, so a same-user race (e.g. a stat button clicked while a chat
+    # turn's decay commit is in flight -- found via e2e testing) can raise
+    # StaleDataError on commit. This is routine contention, not a real
+    # multi-writer conflict, so the endpoint retries once against fresh data
+    # instead of failing a low-stakes stat tweak outright.
+    #
+    # Uses a dedicated engine + a fresh session per request (mirroring
+    # production's per-request SessionLocal()) instead of the shared
+    # client/db_session fixture: that fixture wraps the whole test in one
+    # external transaction, so the endpoint's own db.rollback() on the
+    # simulated conflict would wipe this test's own fixture data too, which
+    # can never happen in production where every request gets an independent
+    # session/transaction.
+    import os
+    import tempfile
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from fastapi.testclient import TestClient
+    from src.backend.db.database import Base, get_db
+    from src.backend.main import app
+
+    # A real temp file (not sqlite:///:memory:) so every session/connection
+    # from this engine sees the same data -- an in-memory DB is scoped to a
+    # single connection, which would make the TestClient's request-scoped
+    # session unable to see this test's own setup rows.
+    db_fd, db_path = tempfile.mkstemp()
+    engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
+    TestSessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        setup_db = TestSessionLocal()
+        char = Character(name="Racer", description="Concurrent update target")
+        setup_db.add(char)
+        setup_db.commit()
+        state = AgentState(character_id=char.id)
+        setup_db.add(state)
+        setup_db.commit()
+        char_id = char.id
+        setup_db.close()
+
+        real_commit = Session.commit
+        call_count = {"n": 0}
+
+        def flaky_commit(self, *args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise StaleDataError("stale")
+            return real_commit(self, *args, **kwargs)
+
+        with patch("sqlalchemy.orm.Session.commit", flaky_commit):
+            with TestClient(app) as client:
+                response = client.put(
+                    f"/characters/{char_id}/state", json={"location": "Kitchen"}
+                )
+
+        assert response.status_code == 200
+        assert response.json()["state"]["location"] == "Kitchen"
+        assert call_count["n"] == 2
+
+        verify_db = TestSessionLocal()
+        refreshed = verify_db.query(Character).filter_by(id=char_id).first()
+        assert refreshed.state.location == "Kitchen"
+        verify_db.close()
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+        os.close(db_fd)
+        try:
+            os.unlink(db_path)
+        except OSError:
+            pass
 
 
 def test_journal_entries_returned_newest_first(client, db_session):

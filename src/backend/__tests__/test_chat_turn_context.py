@@ -6,15 +6,64 @@ message) persistence bug fix, preset selection, and the message edit/delete
 endpoints -- none of which had dedicated tests before this refactor.
 """
 
+import os
+import tempfile
+from contextlib import contextmanager
+
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, AsyncMock
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
+from fastapi.testclient import TestClient
 
+from src.backend.db.database import Base, get_db
 from src.backend.db.models import AgentState, Character, MessageNode, SamplerPreset
 from src.backend.api import chat as chat_module
 from src.backend.api.chat import ACTIONS_CONFIG, LLMConfig, _apply_action_stats
+from src.backend.main import app
+
+
+@contextmanager
+def isolated_client():
+    """A TestClient backed by its own file-based engine + a fresh session per
+    request (mirroring production's per-request SessionLocal()), for tests
+    that simulate a StaleDataError conflict. The shared client/db_session
+    fixture wraps a whole test in one external transaction, so the app's own
+    db.rollback() on a simulated conflict would wipe that fixture's own setup
+    rows too -- something that can never happen in production, where every
+    request gets an independent session/transaction. Yields (client,
+    TestSessionLocal) so the caller can both drive requests and set up/verify
+    rows directly.
+    """
+    db_fd, db_path = tempfile.mkstemp()
+    engine = create_engine(
+        f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+    )
+    TestSessionLocal = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    def override_get_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as client:
+            yield client, TestSessionLocal
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+        os.close(db_fd)
+        try:
+            os.unlink(db_path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -251,38 +300,50 @@ def test_chat_uses_explicit_preset_and_falls_back_to_default(client, db_session)
 # ---------------------------------------------------------------------------
 
 
-def test_chat_commit_conflict_returns_409(client, db_session):
-    char = Character(id=506, name="ConflictChar", description="Desc")
-    db_session.add(char)
-    db_session.commit()
-    state = AgentState(character_id=506)
-    db_session.add(state)
-    db_session.commit()
+def test_chat_commit_conflict_returns_409():
+    with isolated_client() as (iso_client, TestSessionLocal):
+        setup_db = TestSessionLocal()
+        char = Character(id=506, name="ConflictChar", description="Desc")
+        setup_db.add(char)
+        setup_db.commit()
+        state = AgentState(character_id=506)
+        setup_db.add(state)
+        setup_db.commit()
+        setup_db.close()
 
-    with patch("sqlalchemy.orm.Session.commit", side_effect=StaleDataError("stale")):
-        resp = client.post("/chat", json={"character_id": 506, "message": "hi"})
+        with patch(
+            "sqlalchemy.orm.Session.commit", side_effect=StaleDataError("stale")
+        ):
+            resp = iso_client.post("/chat", json={"character_id": 506, "message": "hi"})
 
-    assert resp.status_code == 409
-    assert "concurrently" in resp.json()["detail"].lower()
+        assert resp.status_code == 409
+        assert "concurrently" in resp.json()["detail"].lower()
 
 
-def test_chat_stream_commit_conflict_reports_error_in_stream(client, db_session):
-    char = Character(id=507, name="StreamConflictChar", description="Desc")
-    db_session.add(char)
-    db_session.commit()
-    state = AgentState(character_id=507)
-    db_session.add(state)
-    db_session.commit()
+def test_chat_stream_commit_conflict_reports_error_in_stream():
+    with isolated_client() as (iso_client, TestSessionLocal):
+        setup_db = TestSessionLocal()
+        char = Character(id=507, name="StreamConflictChar", description="Desc")
+        setup_db.add(char)
+        setup_db.commit()
+        state = AgentState(character_id=507)
+        setup_db.add(state)
+        setup_db.commit()
+        setup_db.close()
 
-    with patch("sqlalchemy.orm.Session.commit", side_effect=StaleDataError("stale")):
-        resp = client.post("/chat/stream", json={"character_id": 507, "message": "hi"})
-        content = b"".join(resp.iter_bytes())
+        with patch(
+            "sqlalchemy.orm.Session.commit", side_effect=StaleDataError("stale")
+        ):
+            resp = iso_client.post(
+                "/chat/stream", json={"character_id": 507, "message": "hi"}
+            )
+            content = b"".join(resp.iter_bytes())
 
-    # Fixed: /chat/stream now passes status_code=409 to StreamingResponse,
-    # matching /chat's HTTPException(409) for the same stale-data conflict.
-    assert resp.status_code == 409
-    assert b"error" in content
-    assert b"concurrently" in content
+        # Fixed: /chat/stream now passes status_code=409 to StreamingResponse,
+        # matching /chat's HTTPException(409) for the same stale-data conflict.
+        assert resp.status_code == 409
+        assert b"error" in content
+        assert b"concurrently" in content
 
 
 def test_chat_stream_setup_failure_yields_error_not_raw_500(client, db_session):

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 
@@ -214,17 +215,10 @@ class StateUpdate(BaseModel):
     stats: Optional[StatsUpdate] = None
 
 
-@router.put("/{char_id}/state", response_model=CharacterResponse)
-def update_character_state(
-    char_id: int, state_data: StateUpdate, db: Session = Depends(get_db)
-):
-    char = db.query(Character).filter(Character.id == char_id).first()
-    if not char:
-        raise HTTPException(status_code=404, detail="Character not found")
-
+def _apply_state_update(char: Character, state_data: StateUpdate, db: Session) -> None:
     state = char.state
     if not state:
-        state = AgentState(character_id=char_id)
+        state = AgentState(character_id=char.id)
         db.add(state)
 
     if state_data.location is not None:
@@ -255,7 +249,29 @@ def update_character_state(
 
         state.stats = current_stats
 
-    db.commit()
+
+@router.put("/{char_id}/state", response_model=CharacterResponse)
+def update_character_state(
+    char_id: int, state_data: StateUpdate, db: Session = Depends(get_db)
+):
+    char = db.query(Character).filter(Character.id == char_id).first()
+    if not char:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    _apply_state_update(char, state_data, db)
+    try:
+        db.commit()
+    except StaleDataError:
+        # Routine same-user contention (e.g. a stat button clicked while a
+        # chat turn's decay commit is in flight) -- retry once against fresh
+        # data instead of failing a low-stakes stat tweak outright. Re-query
+        # rather than db.refresh(char): refresh requires the instance still
+        # be attached the way it was before the rollback, which isn't
+        # guaranteed.
+        db.rollback()
+        char = db.query(Character).filter(Character.id == char_id).first()
+        _apply_state_update(char, state_data, db)
+        db.commit()
     db.refresh(char)
     return char
 

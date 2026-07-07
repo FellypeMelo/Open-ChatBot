@@ -298,7 +298,18 @@ async def _prepare_chat_turn(
     # Commit the decay/counter bump now, unconditionally -- a message-less
     # "regenerate" call never reaches the request.message commit below, and
     # this session gets closed (without a commit) once the request ends.
-    db.commit()
+    try:
+        db.commit()
+    except StaleDataError:
+        # A stat-tweak PUT (or another chat turn) already updated this
+        # AgentState row -- this is routine same-user rapid-fire usage, not a
+        # real multi-writer conflict, so pick up its fresh state instead of
+        # failing the whole turn over a redundant decay tick. Re-query rather
+        # than db.refresh(state): refresh requires the instance still be
+        # attached the way it was before the rollback, which isn't guaranteed.
+        db.rollback()
+        state = db.query(AgentState).filter(AgentState.id == state.id).first()
+        force_reflect = state.interaction_count % 20 == 0
 
     effective_parent_id = (
         request.parent_id if request.parent_id is not None else state.current_message_id
@@ -329,9 +340,21 @@ async def _prepare_chat_turn(
         )
         db.add(user_msg)
         db.flush()
-        effective_parent_id = user_msg.id
         state.current_message_id = user_msg.id
-        db.commit()
+        try:
+            db.commit()
+        except StaleDataError:
+            # Same routine-contention case as the decay commit above, but a
+            # failed commit rolls back the just-flushed user_msg INSERT too --
+            # re-add it against the now-fresh state instead of losing the
+            # user's message.
+            db.rollback()
+            state = db.query(AgentState).filter(AgentState.id == state.id).first()
+            db.add(user_msg)
+            db.flush()
+            state.current_message_id = user_msg.id
+            db.commit()
+        effective_parent_id = user_msg.id
 
     history = []
     curr_id = effective_parent_id

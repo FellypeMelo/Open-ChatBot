@@ -1,5 +1,6 @@
 import copy
 import os
+import re
 import subprocess
 import logging
 import json
@@ -72,7 +73,7 @@ DEFAULT_CONFIG = {
         "threads": 4,
         "gpu_layers": -1,
         "context_size": 4096,
-        "additional_args": "--cache-type-k q4_0 --cache-type-v q4_0 --flash-attn --parallel 1",
+        "additional_args": "--cache-type-k q4_0 --cache-type-v q4_0 --flash-attn on --parallel 1",
     },
     "embedding": {
         "binary_path": "llama_bin/llama-server.exe",
@@ -80,7 +81,7 @@ DEFAULT_CONFIG = {
         "port": 8080,
         "threads": 4,
         "gpu_layers": -1,
-        "additional_args": "--flash-attn",
+        "additional_args": "--flash-attn on",
     },
 }
 
@@ -121,8 +122,15 @@ class LlamaServerRunner:
                         inf_args + " --cache-type-k q4_0 --cache-type-v q4_0"
                     ).strip()
                     updated = True
+                # -fa now requires an explicit value; upgrade any bare --flash-attn
+                healed = re.sub(
+                    r"--flash-attn(?!\s+(?:on|off|auto)\b)", "--flash-attn on", inf_args
+                )
+                if healed != inf_args:
+                    inf_args = healed
+                    updated = True
                 if "--flash-attn" not in inf_args:
-                    inf_args = (inf_args + " --flash-attn").strip()
+                    inf_args = (inf_args + " --flash-attn on").strip()
                     updated = True
                 if "--parallel" not in inf_args and "-np" not in inf_args:
                     inf_args = (inf_args + " --parallel 1").strip()
@@ -131,8 +139,14 @@ class LlamaServerRunner:
 
                 # Migrate old embedding settings
                 emb_args = self.config["embedding"].get("additional_args", "")
+                emb_healed = re.sub(
+                    r"--flash-attn(?!\s+(?:on|off|auto)\b)", "--flash-attn on", emb_args
+                )
+                if emb_healed != emb_args:
+                    emb_args = emb_healed
+                    updated = True
                 if "--flash-attn" not in emb_args:
-                    emb_args = (emb_args + " --flash-attn").strip()
+                    emb_args = (emb_args + " --flash-attn on").strip()
                     updated = True
                 self.config["embedding"]["additional_args"] = emb_args
 

@@ -71,10 +71,10 @@ from src.backend.core.context.compressor import COMPRESSED_MASTER_PROMPT
 
 def test_master_prompt_content():
     """Verify compressed master prompt contains critical instructions."""
-    assert "NOT an AI" in COMPRESSED_MASTER_PROMPT
+    assert "never an AI" in COMPRESSED_MASTER_PROMPT
     assert "asterisks" in COMPRESSED_MASTER_PROMPT
     assert "quotes" in COMPRESSED_MASTER_PROMPT
-    assert "physicality" in COMPRESSED_MASTER_PROMPT
+    assert "Physicality" in COMPRESSED_MASTER_PROMPT
 
 
 @pytest.mark.asyncio

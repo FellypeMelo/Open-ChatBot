@@ -36,6 +36,7 @@ ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
     "{example_dialogs_str}"
     "History:\n{history_str}\n\n"
     "{user_info}: {user_message}\n\n"
+    "{anchor}\n"
     "Reply:"
 )
 
@@ -130,6 +131,38 @@ class Brain:
         if from_end:
             return "[…] " + text[-max_chars:].lstrip()
         return text[:max_chars].rstrip() + " […]"
+
+    def _build_anchor(self, character: Any, state: Dict[str, Any], user_name: str, char_display_name: str) -> str:
+        """Recency anchor (E.P.I.C. Phase 1): a compact persona-voice + current-
+        scene reminder re-injected right before 'Reply:', so a small model reads
+        WHO it is and WHERE it is as the very last thing before generating.
+        Recency beats the lost-in-the-middle of a long context window. Derived
+        from the existing card fields -- no new schema -- so it is only as strong
+        as the card is filled."""
+        name = char_display_name or (character.name if character else "the character")
+        essence = ""
+        if character:
+            raw = (
+                getattr(character, "persona_prompt", None)
+                or getattr(character, "short_description", None)
+                or getattr(character, "description", None)
+                or ""
+            )
+            if raw:
+                essence = self._truncate_at_sentence(
+                    self._sanitize(render_macros(raw, name, user_name)), 60
+                )
+        loc = (state or {}).get("location") or "Unknown"
+        mood = (state or {}).get("mood") or "Neutral"
+        parts = [f"[Stay in character] You are {name}."]
+        if essence:
+            essence = essence.rstrip()
+            parts.append(essence if essence.endswith((".", "!", "?", "…")) else essence + ".")
+        parts.append(f"Right now: {loc}; mood {mood}.")
+        parts.append(
+            f"Reply in-voice as {name}: react to what {user_name} just said, drive the tension, end with a hook."
+        )
+        return self._truncate_at_sentence(" ".join(parts), settings.ANCHOR_TOKENS)
 
     @staticmethod
     def _truncate_at_sentence(text: Any, max_tokens: int) -> str:
@@ -404,6 +437,7 @@ class Brain:
             history_str=history_str,
             user_info=user_name,
             user_message=user_message,
+            anchor=self._build_anchor(character, state, user_name, char_display_name),
         )
 
     async def reflect(self, messages: List[Dict], window_size: int = 20) -> Dict:

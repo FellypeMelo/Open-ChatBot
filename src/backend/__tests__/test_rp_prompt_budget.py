@@ -83,6 +83,34 @@ def _build(brain, **kw):
     )
 
 
+# --- EPIC Phase 1: recency anchor + master prompt directives ------------------
+
+def test_recency_anchor_is_last_thing_before_reply():
+    brain = _brain(history_budget=8000)
+    char = _char(name="Kaen", persona_prompt="A sly rogue who trusts no one.",
+                 short_description="", description="")
+    state = _state(location="Tavern", mood="Wary")
+    prompt = _build(brain, character=char, state=state, user_message="Xylo42marker")
+
+    assert "[Stay in character] You are Kaen" in prompt
+    assert "Tavern" in prompt  # current scene is in the anchor
+    anchor_idx = prompt.rfind("[Stay in character]")
+    reply_idx = prompt.rfind("Reply:")
+    # anchor sits AFTER the user message and immediately before the final Reply:
+    assert prompt.rfind("Xylo42marker") < anchor_idx < reply_idx
+
+
+def test_master_prompt_has_epic_directives():
+    from src.backend.core.context.compressor import COMPRESSED_MASTER_PROMPT as mp
+
+    low = mp.lower()
+    assert "voice" in low  # C: stay in the character's voice
+    assert "react to what the user" in low  # reincorporate user input (low-effort)
+    assert "hook" in low  # end with a hook
+    assert "escalate" in low  # P: forward progress
+    assert "3-5 paragraph" not in low  # the forced-length rule is gone
+
+
 # --- TS-PA-01: history stays chronological after budget trim -----------------
 
 def test_history_stays_chronological():
@@ -171,7 +199,9 @@ def test_oversized_card_fields_are_capped():
     )
     prompt = _build(brain, character=char)
 
-    ceiling = settings.CARD_MAX_TOKENS * 4 + 100
+    # Body is capped at CARD_MAX; the recency anchor also derives a short essence
+    # from persona_prompt, so allow its bounded contribution (ANCHOR_TOKENS).
+    ceiling = (settings.CARD_MAX_TOKENS + settings.ANCHOR_TOKENS) * 4 + 200
     assert prompt.count("P") < huge and prompt.count("P") <= ceiling
     assert prompt.count("S") < huge and prompt.count("S") <= ceiling
     assert prompt.count("D") < huge and prompt.count("D") <= ceiling
@@ -185,8 +215,12 @@ def test_normal_card_survives_whole_not_truncated_at_300():
     persona = "Elara is a sardonic archivist who hoards secrets. " * 100  # ~1250 tok
     char = _char(persona_prompt=persona, short_description="", description="")
     prompt = _build(brain, character=char)
+    # The full persona body reaches the Personality: layer intact (the old 300
+    # cap would have chopped it). The anchor derives a short truncated essence,
+    # so a "[…]" may appear there -- assert on the body, not the whole prompt.
     assert persona.strip() in prompt
-    assert "[…]" not in prompt  # nothing was truncated
+    personality_line = prompt.split("Personality:")[1].split("\n")[0]
+    assert "[…]" not in personality_line
 
 
 def test_card_truncation_cuts_at_sentence_boundary():

@@ -16,6 +16,7 @@ from src.backend.api import (
 from src.backend.db.database import init_db, seed_default_presets
 from src.backend.core.engine.llm import LlamaClient
 from src.backend.core.engine.runner import runner
+from src.backend.core.config import settings
 
 # Ensure all logs (including runner diagnostics) are visible in console
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -25,7 +26,6 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import os
-    import sys
 
     # Pytest's TestClient overrides the DB dependency with its own isolated
     # engine (see conftest.py) while this app's own module-level `engine`
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     # redirects DATABASE_URL to its own e2e_test.db (see core/config.py), so
     # init_db() there is creating schema in that isolated file, not touching
     # anything real -- skipping it would leave e2e_test.db with no tables.
-    is_pytest = "pytest" in sys.modules
+    is_pytest = settings.TESTING
     is_e2e = os.environ.get("E2E_TESTING") == "1"
     is_testing = is_pytest or is_e2e
 

@@ -159,9 +159,7 @@ class LlamaClient:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def embed(self, text: str, url: str = None, model: str = None):
-        import sys
-
-        if "pytest" in sys.modules or settings.E2E_TESTING:
+        if settings.TESTING or settings.E2E_TESTING:
             return [0.1] * 2560
 
         base_url = (url or self.embedding_url) + "/v1"

@@ -22,9 +22,8 @@ def get_oneapi_env() -> Dict[str, str]:
     3. During pytest, skip entirely to avoid slow subprocess calls.
     """
     env = os.environ.copy()
-    import sys
 
-    if "pytest" in sys.modules:
+    if settings.TESTING:
         logger.debug("[oneapi] Skipping env loading (pytest detected)")
         return env
 

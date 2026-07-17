@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     MODEL_PATH: str = "models/model.gguf"
     DEBUG_LATENCY: bool = False
     E2E_TESTING: bool = False
+    # Single source of truth for "this is a unit-test run", detected once in
+    # __init__ so modules reference settings.TESTING instead of each independently
+    # sniffing sys.modules for "pytest".
+    TESTING: bool = False
 
     # Minimum cosine similarity (turbovec returns raw cosine in [-1, 1]) a RAG
     # memory must reach to be injected into the prompt. Without this, an
@@ -36,10 +40,12 @@ class Settings(BaseSettings):
         super().__init__(**kwargs)
         import sys
 
+        self.TESTING = "pytest" in sys.modules
+
         if self.E2E_TESTING:
             self.DATABASE_URL = "sqlite:///./e2e_test.db"
             self.CHROMA_PATH = "./e2e_chroma_db"
-        elif "pytest" in sys.modules:
+        elif self.TESTING:
             # Isolate the shared vector-store singleton (core/deps.py) so unit
             # tests never read from or write to the real ./chroma_db.
             self.CHROMA_PATH = "./test_chroma_db"

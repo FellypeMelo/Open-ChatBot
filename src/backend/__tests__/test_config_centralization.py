@@ -27,6 +27,12 @@ def test_reflection_interval_is_config_driven():
     assert isinstance(settings.REFLECTION_INTERVAL, int) and settings.REFLECTION_INTERVAL > 0
 
 
+def test_testing_flag_is_single_source_of_truth():
+    # settings.TESTING is the one place "are we under pytest" is decided; modules
+    # read it instead of re-sniffing sys.modules. It must be True in this run.
+    assert settings.TESTING is True
+
+
 def test_llama_client_host_comes_from_settings(monkeypatch):
     monkeypatch.setattr(settings, "LLAMA_HOST", "10.11.12.13")
     client = LlamaClient()

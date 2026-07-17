@@ -609,6 +609,60 @@ async def test_run_consciousness_layer_force_reflect_evolves_character(
     assert args[1] == 510
 
 
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_reflection_excludes_inactive_messages(
+    db_session, monkeypatch
+):
+    # Reflection must summarize only the live branch: an edited-away or
+    # regenerated (is_active=False) node must never reach brain.reflect, or its
+    # discarded content becomes permanent cross-chat canon (PZ-02).
+    char = Character(id=511, name="ActiveOnlyChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=511))
+    db_session.commit()
+
+    db_session.add(
+        MessageNode(
+            character_id=511,
+            chat_id=77,
+            role="user",
+            content="ACTIVE user line",
+            is_active=True,
+        )
+    )
+    db_session.add(
+        MessageNode(
+            character_id=511,
+            chat_id=77,
+            role="assistant",
+            content="DISCARDED variant",
+            is_active=False,
+        )
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+        patch("src.backend.api.chat.evolve_character"),
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            511, "hello", "hi", force_reflect=True, chat_id=77
+        )
+
+    mock_reflect.assert_called_once()
+    passed_msgs, _ = mock_reflect.call_args
+    contents = [m["content"] for m in passed_msgs[0]]
+    assert "ACTIVE user line" in contents
+    assert "DISCARDED variant" not in contents
+
+
 # ---------------------------------------------------------------------------
 # /chat/clear/{character_id} resets AgentState to the documented defaults
 # ---------------------------------------------------------------------------

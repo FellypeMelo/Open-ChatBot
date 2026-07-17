@@ -62,9 +62,12 @@ async def run_consciousness_layer(
             # 2. Reflect & Evolve (only on interval or force)
             if force_reflect:
                 # Fetch last 20 messages for deep context, scoped to this chat
-                # so a reflection never summarizes another session's turns.
+                # so a reflection never summarizes another session's turns. Only
+                # is_active nodes: edited-away/regenerated branches must not leak
+                # discarded content into the character's permanent state (PZ-02).
                 msg_query = db.query(MessageNode).filter(
-                    MessageNode.character_id == character_id
+                    MessageNode.character_id == character_id,
+                    MessageNode.is_active == True,  # noqa: E712
                 )
                 if chat_id is not None:
                     msg_query = msg_query.filter(MessageNode.chat_id == chat_id)

@@ -227,7 +227,22 @@ async def update_character(
     char_id: int, char: CharacterUpsert, db: Session = Depends(get_db)
 ):
     existing = get_or_404(db, Character, char_id, "Character")
+    was_static = existing.dynamic_persona is False
     _apply_upsert(existing, char, db)
+    # Re-enabling a static -> dynamic persona: re-seed the decay clock to now so
+    # the frozen interval is NOT dumped as one-shot need-decay on the next turn.
+    # Static freezes the simulation; without this, last_update stays stale from
+    # before the static stretch and update_needs would decay energy/hunger for
+    # the whole frozen period in a single tick.
+    if (
+        was_static
+        and existing.dynamic_persona
+        and existing.state
+        and isinstance(existing.state.stats, dict)
+    ):
+        s = dict(existing.state.stats)
+        s["last_update"] = datetime.now(timezone.utc).isoformat()
+        existing.state.stats = s
     db.commit()
     db.refresh(existing)
     return existing

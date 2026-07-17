@@ -844,6 +844,64 @@ def test_chat_triggers_reflection_at_interval_via_range_check(client, db_session
     assert mock_rcl.call_args.kwargs["force_reflect"] is True
 
 
+def test_chat_static_persona_skips_reflection_at_interval(client, db_session):
+    # EPIC Phase 3 (review finding): a STATIC character AT the reflection boundary
+    # must NOT force_reflect -- its persona is frozen. Mirror of the dynamic test.
+    from src.backend.core.config import settings
+
+    char = Character(
+        id=527, name="StaticIntervalChar", description="d", dynamic_persona=False
+    )
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(
+        AgentState(
+            character_id=527,
+            interaction_count=settings.REFLECTION_INTERVAL - 1,
+            last_reflected_at_count=0,
+        )
+    )
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "a reply"}
+        resp = client.post("/chat", json={"character_id": 527, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_called_once()
+    assert mock_rcl.call_args.kwargs["force_reflect"] is False
+
+
+def test_toggle_static_to_dynamic_reseeds_decay_clock(client, db_session):
+    # EPIC Phase 3 (review finding): re-enabling a static->dynamic persona must
+    # reset the decay clock so the frozen interval isn't dumped as one-shot decay.
+    old = (datetime.now(timezone.utc) - timedelta(hours=200)).isoformat()
+    char = Character(id=730, name="ToggleReseed", description="d", dynamic_persona=False)
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=730)
+    state.stats = {"energy": 100, "hunger": 0, "relationship": {"score": 50}, "last_update": old}
+    db_session.add(state)
+    db_session.commit()
+
+    resp = client.put(
+        "/characters/730",
+        json={"name": "ToggleReseed", "description": "d", "dynamic_persona": True, "tag_ids": []},
+    )
+    assert resp.status_code == 200
+
+    refreshed = db_session.query(AgentState).filter(AgentState.character_id == 730).first()
+    lu = datetime.fromisoformat(refreshed.stats["last_update"])
+    if lu.tzinfo is None:
+        lu = lu.replace(tzinfo=timezone.utc)
+    assert (datetime.now(timezone.utc) - lu).total_seconds() < 120  # re-seeded to ~now
+
+
 @pytest.mark.asyncio
 async def test_reflection_stamps_reflecting_chat_and_respects_active_chat_guard(
     db_session, monkeypatch

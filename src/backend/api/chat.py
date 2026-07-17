@@ -138,13 +138,24 @@ async def run_consciousness_layer(
             # test_scene_extractor.
             if store_memory and ai_response and ai_response.strip() and not settings.TESTING:
                 try:
+                    # Read the current-scene hint from the SAME source
+                    # apply_scene_update will write to (mirror-aware): the live
+                    # agent while it still mirrors this chat, else this chat's own
+                    # snapshot -- otherwise a mid-turn switch would feed the
+                    # foreground chat's location as the hint and stamp it onto this
+                    # background chat, bleeding scene across storylines.
                     _agent = (
                         db.query(AgentState)
                         .filter(AgentState.character_id == character_id)
                         .first()
                     )
-                    cur_loc = (_agent.location if _agent else None) or "Unknown"
-                    cur_mood = (_agent.mood if _agent else None) or "Neutral"
+                    if _agent is not None and (chat_id is None or _agent.active_chat_id == chat_id):
+                        cur_loc = _agent.location or "Unknown"
+                        cur_mood = _agent.mood or "Neutral"
+                    else:
+                        _chat = db.query(Chat).filter(Chat.id == chat_id).first()
+                        cur_loc = (_chat.location if _chat else None) or "Unknown"
+                        cur_mood = (_chat.mood if _chat else None) or "Neutral"
                     scene = await brain.extract_scene(ai_response, cur_loc, cur_mood)
                     apply_scene_update(db, character_id, scene, active_chat_id=chat_id)
                 except Exception as e:

@@ -69,6 +69,34 @@ describe('CharacterCreator', () => {
     });
   });
 
+  it('defaults dynamic_persona to true and sends it toggled-off in the payload', async () => {
+    render(<CharacterCreator {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText('Title / Name *'), { target: { value: 'Elara' } });
+    fireEvent.change(screen.getByLabelText('Bio *'), { target: { value: 'A scholar' } });
+
+    const checkbox = screen.getByRole('checkbox');
+    expect(checkbox).toBeChecked(); // dynamic by default
+
+    fireEvent.click(checkbox); // make it static
+    fireEvent.click(screen.getByRole('button', { name: 'Initialize' }));
+
+    await waitFor(() => {
+      expect(mockOnCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ dynamic_persona: false })
+      );
+    });
+  });
+
+  it('prefills the dynamic_persona checkbox from an edited character', () => {
+    render(
+      <CharacterCreator
+        {...defaultProps}
+        editingCharacter={{ id: 1, name: 'X', description: 'd', dynamic_persona: false, is_active: true, tags: [] }}
+      />
+    );
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+  });
+
   it('re-enables the submit button when onCreate rejects', async () => {
     const failingCreate = vi.fn().mockRejectedValue(new Error('save failed'));
     render(<CharacterCreator {...defaultProps} onCreate={failingCreate} />);

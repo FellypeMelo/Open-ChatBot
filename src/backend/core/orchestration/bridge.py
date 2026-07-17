@@ -154,6 +154,13 @@ class Brain:
         from the existing card fields -- no new schema -- so it is only as strong
         as the card is filled."""
         name = char_display_name or (character.name if character else "the character")
+        # Sanitize the essence with the SAME live names as the main body (user +
+        # char + display name), not just the generic role markers. With newlines
+        # now preserved (A2), a crafted/imported card must not be able to forge a
+        # "{char}:"/"{user}:" turn HERE, in the highest-recency slot right before
+        # Reply: -- the main body strips those markers, so the anchor must too.
+        char_name = character.name if character else ""
+        _names = tuple(n for n in (user_name, char_name, char_display_name) if n)
         essence = ""
         if character:
             raw = (
@@ -164,7 +171,7 @@ class Brain:
             )
             if raw:
                 essence = self._truncate_at_sentence(
-                    self._sanitize(render_macros(raw, name, user_name)), 60
+                    self._sanitize(render_macros(raw, name, user_name), _names), 60
                 )
         loc = (state or {}).get("location") or "Unknown"
         mood = (state or {}).get("mood") or "Neutral"
@@ -294,6 +301,35 @@ class Brain:
         history_str = ""
         if history_lines:
             history_budget = budget.get("history_budget", 2048)  # Default fallback
+            # Aggregate-card guard: the per-field CARD_MAX cap bounds each card
+            # field but NOT their sum, and the fixed reserve can under-count a big
+            # card. Shave any real card overage off history so card + fixed layers
+            # + history stay inside the window even on a small/edited context.
+            # No-op when there is slack (e.g. the shipped 48k) since history stays
+            # capped at its window, below the ceiling. Gated on usable_budget so
+            # it never misfires when a caller mocks a partial budget.
+            _usable = budget.get("usable_budget")
+            if character and _usable is not None:
+                _cap = settings.CARD_MAX_TOKENS * 4
+
+                def _est(v):
+                    return min(len(str(v or "")), _cap) // 4
+
+                card_est = (
+                    _est(getattr(character, "persona_prompt", ""))
+                    + _est(getattr(character, "scenario", ""))
+                    + _est(
+                        getattr(character, "short_description", None)
+                        or getattr(character, "description", None)
+                    )
+                    + _est(getattr(character, "mes_example", ""))
+                )
+                _fixed = sum(allocations.values()) if allocations else 0
+                _card_reserve = allocations.get("character_def", 0) + allocations.get(
+                    "mes_example", 0
+                )
+                ceiling = (_usable - _fixed) + _card_reserve - card_est
+                history_budget = max(0, min(history_budget, ceiling))
             current_tokens = 0
             allowed_lines = []
 

@@ -21,8 +21,8 @@ _ALLOCATIONS = {
     "user_persona": 100,
     "lorebook_cap": 500,
     "chat_summary": 200,
-    "post_history": 200,
     "dynamic_state": 60,
+    "memory": 400,
     "mes_example": 300,
 }
 

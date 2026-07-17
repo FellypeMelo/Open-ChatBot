@@ -41,15 +41,22 @@ class ContextBudgetCalculator:
         self.padding = settings.TOKEN_PADDING
         self.usable_budget = self.context_size - self.response_slot - self.padding
 
-        # Fixed layer allocations (max caps)
+        # Fixed layer allocations (max caps). These must stay in sync with the
+        # layers build_prompt actually caps via allocations.get(...): every key
+        # build_prompt reads is reserved here so fixed_cost reflects the real
+        # prompt, and no key is reserved for a layer the template never emits
+        # (PB-04).
         self.allocations = {
             "system_prompt": 200,
             "character_def": 300,
             "user_persona": 100,
             "lorebook_cap": 500,
             "chat_summary": 200,
-            "post_history": 200,
             "dynamic_state": 60,
+            # RAG memory layer: build_prompt caps it at allocations["memory"],
+            # but it was missing here, so fixed_cost under-counted by ~400 tok and
+            # history_budget was over-allocated -> risk of overflowing context.
+            "memory": 400,
             # mes_example was previously unbudgeted -> a large example-dialog card
             # blew past context_size and llama truncated the master prompt off the
             # top. Give it an explicit cap so build_prompt can enforce it.

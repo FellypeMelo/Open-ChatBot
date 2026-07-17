@@ -306,6 +306,25 @@ def test_update_character_state_clamps_stats_and_fixes_bad_relationship(
     assert stats["relationship"]["score"] == 100
 
 
+def test_update_character_state_seeds_last_update_for_decay(client, db_session):
+    # ST-01: a PUT /state that builds stats without last_update must seed it,
+    # otherwise update_needs early-returns forever and need-decay freezes.
+    char = Character(name="Decayer", description="d")
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=char.id)
+    state.stats = {"energy": 100}  # no last_update
+    db_session.add(state)
+    db_session.commit()
+
+    response = client.put(
+        f"/characters/{char.id}/state",
+        json={"stats": {"hunger": 10}},
+    )
+    assert response.status_code == 200
+    assert "last_update" in response.json()["state"]["stats"]
+
+
 def test_update_character_state_retries_once_on_conflict():
     # Regression test: AgentState carries an optimistic-concurrency version
     # column, so a same-user race (e.g. a stat button clicked while a chat

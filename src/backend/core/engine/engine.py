@@ -85,7 +85,14 @@ def update_needs(stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any
     """Updates hunger, happiness, social, and energy based on time passed."""
     last_update_str = stats.get("last_update")
     if not last_update_str:
-        return stats
+        # No baseline timestamp: seed one at `current_time` and return, so decay
+        # starts from now on the NEXT call. Early-returning `stats` unchanged (as
+        # before) left it permanently without a baseline -> hunger/energy froze
+        # forever and should_be_sleeping never fired. Reachable via PUT /state
+        # building stats without last_update (ST-01).
+        seeded = stats.copy()
+        seeded["last_update"] = current_time.isoformat()
+        return seeded
 
     last_update = datetime.fromisoformat(last_update_str)
 

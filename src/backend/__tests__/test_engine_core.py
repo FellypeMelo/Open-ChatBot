@@ -45,9 +45,12 @@ def test_get_time_context():
 def test_update_needs():
     current_time = datetime(2026, 6, 23, 12, 0, tzinfo=timezone.utc)
 
-    # 1. No last_update
+    # 1. No last_update: values are unchanged THIS call, but a baseline is now
+    # seeded so decay starts on the next call instead of freezing forever (ST-01).
     stats_no_update = {"energy": 100}
-    assert update_needs(stats_no_update, current_time) == stats_no_update
+    res_seed = update_needs(stats_no_update, current_time)
+    assert res_seed["energy"] == 100
+    assert res_seed["last_update"] == current_time.isoformat()
 
     # 2. Update needs with last_update timezone-naive fallback
     naive_last = datetime(2026, 6, 23, 10, 0)  # 2 hours ago

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
@@ -328,6 +329,11 @@ def _apply_state_update(char: Character, state_data: StateUpdate, db: Session) -
                 rel = {"score": DEFAULT_RELATIONSHIP_SCORE}
             rel["score"] = clamp_stat(state_data.stats.relationship_score)
             current_stats["relationship"] = rel
+
+        # Never leave the row without a decay baseline: stats missing last_update
+        # freeze need-decay forever (ST-01). Seed it if absent.
+        if "last_update" not in current_stats:
+            current_stats["last_update"] = datetime.now(timezone.utc).isoformat()
 
         state.stats = current_stats
 

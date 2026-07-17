@@ -1,3 +1,5 @@
+import os
+import shutil
 import uuid
 import logging
 import asyncio
@@ -110,6 +112,26 @@ class VectorStore:
         )
         self.lore_store = self._load_or_init_store(self.lore_path, "lore_store")
 
+    def _atomic_dump(self, store: TurboQuantVectorStore, path: Path) -> None:
+        """Persist `store` to `path` without risking a torn/corrupt on-disk store.
+
+        turbovec.dump writes multiple files (index + docstore) directly into the
+        target dir, so a crash or partial write mid-dump would corrupt the only
+        persisted copy. Dump into a sibling temp dir first, then atomically
+        replace each file into place (same-filesystem os.replace). A crash can
+        leave the temp dir behind, but never a half-written store (PF-02)."""
+        path.mkdir(parents=True, exist_ok=True)
+        tmp = path.parent / f"{path.name}.tmp"
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True, exist_ok=True)
+        try:
+            store.dump(str(tmp))
+            for src in tmp.iterdir():
+                os.replace(src, path / src.name)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def _load_or_init_store(self, path: Path, label: str) -> TurboQuantVectorStore:
         """Load a persisted turbovec store from disk, or create a fresh one if it
         is absent or fails to load."""
@@ -139,8 +161,7 @@ class VectorStore:
             self.lore_store._store_texts_and_vectors(
                 [content], vectors, [metadata] if metadata else [{}], [entry_id]
             )
-            self.lore_path.mkdir(parents=True, exist_ok=True)
-            self.lore_store.dump(str(self.lore_path))
+            self._atomic_dump(self.lore_store, self.lore_path)
             logger.info(
                 f"Successfully added lore for {keyword} to TurboVec store and persisted."
             )
@@ -173,8 +194,7 @@ class VectorStore:
             await self.memories_store.aadd_texts(
                 [text], metadatas=[metadata] if metadata else None
             )
-            self.memories_path.mkdir(parents=True, exist_ok=True)
-            self.memories_store.dump(str(self.memories_path))
+            self._atomic_dump(self.memories_store, self.memories_path)
             logger.info("Successfully added memory to TurboVec store and persisted.")
         except Exception as e:
             logger.error(f"Error adding to vector store: {e}")
@@ -193,8 +213,7 @@ class VectorStore:
             ]
             if ids:
                 self.memories_store.delete(ids)
-                self.memories_path.mkdir(parents=True, exist_ok=True)
-                self.memories_store.dump(str(self.memories_path))
+                self._atomic_dump(self.memories_store, self.memories_path)
                 logger.info(f"Cleared {len(ids)} memories for {label}.")
             return len(ids)
         except Exception as e:

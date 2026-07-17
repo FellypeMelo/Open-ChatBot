@@ -213,3 +213,51 @@ async def test_vector_store_memory_operations(tmp_path):
     mock_mem_store.asimilarity_search_with_score.side_effect = Exception("Search error")
     res = await store.query_memory("hello")
     assert res == {"documents": [[]]}
+
+
+class _FakeLLM:
+    """Deterministic 8-dim embeddings so a real turbovec store persists to disk
+    without a llama-server."""
+
+    async def embed(self, text):
+        vec = [0.1] * 8
+        vec[sum(map(ord, text)) % 8] = 1.0
+        return vec
+
+
+def test_atomic_dump_failure_does_not_corrupt_persisted_store(tmp_path):
+    # PF-02: turbovec.dump writes multiple files directly into the store dir; a
+    # crash mid-dump would corrupt the only persisted copy. _atomic_dump stages
+    # into a temp dir and swaps atomically, so a failing dump leaves the prior
+    # on-disk store fully intact and reloadable.
+    path = str(tmp_path / "cdb")
+    vs = VectorStore(llm_client=_FakeLLM(), path=path)
+
+    asyncio.run(vs.add_memory("first memory", {"character_id": 1}))
+
+    # A dump that raises must NOT damage the persisted store nor leave a temp dir.
+    with patch.object(
+        vs.memories_store, "dump", side_effect=IOError("simulated disk failure")
+    ):
+        asyncio.run(vs.add_memory("second memory", {"character_id": 1}))
+
+    assert not (vs.memories_path.parent / "memories.tmp").exists(), "temp dir leaked"
+
+    reloaded = VectorStore(llm_client=_FakeLLM(), path=path)
+    texts = [t for t, _m in reloaded.memories_store._docs.values()]
+    assert any("first memory" in t for t in texts), "prior store lost after failed dump"
+    assert all(
+        "second memory" not in t for t in texts
+    ), "half-written store persisted the failed add"
+
+
+def test_atomic_dump_persists_and_reloads(tmp_path):
+    # Happy path: an atomic dump round-trips through disk correctly.
+    path = str(tmp_path / "cdb")
+    vs = VectorStore(llm_client=_FakeLLM(), path=path)
+    asyncio.run(vs.add_memory("hello world", {"character_id": 7}))
+
+    reloaded = VectorStore(llm_client=_FakeLLM(), path=path)
+    texts = [t for t, _m in reloaded.memories_store._docs.values()]
+    assert any("hello world" in t for t in texts)
+    assert not (vs.memories_path.parent / "memories.tmp").exists()

@@ -299,6 +299,23 @@ def _evolve_relationship_tags(
     stats["evolved_tags"] = sorted(evolved)
 
 
+def _apply_reflection_scene(target: Any, reflection: dict) -> None:
+    """Set location/mood from the grammar-constrained reflection JSON (SEC-01).
+
+    The per-turn regex fast-path (parse_actions_to_state) only catches explicitly
+    phrased '**walks into X**'-style moves, which a real model rarely emits, so
+    the HUD went stale. The reflection now reliably reports the current scene;
+    apply it to whichever target (live agent or a background chat) owns it."""
+    from src.backend.core.engine.state_transitions import normalize_state_label
+
+    loc = reflection.get("location")
+    if isinstance(loc, str) and loc.strip():
+        target.location = normalize_state_label(loc)
+    mood = reflection.get("mood")
+    if isinstance(mood, str) and mood.strip():
+        target.mood = mood.strip()[:60]
+
+
 def _fold_reflection_into_stats(stats: Dict[str, Any], reflection: dict) -> Optional[str]:
     """Apply the persona parts of a reflection (traits, facts, relationship delta,
     summary marker) into a stats dict IN PLACE. Returns the summary string, if
@@ -335,6 +352,7 @@ def _apply_reflection_to_agent(
     summary = _fold_reflection_into_stats(current_stats, reflection)
     if summary:
         agent.active_summary = _roll_active_summary(agent.active_summary, summary)
+    _apply_reflection_scene(agent, reflection)
 
     db.add(agent)
     _write_journal_entry(
@@ -371,6 +389,7 @@ def _apply_reflection_to_chat(
     summary = _fold_reflection_into_stats(current_stats, reflection)
     if summary:
         chat.active_summary = _roll_active_summary(chat.active_summary, summary)
+    _apply_reflection_scene(chat, reflection)
 
     _write_journal_entry(
         db,

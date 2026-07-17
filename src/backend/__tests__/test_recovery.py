@@ -250,3 +250,25 @@ def test_reflection_on_background_chat_targets_that_chat_not_live_state(db_sessi
     j = db.query(JournalEntry).filter(JournalEntry.character_id == char.id).all()
     assert len(j) == 1
     assert j[0].chat_id == chat_a.id
+
+
+def test_reflection_updates_location_and_mood(db_session):
+    # SEC-01: the grammar-constrained reflection reliably reports the current
+    # scene, so evolve applies location/mood (the per-turn regex fast-path misses
+    # most real narration).
+    db = db_session
+    char = Character(name="Scene", description="d")
+    db.add(char)
+    db.commit()
+    state = AgentState(character_id=char.id)
+    db.add(state)
+    db.commit()
+
+    evolve_character(
+        db,
+        char.id,
+        {"location": "the rooftop garden", "mood": "wistful", "relationship_change": 0},
+    )
+    db.refresh(state)
+    assert state.location == "Rooftop garden"  # article dropped, first-letter cap
+    assert state.mood == "wistful"

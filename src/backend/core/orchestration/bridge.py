@@ -14,7 +14,7 @@ from src.backend.core.context.macros import render_macros
 logger = logging.getLogger(__name__)
 
 REFLECTION_GRAMMAR = r"""
-root ::= "{" space "\"summary\"" ":" space string "," space "\"facts\"" ":" space list "," space "\"traits\"" ":" space list "," space "\"relationship_change\"" ":" space number "," space "\"diary_entry\"" ":" space string space "}"
+root ::= "{" space "\"summary\"" ":" space string "," space "\"facts\"" ":" space list "," space "\"traits\"" ":" space list "," space "\"relationship_change\"" ":" space number "," space "\"location\"" ":" space string "," space "\"mood\"" ":" space string "," space "\"diary_entry\"" ":" space string space "}"
 list ::= "[" space (string ("," space string)*)? space "]"
 string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])* "\""
 number ::= "-"? [0-9]+
@@ -382,6 +382,8 @@ class Brain:
             "Analyze the interaction. Extract a summary, new facts about the user, character trait updates, "
             "a relationship_change integer (ranging from -5 to +5) representing how much the user's bonding progress "
             "improved or declined based on their tone (positive/friendly = positive change, hostile/cold = negative change), "
+            "the character's CURRENT 'location' (a short place name, e.g. 'Kitchen', 'Rooftop garden') and current 'mood' "
+            "(one or two words) as they are by the end of these turns, "
             "and a 'diary_entry' string containing a 2-3 sentence diary entry written in the first person from the character's "
             "perspective. The diary entry must express their raw inner thoughts, emotional state, insecurities, or feelings of closeness "
             "regarding the user based on these recent interactions. JSON ONLY.\n\n"

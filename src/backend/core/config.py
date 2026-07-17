@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # distance, poisoning the context with stale/hallucinated content. Tunable.
     MEMORY_RELEVANCE_THRESHOLD: float = 0.5
 
+    # Weight of the recency bonus (0..1 of a normalized message-id proxy) blended
+    # into memory ranking, so a stale but marginally-similar old memory can't
+    # outrank a recent relevant one. Modest by design -- breaks near-ties toward
+    # "now" without overriding a clearly-stronger match. See query_memory (RQ-01).
+    MEMORY_RECENCY_WEIGHT: float = 0.15
+
     # Minimum fraction of the usable token budget reserved for conversation
     # history. Without a floor, fixed layer allocations (~1560 tok) exceed the
     # usable budget on small/quantized contexts and history_budget silently

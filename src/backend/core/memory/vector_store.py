@@ -231,12 +231,24 @@ class VectorStore:
         if min_relevance is None:
             min_relevance = settings.MEMORY_RELEVANCE_THRESHOLD
         try:
+            # Over-fetch, drop sub-threshold results, then re-rank blending cosine
+            # with a recency bonus so a stale but marginally-similar old memory
+            # can't outrank a recent relevant one (RQ-01). message_id
+            # (auto-increment) is a monotonic recency proxy.
+            fetch_k = max(n_results, n_results * 4)
             results = await self.memories_store.asimilarity_search_with_score(
-                query_text, k=n_results, filter=metadata_filter
+                query_text, k=fetch_k, filter=metadata_filter
             )
-            documents = [
-                doc.page_content for doc, score in results if score >= min_relevance
-            ]
+            kept = [(doc, score) for doc, score in results if score >= min_relevance]
+            if kept:
+                max_mid = max((d.metadata.get("message_id") or 0) for d, _ in kept) or 1
+                kept.sort(
+                    key=lambda ds: ds[1]
+                    + settings.MEMORY_RECENCY_WEIGHT
+                    * ((ds[0].metadata.get("message_id") or 0) / max_mid),
+                    reverse=True,
+                )
+            documents = [doc.page_content for doc, _ in kept[:n_results]]
             return {"documents": [documents]}
         except Exception as e:
             logger.error(f"Vector store query error: {e}")

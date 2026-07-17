@@ -204,8 +204,9 @@ async def test_vector_store_memory_operations(tmp_path):
         "query", n_results=3, metadata_filter={"user": "123"}
     )
     assert res == {"documents": [["mem_content"]]}
+    # Over-fetches n_results*4 candidates so the recency re-rank has room (RQ-01).
     mock_mem_store.asimilarity_search_with_score.assert_called_once_with(
-        "query", k=3, filter={"user": "123"}
+        "query", k=12, filter={"user": "123"}
     )
 
     # 4. Query memory exception

@@ -111,6 +111,21 @@ def test_query_memory_drops_results_below_relevance_threshold(tmp_path):
     assert all("poison" not in d for d in docs), "irrelevant memory leaked past the threshold"
 
 
+def test_query_memory_prefers_recent_on_similar_scores(tmp_path):
+    # RQ-01: with near-equal relevance, the more recent memory (higher
+    # message_id) should rank first, so the character doesn't forget 'now'.
+    vs = _make_vs(tmp_path)
+    old = (Document(id="o", page_content="OLD memory", metadata={"message_id": 1}), 0.80)
+    new = (Document(id="n", page_content="NEW memory", metadata={"message_id": 500}), 0.80)
+    vs.memories_store.asimilarity_search_with_score = AsyncMock(return_value=[old, new])
+
+    out = asyncio.run(vs.query_memory("q", n_results=2, min_relevance=0.5))
+    docs = out["documents"][0]
+
+    assert docs[0] == "NEW memory"
+    assert "OLD memory" in docs
+
+
 def test_clear_chat_history_purges_vector_memory():
     """The clear-chat endpoint must purge the character's vector memories,
     otherwise 'New Chat' still resurfaces old/hallucinated content via RAG."""

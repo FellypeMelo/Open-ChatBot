@@ -16,6 +16,7 @@ from src.backend.db.models import (
 )
 from src.backend.core.deps import brain, vector_store
 from src.backend.core.engine.engine import clamp_stat, DEFAULT_RELATIONSHIP_SCORE
+from src.backend.api.common import get_or_404
 
 MAX_IMPORT_PNG_BYTES = (
     5 * 1024 * 1024
@@ -50,7 +51,9 @@ class StateResponse(BaseModel):
     stats: dict
 
 
-class CharacterUpsert(BaseModel):
+class CharacterBase(BaseModel):
+    """The Tavern-card fields shared by the write DTO and the read model."""
+
     name: str
     description: str
     nickname: Optional[str] = ""
@@ -61,56 +64,64 @@ class CharacterUpsert(BaseModel):
     alternate_greetings: List[str] = []
     mes_example: Optional[str] = ""
     content_rating: Optional[str] = "limited"
+
+
+class CharacterUpsert(CharacterBase):
     tag_ids: List[int] = []
 
 
-class CharacterResponse(BaseModel):
+class CharacterResponse(CharacterBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    name: str
-    description: str
-    nickname: Optional[str] = ""
-    short_description: Optional[str] = ""
-    persona_prompt: Optional[str] = ""
-    scenario: Optional[str] = ""
-    first_mes: Optional[str] = ""
-    alternate_greetings: List[str] = []
-    mes_example: Optional[str] = ""
-    content_rating: Optional[str] = "limited"
     is_active: bool
     tags: List[TagSchema] = []
     state: Optional[StateResponse] = None
     avatar_url: Optional[str] = None
 
 
+async def _read_upload_within_limit(file: UploadFile, kind: str) -> bytes:
+    """Read an upload, rejecting anything over MAX_IMPORT_PNG_BYTES with a 413."""
+    content = await file.read(MAX_IMPORT_PNG_BYTES + 1)
+    if len(content) > MAX_IMPORT_PNG_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{kind} exceeds the {MAX_IMPORT_PNG_BYTES // (1024 * 1024)}MB limit",
+        )
+    return content
+
+
+def _parse_card_or_422(content: bytes):
+    """Parse a Tavern PNG character card, surfacing any failure as a 422."""
+    from src.backend.core.importer.png_parser import parse_png_character_card
+
+    try:
+        return parse_png_character_card(content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=422, detail=f"Failed to parse PNG card: {str(e)}"
+        )
+
+
+def _apply_upsert(char: Character, dto: CharacterUpsert, db: Session) -> None:
+    """Copy card fields from an upsert DTO onto a Character and (re)associate its
+    tags. Shared by create (new row) and update (existing row); an empty tag_ids
+    intentionally clears the tags."""
+    for key, value in dto.model_dump(exclude={"tag_ids"}).items():
+        setattr(char, key, value)
+    char.tags = db.query(Tag).filter(Tag.id.in_(dto.tag_ids)).all()
+
+
 @router.post("/", response_model=CharacterResponse)
 async def create_character(char: CharacterUpsert, db: Session = Depends(get_db)):
-    new_char = Character(
-        name=char.name,
-        description=char.description,
-        nickname=char.nickname,
-        short_description=char.short_description,
-        persona_prompt=char.persona_prompt,
-        scenario=char.scenario,
-        first_mes=char.first_mes,
-        alternate_greetings=char.alternate_greetings or [],
-        mes_example=char.mes_example,
-        content_rating=char.content_rating,
-    )
-
-    # Associate tags
-    if char.tag_ids:
-        tags = db.query(Tag).filter(Tag.id.in_(char.tag_ids)).all()
-        new_char.tags = tags
-
+    new_char = Character()
+    _apply_upsert(new_char, char, db)
     db.add(new_char)
     db.commit()
     db.refresh(new_char)
 
     # Initialize state
-    new_state = AgentState(character_id=new_char.id)
-    db.add(new_state)
+    db.add(AgentState(character_id=new_char.id))
     db.commit()
 
     return new_char
@@ -118,20 +129,8 @@ async def create_character(char: CharacterUpsert, db: Session = Depends(get_db))
 
 @router.post("/import-png", response_model=CharacterResponse)
 async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    content = await file.read(MAX_IMPORT_PNG_BYTES + 1)
-    if len(content) > MAX_IMPORT_PNG_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Character card exceeds the {MAX_IMPORT_PNG_BYTES // (1024 * 1024)}MB limit",
-        )
-    try:
-        from src.backend.core.importer.png_parser import parse_png_character_card
-
-        card = parse_png_character_card(content)
-    except Exception as e:
-        raise HTTPException(
-            status_code=422, detail=f"Failed to parse PNG card: {str(e)}"
-        )
+    content = await _read_upload_within_limit(file, "Character card")
+    card = _parse_card_or_422(content)
 
     description = card.data.description
     if card.data.personality:
@@ -193,20 +192,8 @@ async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)
 
 @router.post("/parse-png")
 async def parse_png(file: UploadFile = File(...)):
-    content = await file.read(MAX_IMPORT_PNG_BYTES + 1)
-    if len(content) > MAX_IMPORT_PNG_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Character card exceeds the {MAX_IMPORT_PNG_BYTES // (1024 * 1024)}MB limit",
-        )
-    try:
-        from src.backend.core.importer.png_parser import parse_png_character_card
-
-        card = parse_png_character_card(content)
-    except Exception as e:
-        raise HTTPException(
-            status_code=422, detail=f"Failed to parse PNG card: {str(e)}"
-        )
+    content = await _read_upload_within_limit(file, "Character card")
+    card = _parse_card_or_422(content)
 
     return {
         "name": card.data.name or "",
@@ -223,26 +210,8 @@ async def parse_png(file: UploadFile = File(...)):
 async def update_character(
     char_id: int, char: CharacterUpsert, db: Session = Depends(get_db)
 ):
-    existing = db.query(Character).filter(Character.id == char_id).first()
-    if not existing:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    existing.name = char.name
-    existing.description = char.description
-    existing.nickname = char.nickname
-    existing.short_description = char.short_description
-    existing.persona_prompt = char.persona_prompt
-    existing.scenario = char.scenario
-    existing.first_mes = char.first_mes
-    existing.alternate_greetings = char.alternate_greetings or []
-    existing.mes_example = char.mes_example
-    existing.content_rating = char.content_rating
-
-    # tag_ids defaults to [] on CharacterUpsert, so it is never None; an empty
-    # list intentionally clears the character's tags.
-    tags = db.query(Tag).filter(Tag.id.in_(char.tag_ids)).all()
-    existing.tags = tags
-
+    existing = get_or_404(db, Character, char_id, "Character")
+    _apply_upsert(existing, char, db)
     db.commit()
     db.refresh(existing)
     return existing
@@ -415,16 +384,8 @@ async def get_journal_entries(character_id: int, db: Session = Depends(get_db)):
 async def upload_character_avatar(
     char_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)
 ):
-    char = db.query(Character).filter(Character.id == char_id).first()
-    if not char:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    content = await file.read(MAX_IMPORT_PNG_BYTES + 1)
-    if len(content) > MAX_IMPORT_PNG_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Avatar image exceeds the {MAX_IMPORT_PNG_BYTES // (1024 * 1024)}MB limit",
-        )
+    char = get_or_404(db, Character, char_id, "Character")
+    content = await _read_upload_within_limit(file, "Avatar image")
 
     import os
 

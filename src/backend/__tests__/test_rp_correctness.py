@@ -44,6 +44,17 @@ def test_evolve_character_traits_do_not_overwrite_core_stats():
     assert agent.stats.get("mischief") == "high", "non-core trait should still merge"
 
 
+def test_roll_active_summary_dedups_repeated_line():
+    # RF-01: the same (possibly hallucinated) reflection claim must not compound
+    # every cycle -- re-appending an identical line is skipped.
+    from src.backend.core.engine.engine import _roll_active_summary
+
+    s1 = _roll_active_summary("", "The user loves pirates")
+    s2 = _roll_active_summary(s1, "The user loves pirates")
+
+    assert s2.count("The user loves pirates") == 1
+
+
 def test_merge_reflection_traits_protection_is_case_insensitive():
     # RF-07: an aliased core key ('Energy', 'Relationship') must be rejected too,
     # not leak into stats where a case-sensitive reader could later collide.

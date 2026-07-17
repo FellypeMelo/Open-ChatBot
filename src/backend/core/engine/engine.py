@@ -148,8 +148,13 @@ def _merge_reflection_traits(stats: Dict[str, Any], traits: Any) -> None:
 
 def _roll_active_summary(existing: Optional[str], summary: str) -> str:
     """Append the new summary line and keep only the most recent tail so the
-    rolling active summary can't grow without bound."""
-    new_active = f"{existing or ''}\n- {summary}".strip()
+    rolling active summary can't grow without bound. An identical line already
+    present is not re-appended, so a repeated (possibly hallucinated) claim can't
+    compound every reflection cycle (RF-01)."""
+    existing = existing or ""
+    if summary and summary.strip() and summary.strip() in existing:
+        return existing.strip()
+    new_active = f"{existing}\n- {summary}".strip()
     if len(new_active) > ACTIVE_SUMMARY_MAX_CHARS:
         new_active = "..." + new_active[-ACTIVE_SUMMARY_TAIL_CHARS:]
     return new_active

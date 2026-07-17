@@ -967,13 +967,19 @@ def test_clear_chat_history_resets_all_agent_state_defaults(client, db_session):
 
     _dt.fromisoformat(refreshed.stats["last_update"])
     stats_no_ts = {k: v for k, v in refreshed.stats.items() if k != "last_update"}
+    # A full reset now yields the same fresh-start persona as a new chat /
+    # character (single source: default_stats(), B8 review P3).
     assert stats_no_ts == {
         "energy": 100,
         "hunger": 0,
         "happiness": 100,
         "social": 100,
         "is_sleeping": False,
-        "relationship": {"score": 50, "history": [], "nickname": None},
+        "relationship": {
+            "score": 50,
+            "dynamic_preferences": ["teasing", "playful"],
+            "user_sentiment": "Neutral",
+        },
     }
 
 

@@ -281,13 +281,20 @@ def _load_chat_into_state(state: AgentState, chat: Chat):
     state.active_summary = chat.active_summary or ""
     state.interaction_count = chat.interaction_count or 0
     state.last_reflected_at_count = chat.last_reflected_at_count or 0
-    # Restore this storyline's persona snapshot (B8). A chat with no snapshot yet
-    # (created before the persona columns, pre-backfill) keeps the live persona.
+    # Restore this storyline's persona snapshot (B8). A chat with no snapshot
+    # (legacy row, or a character that had no agent state at backfill time) must
+    # start from a FRESH default -- never keep the outgoing chat's persona, which
+    # would bleed one storyline into another (B8 review P2).
     if chat.stats is not None:
         state.location = chat.location or "Living Room"
         state.mood = chat.mood or "Neutral"
         state.clothes = chat.clothes or "Casual"
         state.stats = chat.stats
+    else:
+        state.location = "Living Room"
+        state.mood = "Neutral"
+        state.clothes = "Casual"
+        state.stats = default_stats()
     state.active_chat_id = chat.id
 
 
@@ -975,17 +982,9 @@ async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
             # Wipe the running summary too; otherwise summary-based context
             # (including hallucinated content) survives a reset.
             state.active_summary = ""
-            state.stats = {
-                "energy": 100,
-                "hunger": 0,
-                "happiness": 100,
-                "social": 100,
-                "is_sleeping": False,
-                # Without last_update, update_needs early-returns forever and
-                # time-decay of needs freezes for the rest of the character's life.
-                "last_update": datetime.now(timezone.utc).isoformat(),
-                "relationship": {"score": 50, "history": [], "nickname": None},
-            }
+            # One source for the fresh-start persona (default_stats seeds
+            # last_update so need-decay isn't frozen -- ST-01) (B8 review P3).
+            state.stats = default_stats()
         # Null chat->message pointers before deleting the messages they reference.
         db.query(Chat).filter(Chat.character_id == character_id).update(
             {Chat.current_message_id: None}, synchronize_session=False

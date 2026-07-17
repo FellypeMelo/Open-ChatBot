@@ -264,3 +264,40 @@ def test_persona_is_per_chat_independent(db_session):
     chat_b = db.query(Chat).filter(Chat.id == chat_b_id).first()
     assert chat_b.mood == "Neutral"
     assert chat_b.stats["relationship"]["score"] == 50
+
+
+def test_switching_into_null_stats_chat_resets_not_bleed(db_session):
+    # B8 review P2: a chat with no persona snapshot (NULL stats) must load a
+    # FRESH default on switch-in, never inherit the outgoing chat's persona.
+    from src.backend.db.models import User
+    from src.backend.api.chat import _resolve_active_chat, _sync_state_to_chat
+
+    db = db_session
+    char = Character(name="Bleed", description="d")
+    db.add(char)
+    db.commit()
+    user = User.get_or_create_active(db)
+    state = AgentState(character_id=char.id)
+    db.add(state)
+    db.commit()
+    chat_a = Chat(character_id=char.id, title="A")
+    db.add(chat_a)
+    db.commit()
+    state.active_chat_id = chat_a.id
+    state.mood = "Angry"
+    st = dict(state.stats)
+    st["relationship"] = {"score": 90}
+    state.stats = st
+    _sync_state_to_chat(db, state, chat_a.id)
+    db.commit()
+
+    # Chat B has NULL stats (legacy / a character with no state at backfill).
+    chat_b = Chat(character_id=char.id, title="B", stats=None)
+    db.add(chat_b)
+    db.commit()
+
+    _resolve_active_chat(db, char, state, chat_b.id, user)
+    db.commit()
+    db.refresh(state)
+    assert state.mood == "Neutral", "outgoing persona bled into a NULL-stats chat"
+    assert state.stats["relationship"]["score"] == 50

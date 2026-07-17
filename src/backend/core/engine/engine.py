@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
-from src.backend.db.models import AgentState, Character, Tag, JournalEntry
+from src.backend.db.models import (
+    AgentState,
+    Character,
+    Tag,
+    JournalEntry,
+    Chat,
+    default_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,19 +208,23 @@ def _apply_relationship_change(stats: Dict[str, Any], rel_change: int) -> None:
 def _write_journal_entry(
     db: Session,
     character_id: int,
-    agent: AgentState,
+    mood: Optional[str],
     diary_content: Optional[str],
     summary: Optional[str],
     stats: Dict[str, Any],
+    chat_id: Optional[int] = None,
 ) -> None:
-    """Persist a diary entry for this reflection, if the reflection produced one."""
+    """Persist a diary entry for this reflection, if the reflection produced one.
+    Scoped to the reflecting chat (chat_id) so one storyline's diary can't leak
+    into another (B8)."""
     if not diary_content:
         return
     entry = JournalEntry(
         character_id=character_id,
+        chat_id=chat_id,
         content=diary_content,
         summary=summary or "",
-        mood_at_time=agent.mood or "Neutral",
+        mood_at_time=mood or "Neutral",
         relationship_score=_relationship_score(stats),
         energy_level=stats.get("energy", 100),
     )
@@ -288,33 +299,52 @@ def _evolve_relationship_tags(
     stats["evolved_tags"] = sorted(evolved)
 
 
-def _apply_reflection_to_agent(
-    db: Session, agent: AgentState, character_id: int, reflection: dict
-) -> None:
-    """Fold one reflection into the agent (traits, summary, facts, relationship,
-    journal, tag evolution). Reads only fresh `agent` state so it is safe to
-    re-run against a re-queried row on a concurrency retry."""
+def _fold_reflection_into_stats(stats: Dict[str, Any], reflection: dict) -> Optional[str]:
+    """Apply the persona parts of a reflection (traits, facts, relationship delta,
+    summary marker) into a stats dict IN PLACE. Returns the summary string, if
+    any, so the caller can roll it into the right active_summary. Shared by the
+    agent-target and chat-target reflection paths."""
     traits = reflection.get("traits", {})
     if isinstance(traits, list):
         traits = {"discovered_traits": traits}
+    _merge_reflection_traits(stats, traits)
+
     summary = reflection.get("summary")
-
-    current_stats = copy.deepcopy(agent.stats) if agent.stats else {}
-    _merge_reflection_traits(current_stats, traits)
-
     if summary:
-        current_stats["last_reflection_summary"] = summary
-        agent.active_summary = _roll_active_summary(agent.active_summary, summary)
+        stats["last_reflection_summary"] = summary
 
-    _append_unique_facts(current_stats, reflection.get("facts", []))
+    _append_unique_facts(stats, reflection.get("facts", []))
 
     rel_change = reflection.get("relationship_change", 0)
     if rel_change:
-        _apply_relationship_change(current_stats, rel_change)
+        _apply_relationship_change(stats, rel_change)
+    return summary
+
+
+def _apply_reflection_to_agent(
+    db: Session,
+    agent: AgentState,
+    character_id: int,
+    reflection: dict,
+    active_chat_id: Optional[int] = None,
+) -> None:
+    """Fold one reflection into the live agent (persona + journal + character tag
+    evolution). Used when the agent still mirrors the reflecting chat. Reads only
+    fresh `agent` state so it is safe to re-run on a concurrency retry."""
+    current_stats = copy.deepcopy(agent.stats) if agent.stats else {}
+    summary = _fold_reflection_into_stats(current_stats, reflection)
+    if summary:
+        agent.active_summary = _roll_active_summary(agent.active_summary, summary)
 
     db.add(agent)
     _write_journal_entry(
-        db, character_id, agent, reflection.get("diary_entry"), summary, current_stats
+        db,
+        character_id,
+        agent.mood,
+        reflection.get("diary_entry"),
+        summary,
+        current_stats,
+        chat_id=active_chat_id,
     )
 
     character = db.query(Character).filter(Character.id == character_id).first()
@@ -327,6 +357,31 @@ def _apply_reflection_to_agent(
     # JSON column snapshots at assignment, so an assign-then-mutate would lose
     # the later edits.
     agent.stats = current_stats
+
+
+def _apply_reflection_to_chat(
+    db: Session, chat: Chat, character_id: int, reflection: dict
+) -> None:
+    """Fold one reflection into a BACKGROUND chat's own persona snapshot -- used
+    when the user switched away during the reflect() call, so the live agent now
+    mirrors a different storyline and must NOT receive this reflection (B8, P1).
+    Character-level tag evolution is intentionally skipped: tags are shared and
+    must not be driven by a background storyline's relationship."""
+    current_stats = copy.deepcopy(chat.stats) if chat.stats else default_stats()
+    summary = _fold_reflection_into_stats(current_stats, reflection)
+    if summary:
+        chat.active_summary = _roll_active_summary(chat.active_summary, summary)
+
+    _write_journal_entry(
+        db,
+        character_id,
+        chat.mood,
+        reflection.get("diary_entry"),
+        summary,
+        current_stats,
+        chat_id=chat.id,
+    )
+    chat.stats = current_stats
 
 
 def evolve_character(
@@ -356,11 +411,27 @@ def evolve_character(
         if not agent:
             return
         try:
-            _apply_reflection_to_agent(db, agent, character_id, reflection)
-            if reflected_at_count is not None and (
+            on_reflecting_chat = (
                 active_chat_id is None or agent.active_chat_id == active_chat_id
-            ):
-                agent.last_reflected_at_count = reflected_at_count
+            )
+            if on_reflecting_chat:
+                # The live agent still mirrors the reflecting chat: apply to it
+                # (synced to that chat on the next turn/switch).
+                _apply_reflection_to_agent(
+                    db, agent, character_id, reflection, active_chat_id
+                )
+                if reflected_at_count is not None:
+                    agent.last_reflected_at_count = reflected_at_count
+            else:
+                # The user switched chats during the background reflect(): apply
+                # this reflection to the reflecting chat's OWN persona snapshot,
+                # never the now-active chat's live state, so a slow reflection
+                # can't corrupt or bleed across storylines (B8, P1).
+                chat = db.query(Chat).filter(Chat.id == active_chat_id).first()
+                if chat is not None:
+                    _apply_reflection_to_chat(db, chat, character_id, reflection)
+                    if reflected_at_count is not None:
+                        chat.last_reflected_at_count = reflected_at_count
             db.commit()
             return
         except StaleDataError:

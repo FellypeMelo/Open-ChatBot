@@ -199,3 +199,54 @@ def test_evolve_character_preserves_authored_warm_tag_on_cold_swing(db_session):
 
     labels = [t.label.lower() for t in char.tags]
     assert "affectionate" in labels, "authored tag must survive a cold swing"
+
+
+def test_reflection_on_background_chat_targets_that_chat_not_live_state(db_session):
+    # B8 review P1: if the user switched chats during the slow background
+    # reflect(), evolve_character must apply the reflection to the reflecting
+    # chat's OWN persona snapshot, never the now-active chat's live AgentState.
+    from src.backend.db.models import Chat
+
+    db = db_session
+    char = Character(name="Race", description="d")
+    db.add(char)
+    db.commit()
+    chat_a = Chat(
+        character_id=char.id,
+        title="A",
+        mood="Calm",
+        stats={"energy": 100, "relationship": {"score": 50}},
+    )
+    chat_b = Chat(character_id=char.id, title="B")
+    db.add_all([chat_a, chat_b])
+    db.commit()
+
+    state = AgentState(character_id=char.id)
+    db.add(state)
+    db.commit()
+    # The live agent has already switched to chat B (its persona: score 30).
+    state.active_chat_id = chat_b.id
+    st = dict(state.stats)
+    st["relationship"] = {"score": 30}
+    state.stats = st
+    db.commit()
+
+    # A reflection produced from chat A's turns lands while the agent mirrors B.
+    evolve_character(
+        db,
+        char.id,
+        {"relationship_change": 10, "diary_entry": "A only"},
+        active_chat_id=chat_a.id,
+    )
+
+    db.refresh(chat_a)
+    db.refresh(state)
+    assert chat_a.stats["relationship"]["score"] == 60, "not applied to reflecting chat A"
+    assert state.stats["relationship"]["score"] == 30, "corrupted the live (chat B) state"
+
+    # The diary entry is scoped to chat A, not leaked globally.
+    from src.backend.db.models import JournalEntry
+
+    j = db.query(JournalEntry).filter(JournalEntry.character_id == char.id).all()
+    assert len(j) == 1
+    assert j[0].chat_id == chat_a.id

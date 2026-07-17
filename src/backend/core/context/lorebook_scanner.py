@@ -2,6 +2,21 @@ import re
 import random
 from typing import List
 
+# A key made only of word characters/spaces is a plain literal, not an
+# author-written regex. Anything else (|, ., *, [], ...) is treated as an
+# intentional regex and used verbatim.
+_PLAIN_KEY = re.compile(r"^[\w\s]+$")
+
+
+def _key_to_pattern(key: str) -> str:
+    """Turn a lore key into the pattern actually searched. Plain-literal keys get
+    word-boundary anchors so 'cat' matches 'cat' but not 'category' (LB-02);
+    keys with regex metacharacters are honored as authored."""
+    stripped = key.strip()
+    if _PLAIN_KEY.match(stripped):
+        return r"\b" + re.escape(stripped) + r"\b"
+    return key
+
 
 class LorebookScanner:
     """
@@ -50,8 +65,13 @@ class LorebookScanner:
                     if not key_pattern or not str(key_pattern).strip():
                         continue
                     try:
-                        # Case insensitive word boundary match by default if not a complex regex
-                        if re.search(key_pattern, recent_text, re.IGNORECASE):
+                        # Case-insensitive, word-boundary match for plain keys;
+                        # explicit regex keys are honored as authored (LB-02).
+                        if re.search(
+                            _key_to_pattern(str(key_pattern)),
+                            recent_text,
+                            re.IGNORECASE,
+                        ):
                             matched = True
                             break
                     except re.error:

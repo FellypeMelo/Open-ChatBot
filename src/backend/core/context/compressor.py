@@ -22,8 +22,16 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
     if not state:
         return "State: Unknown"
 
+    loc = state.get("location", "Unknown")
+    mood = state.get("mood", "Neutral")
+
     stats = state.get("stats")
     if not isinstance(stats, dict):
+        # No usable stats, but a known location/mood still grounds the model in
+        # where the character is and how it feels -- don't collapse everything to
+        # "Unknown" and strip that context out (PB-03).
+        if loc != "Unknown" or mood != "Neutral":
+            return f"Loc:{loc} | Mood:{mood}"
         return "State: Unknown"
     energy = stats.get("energy", 100)
     hunger = stats.get("hunger", 0)
@@ -35,8 +43,6 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
     parts = []
 
     # Core state
-    loc = state.get("location", "Unknown")
-    mood = state.get("mood", "Neutral")
     parts.append(f"Loc:{loc} | Mood:{mood} | E:{energy}% | Rel:{score}%")
 
     # Forced physiological modifiers

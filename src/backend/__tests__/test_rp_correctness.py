@@ -91,8 +91,13 @@ def test_merge_reflection_traits_protection_is_case_insensitive():
 # --- State compression ------------------------------------------------------
 
 def test_compress_state_handles_none_stats():
-    # Must not raise AttributeError on None.get(...)
-    assert compress_state({"stats": None, "location": "x", "mood": "y"}) == "State: Unknown"
+    # Must not raise AttributeError on None.get(...). With no usable stats but a
+    # known location/mood, keep grounding the model in those instead of dropping
+    # everything to "Unknown" (PB-03).
+    out = compress_state({"stats": None, "location": "x", "mood": "y"})
+    assert "x" in out and "y" in out
+    # Truly empty (no loc/mood either) still collapses to Unknown.
+    assert compress_state({"stats": None}) == "State: Unknown"
 
 
 def test_compress_state_handles_nondict_relationship():
@@ -174,3 +179,20 @@ def test_lorebook_real_key_still_matches():
     scanner = _scanner_with([_lore_entry(keys=["dragon"], content="Dragons breathe fire")])
     out = scanner.scan_and_extract("I saw a dragon today", 1)
     assert out == ["Dragons breathe fire"]
+
+
+def test_lorebook_plain_key_matches_whole_word_not_substring():
+    # LB-02: a plain-word key must match on a word boundary, not as a substring.
+    # 'cat' firing on 'category' injects unrelated lore into every such turn --
+    # a silent poison source. The scanner's own comment already claims word-
+    # boundary matching; make the behavior match the claim.
+    scanner = _scanner_with([_lore_entry(keys=["cat"], content="CATLORE")])
+    assert "CATLORE" not in scanner.scan_and_extract("what is your category?", 1)
+    assert scanner.scan_and_extract("i have a cat", 1) == ["CATLORE"]
+
+
+def test_lorebook_explicit_regex_key_is_honored_as_authored():
+    # A key containing regex metacharacters is an intentional author-written
+    # pattern and must be used verbatim (no word-boundary wrapping).
+    scanner = _scanner_with([_lore_entry(keys=["drag.n"], content="DRAGON")])
+    assert scanner.scan_and_extract("i saw a dragon", 1) == ["DRAGON"]

@@ -15,7 +15,7 @@
 We are working on **Open-ChatBot**, a stateful, modular AI character platform.
 - **Backend**: Python (FastAPI/pytest). Uses `llama-server.exe` for model inference and embeddings (configured in `models_config.json`).
 - **Frontend**: React + TypeScript + Vite + TailwindCSS.
-- **Last Status**: Integrated dynamic server configuration and model selection for llama.cpp, implemented Settings UI, and updated ChatView/App components.
+- **Last Status**: Shipped the E.P.I.C. RP overhaul — E.P.I.C. master prompt + dual-position recency anchor, per-turn scene extractor, `dynamic_persona` static/dynamic toggle, card-cap removal + sentence-boundary truncation, 48k context + history-window cap, warmth-dial `compress_state`. Adversarially reviewed (ultracode) and hardened. See `CLAUDE.md` and `docs/architecture.md` for the current architecture.
 
 ## Corrections Log
 | 2026-06-22 | User Correction | Tried using `npm run test` instead of `pnpm`. | Under-specified initial package manager preference. Resolved: Always use `pnpm` in this workspace. |

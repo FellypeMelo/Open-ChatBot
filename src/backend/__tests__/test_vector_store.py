@@ -151,6 +151,15 @@ async def test_vector_store_lore_operations(tmp_path):
     res = await store.query_lore(["key1", "key2"])
     assert res == {"documents": [["lore_content"]]}
 
+    # 5b. SEC-05: a below-threshold (irrelevant) nearest neighbor is dropped.
+    low_doc = MagicMock()
+    low_doc.page_content = "irrelevant"
+    mock_lore_store.asimilarity_search_with_score = AsyncMock(
+        return_value=[(low_doc, 0.2)]
+    )
+    res = await store.query_lore(["unrelated"])
+    assert res == {"documents": [[]]}
+
     # 6. Query lore exception
     mock_lore_store.asimilarity_search_with_score.side_effect = Exception("Query error")
     res = await store.query_lore(["key"])

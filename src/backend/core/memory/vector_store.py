@@ -190,17 +190,25 @@ class VectorStore:
         keywords: List[str],
         n_results: int = 1,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        min_relevance: Optional[float] = None,
     ):
-        """Queries lore based on multiple keyword embeddings."""
+        """Queries lore by keyword embedding. Drops results below `min_relevance`
+        (cosine; defaults to settings.MEMORY_RELEVANCE_THRESHOLD) so an unrelated
+        query doesn't always inject the nearest neighbor regardless of distance
+        (SEC-05)."""
         if not keywords:
             return {"documents": [[]]}
+        if min_relevance is None:
+            min_relevance = settings.MEMORY_RELEVANCE_THRESHOLD
 
         query_text = " ".join(keywords)
         try:
             results = await self.lore_store.asimilarity_search_with_score(
                 query_text, k=n_results, filter=metadata_filter
             )
-            documents = [doc.page_content for doc, _ in results]
+            documents = [
+                doc.page_content for doc, score in results if score >= min_relevance
+            ]
             return {"documents": [documents]}
         except Exception as e:
             logger.error(f"Lore query error: {e}")

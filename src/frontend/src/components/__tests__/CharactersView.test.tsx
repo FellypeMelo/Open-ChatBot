@@ -8,13 +8,15 @@ describe('CharactersView', () => {
       id: 1,
       name: 'Sherlock Holmes',
       description: 'A brilliant detective.',
-      tags: [{ id: 10, label: 'Observant' }],
+      is_active: true,
+      tags: [{ id: 10, label: 'Observant', instruction: '' }],
     },
     {
       id: 2,
       name: 'John Watson',
       description: 'A loyal assistant.',
-      tags: [{ id: 20, label: 'Loyal' }],
+      is_active: true,
+      tags: [{ id: 20, label: 'Loyal', instruction: '' }],
     },
   ];
 

@@ -173,6 +173,7 @@ describe('CharacterCreator', () => {
       first_mes: 'Create anything.',
       mes_example: '{{char}}: let there be light',
       content_rating: 'limitless',
+      is_active: true,
       tags: [mockTags[1]], // Smart
     };
 

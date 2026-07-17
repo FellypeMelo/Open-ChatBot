@@ -1,3 +1,5 @@
+import type { MessageNode } from '../hooks/useMessageTree'
+
 // --- Shared request helpers -------------------------------------------------
 // Every endpoint below is the same shape: fetch, throw a labelled Error on a
 // non-OK response, then return the parsed body. These three helpers hold that
@@ -24,15 +26,15 @@ const requestOk = async (url: string, errorMessage: string, init: RequestInit): 
   return response.ok
 }
 
-export const fetchUser = async () => request('/users/me', 'Failed to fetch user')
+export const fetchUser = async () => request<User>('/users/me', 'Failed to fetch user')
 
-export const fetchCharacters = async () => request('/characters/', 'Failed to fetch characters')
+export const fetchCharacters = async () => request<Character[]>('/characters/', 'Failed to fetch characters')
 
-export const fetchTags = async () => request('/tags/', 'Failed to fetch tags')
+export const fetchTags = async () => request<Tag[]>('/tags/', 'Failed to fetch tags')
 
 export const fetchHistory = async (charId: number, chatId?: number) => {
   const qs = chatId != null ? `?chat_id=${chatId}` : ''
-  return request(`/history/${charId}${qs}`, 'Failed to fetch history')
+  return request<MessageNode[]>(`/history/${charId}${qs}`, 'Failed to fetch history')
 }
 
 export interface ChatSession {
@@ -70,13 +72,13 @@ export const fetchActions = async (): Promise<Record<string, string>> =>
   request('/chat/actions', 'Failed to fetch actions')
 
 export const updateUser = async (name: string, gender: string, persona_description?: string, appearance?: string) =>
-  request('/users/me', 'Failed to update user', jsonInit('POST', { name, gender, persona_description, appearance }))
+  request<User>('/users/me', 'Failed to update user', jsonInit('POST', { name, gender, persona_description, appearance }))
 
 export const createTag = async (label: string, instruction: string) =>
-  request('/tags/', 'Failed to create tag', jsonInit('POST', { label, instruction }))
+  request<Tag>('/tags/', 'Failed to create tag', jsonInit('POST', { label, instruction }))
 
 export const updateTag = async (id: number, label: string, instruction: string) =>
-  request(`/tags/${id}`, 'Failed to update tag', jsonInit('PUT', { label, instruction }))
+  request<Tag>(`/tags/${id}`, 'Failed to update tag', jsonInit('PUT', { label, instruction }))
 
 export const deleteTag = async (id: number) =>
   requestOk(`/tags/${id}`, 'Failed to delete tag', { method: 'DELETE' })
@@ -264,7 +266,7 @@ export const restartAllServers = async () =>
   request('/settings/restart-all', 'Failed to restart servers', { method: 'POST' })
 
 export const updateCharacterState = async (charId: number, stateUpdate: Record<string, unknown>) =>
-  request(`/characters/${charId}/state`, 'Failed to update character state', jsonInit('PUT', stateUpdate))
+  request<Character>(`/characters/${charId}/state`, 'Failed to update character state', jsonInit('PUT', stateUpdate))
 
 export const clearChatHistory = async (characterId: number) =>
   request(`/chat/clear/${characterId}`, 'Failed to clear chat history', { method: 'POST' })

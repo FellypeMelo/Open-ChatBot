@@ -646,11 +646,12 @@ function App() {
               setActiveModal(null)
               setEditingTag(null)
             }}
-            onSubmit={(label, instruction) => {
+            onSubmit={async (label, instruction) => {
               if (editingTag) {
-                return updateTag(editingTag.id, label, instruction)
+                await updateTag(editingTag.id, label, instruction)
+              } else {
+                await createTag(label, instruction)
               }
-              return createTag(label, instruction)
             }}
             tag={editingTag}
           />

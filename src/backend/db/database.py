@@ -23,6 +23,10 @@ def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
 
 
 def init_db():
+    # First-run / test convenience: create_all builds the current schema directly.
+    # Schema *evolution* on an existing database is owned by Alembic
+    # (src/backend/db/migrations); run `alembic upgrade head`. The ad-hoc
+    # ALTER TABLE blocks below remain only to carry pre-Alembic databases forward.
     import src.backend.db.models  # noqa: F401 -- registers all models on Base.metadata before create_all()
 
     Base.metadata.create_all(bind=engine)

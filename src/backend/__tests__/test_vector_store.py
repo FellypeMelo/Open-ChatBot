@@ -367,3 +367,49 @@ def test_consolidation_failure_keeps_originals(tmp_path, monkeypatch):
 
     assert len(_scope(vs, 1, 10)) == 6, "failed consolidation must not drop memories"
     assert llm.complete_calls == 1
+
+
+class _FakeLLMEmbedFailsOnSummary:
+    """Embeds every text EXCEPT the consolidated summary, which fails -- models a
+    transient embedding-server hiccup on the consolidation add step."""
+
+    def __init__(self, summary="CONDENSED SUMMARY"):
+        self._summary = summary
+        self.complete_calls = 0
+
+    async def embed(self, text):
+        if text == self._summary:
+            return None
+        vec = [0.1] * 8
+        vec[sum(map(ord, text)) % 8] = 1.0
+        return vec
+
+    async def complete(self, prompt, **kwargs):
+        self.complete_calls += 1
+        return {"content": self._summary}
+
+
+def test_consolidation_add_failure_keeps_originals(tmp_path, monkeypatch):
+    # RQ-05 (P2): summarize succeeds but STORING the consolidated memory fails
+    # (embedding-server hiccup on the add step). The oldest batch must NOT be
+    # lost -- the store must happen before the delete, never the reverse.
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMEmbedFailsOnSummary()
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"User: msg {i}\nAI: reply {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    # 6 originals must all survive; none consolidated away without a replacement.
+    scope = _scope(vs, 1, 10)
+    assert len(scope) == 6, "batch was deleted before its replacement was stored"
+    assert all(not m.get("consolidated") for _t, m in scope)

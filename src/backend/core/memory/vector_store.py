@@ -265,12 +265,20 @@ class VectorStore:
         if len(batch) < 2:
             return
 
+        batch_ids = [sid for sid, _t, _m in batch]
         condensed = await self._summarize_memories([t for _sid, t, _m in batch])
         if not condensed:
             return  # summarize failed -> keep the originals, try again next add
 
+        # A concurrent same-scope consolidation may have run during the await
+        # above and already removed this batch. If any batch id is gone, abort --
+        # re-consolidating a slice that no longer exists would create a duplicate
+        # consolidated memory (P3).
+        present = self.memories_store._docs.keys()
+        if not all(sid in present for sid in batch_ids):
+            return
+
         try:
-            self.memories_store.delete([sid for sid, _t, _m in batch])
             meta: Dict[str, Any] = {
                 "character_id": character_id,
                 "consolidated": True,
@@ -282,7 +290,13 @@ class VectorStore:
             keep_mid = max((m.get("message_id") or 0) for _s, _t, m in batch)
             if keep_mid:
                 meta["message_id"] = keep_mid
+            # Store the consolidated memory FIRST -- this is the step that can
+            # fail (aadd_texts embeds `condensed`; a transient embedding-server
+            # error raises). Only after it is safely stored do we delete the
+            # originals, so a failed add can never lose the batch with no
+            # replacement. Worst case is duplication (both kept), never loss.
             await self.memories_store.aadd_texts([condensed], metadatas=[meta])
+            self.memories_store.delete(batch_ids)
             self._atomic_dump(self.memories_store, self.memories_path)
             logger.info(
                 f"Consolidated {len(batch)} oldest memories for "

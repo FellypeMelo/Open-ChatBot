@@ -1,3 +1,4 @@
+import copy
 import json
 import subprocess
 from pathlib import Path
@@ -63,6 +64,26 @@ def test_runner_load_config_defaults_with_models():
                 runner = LlamaServerRunner()
                 assert runner.config["inference"]["model_path"] == "models/m1.gguf"
                 assert runner.config["embedding"]["model_path"] == "models/m2.gguf"
+
+
+def test_load_config_does_not_mutate_default_config():
+    """Regression: the no-config-file branch must deepcopy DEFAULT_CONFIG. A
+    shallow copy shared the nested dicts, so assigning model_path leaked into the
+    module-level constant and every later runner inherited the stale value."""
+    original = copy.deepcopy(DEFAULT_CONFIG)
+
+    mock_config_file = MagicMock(spec=Path)
+    mock_config_file.exists.return_value = False
+    with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
+        with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
+            with patch(
+                "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
+                return_value=["a.gguf", "b.gguf"],
+            ):
+                runner = LlamaServerRunner()
+                assert runner.config["inference"]["model_path"] == "models/a.gguf"
+
+    assert DEFAULT_CONFIG == original, "DEFAULT_CONFIG was mutated by load_config"
 
 
 def test_runner_load_config_exceptions():

@@ -112,7 +112,7 @@ class LlamaServerRunner:
                 # Ensure all keys exist
                 for key in ["inference", "embedding"]:
                     if key not in self.config:
-                        self.config[key] = DEFAULT_CONFIG[key].copy()
+                        self.config[key] = copy.deepcopy(DEFAULT_CONFIG[key])
                         updated = True
                     else:
                         for subkey, val in DEFAULT_CONFIG[key].items():
@@ -137,16 +137,8 @@ class LlamaServerRunner:
                         inf_args + " --cache-type-k q8_0 --cache-type-v turbo3"
                     ).strip()
                     updated = True
-                # -fa now requires an explicit value; upgrade any bare --flash-attn
-                healed = re.sub(
-                    r"--flash-attn(?!\s+(?:on|off|auto)\b)", "--flash-attn on", inf_args
-                )
-                if healed != inf_args:
-                    inf_args = healed
-                    updated = True
-                if "--flash-attn" not in inf_args:
-                    inf_args = (inf_args + " --flash-attn on").strip()
-                    updated = True
+                inf_args, changed = self._heal_flash_attn(inf_args)
+                updated = updated or changed
                 if "--parallel" not in inf_args and "-np" not in inf_args:
                     inf_args = (inf_args + " --parallel 1").strip()
                     updated = True
@@ -154,15 +146,8 @@ class LlamaServerRunner:
 
                 # Migrate old embedding settings
                 emb_args = self.config["embedding"].get("additional_args", "")
-                emb_healed = re.sub(
-                    r"--flash-attn(?!\s+(?:on|off|auto)\b)", "--flash-attn on", emb_args
-                )
-                if emb_healed != emb_args:
-                    emb_args = emb_healed
-                    updated = True
-                if "--flash-attn" not in emb_args:
-                    emb_args = (emb_args + " --flash-attn on").strip()
-                    updated = True
+                emb_args, changed = self._heal_flash_attn(emb_args)
+                updated = updated or changed
                 self.config["embedding"]["additional_args"] = emb_args
 
                 # Migrate embedding port to share port 8080 with inference if it's the old default (8081)
@@ -191,7 +176,7 @@ class LlamaServerRunner:
                 self.config = copy.deepcopy(DEFAULT_CONFIG)
                 updated = True
         else:
-            self.config = DEFAULT_CONFIG.copy()
+            self.config = copy.deepcopy(DEFAULT_CONFIG)
             models = self.get_available_models()
             if models:
                 self.config["inference"]["model_path"] = f"models/{models[0]}"
@@ -239,15 +224,11 @@ class LlamaServerRunner:
         return sorted(binaries)
 
     def get_status(self) -> Dict[str, Any]:
-        inference_running = (
-            self.inference_proc is not None and self.inference_proc.poll() is None
-        )
-        embedding_running = (
-            self.embedding_proc is not None and self.embedding_proc.poll() is None
-        )
+        inference_running = self._is_alive(self.inference_proc)
+        embedding_running = self._is_alive(self.embedding_proc)
 
         # Consolidation check: if ports are identical, embedding running status matches inference
-        if self.config["embedding"]["port"] == self.config["inference"]["port"]:
+        if self._is_consolidated:
             embedding_running = inference_running
 
         return {
@@ -262,6 +243,41 @@ class LlamaServerRunner:
             "available_models": self.get_available_models(),
             "available_binaries": self.get_available_binaries(),
         }
+
+    @property
+    def _is_consolidated(self) -> bool:
+        """True when the embedding server shares the inference server's port."""
+        return self.config["embedding"]["port"] == self.config["inference"]["port"]
+
+    @staticmethod
+    def _is_alive(proc) -> bool:
+        """True if a spawned process exists and has not yet exited."""
+        return proc is not None and proc.poll() is None
+
+    @staticmethod
+    def _ensure_embedding_args(extra_args: list) -> None:
+        """Add the embedding-server flags in place, without clobbering an explicit
+        user choice."""
+        if "--embedding" not in extra_args and "-emb" not in extra_args:
+            extra_args.append("--embedding")
+        if "--ubatch-size" not in extra_args and "-ub" not in extra_args:
+            extra_args.extend(["--ubatch-size", str(EMBEDDING_UBATCH_SIZE)])
+        if "--pooling" not in extra_args:
+            extra_args.extend(["--pooling", EMBEDDING_POOLING])
+
+    @staticmethod
+    def _heal_flash_attn(args: str) -> tuple:
+        """llama-server's -fa now requires an explicit value: upgrade a bare
+        --flash-attn to '--flash-attn on' and append it when absent. Returns
+        (healed_args, changed)."""
+        healed = re.sub(
+            r"--flash-attn(?!\s+(?:on|off|auto)\b)", "--flash-attn on", args
+        )
+        changed = healed != args
+        if "--flash-attn" not in healed:
+            healed = (healed + " --flash-attn on").strip()
+            changed = True
+        return healed, changed
 
     def _resolve_path(self, rel_path: str) -> Path:
         """Resolve a relative path against the project root captured at init time."""
@@ -410,14 +426,8 @@ class LlamaServerRunner:
         extra_args = extra.split() if extra else []
 
         # Consolidation: if the embedding server shares this port, serve both.
-        emb_cfg = self.config.get("embedding", {})
-        if emb_cfg.get("port") == cfg["port"]:
-            if "--embedding" not in extra_args and "-emb" not in extra_args:
-                extra_args.append("--embedding")
-            if "--ubatch-size" not in extra_args and "-ub" not in extra_args:
-                extra_args.extend(["--ubatch-size", str(EMBEDDING_UBATCH_SIZE)])
-            if "--pooling" not in extra_args:
-                extra_args.extend(["--pooling", EMBEDDING_POOLING])
+        if self._is_consolidated:
+            self._ensure_embedding_args(extra_args)
 
         # Enforce --parallel 1 unless set, to save slot-cache memory.
         if "--parallel" not in extra_args and "-np" not in extra_args:
@@ -431,17 +441,17 @@ class LlamaServerRunner:
 
     def start_embedding(self) -> bool:
         cfg = self.config["embedding"]
-        inf_cfg = self.config["inference"]
 
         # Consolidation: if ports match, the inference server serves embeddings.
-        if cfg["port"] == inf_cfg["port"]:
+        if self._is_consolidated:
             logger.info(
                 "[start_embedding] Consolidated server mode: using inference server for embeddings."
             )
-            inference_running = (
-                self.inference_proc is not None and self.inference_proc.poll() is None
+            return (
+                True
+                if self._is_alive(self.inference_proc)
+                else self.start_inference()
             )
-            return True if inference_running else self.start_inference()
 
         self.stop_embedding()
         logger.info("[start_embedding] Starting dedicated embedding server.")
@@ -454,12 +464,7 @@ class LlamaServerRunner:
 
         extra = cfg.get("additional_args", "").strip()
         extra_args = extra.split() if extra else []
-        if "--embedding" not in extra_args and "-emb" not in extra_args:
-            extra_args.append("--embedding")
-        if "--ubatch-size" not in extra_args and "-ub" not in extra_args:
-            extra_args.extend(["--ubatch-size", str(EMBEDDING_UBATCH_SIZE)])
-        if "--pooling" not in extra_args:
-            extra_args.extend(["--pooling", EMBEDDING_POOLING])
+        self._ensure_embedding_args(extra_args)
         args.extend(extra_args)
 
         return self._spawn_process(

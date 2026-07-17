@@ -103,9 +103,84 @@ describe('CharacterCreator', () => {
 
     fireEvent.change(screen.getByLabelText('Personality *'), { target: { value: 'A sly rogue.' } });
     fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 'A dark tavern.' } });
+    fireEvent.change(screen.getByPlaceholderText(/first message from your character/i), {
+      target: { value: 'Hello there.' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/example conversations/i), {
+      target: { value: '{{char}}: hi' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
     expect(screen.getAllByText('Personality').length).toBeGreaterThan(0);
+  });
+
+  it('adds and removes an alternate greeting on the Definition tab', () => {
+    render(<CharacterCreator {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Definition' }));
+
+    const ph = /Another opening message/i;
+    const before = screen.queryAllByPlaceholderText(ph).length;
+    fireEvent.click(screen.getByRole('button', { name: /Add alternate greeting/i }));
+    expect(screen.queryAllByPlaceholderText(ph).length).toBe(before + 1);
+
+    fireEvent.click(screen.getByTitle('Remove greeting'));
+    expect(screen.queryAllByPlaceholderText(ph).length).toBe(before);
+  });
+
+  it('imports Tavern card metadata from a dropped PNG', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          name: 'Imported',
+          description: 'desc',
+          personality: 'p',
+          scenario: 's',
+          first_mes: 'hi',
+          alternate_greetings: ['alt one'],
+          mes_example: 'ex',
+        }),
+      })
+    );
+
+    const { container } = render(<CharacterCreator {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['x'], 'card.png', { type: 'image/png' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    // name + nickname both become the imported name -> assert at least one.
+    await waitFor(() => expect(screen.getAllByDisplayValue('Imported').length).toBeGreaterThan(0));
+    vi.unstubAllGlobals();
+  });
+
+  it('shows an import error when the PNG carries no readable card', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    const { container } = render(<CharacterCreator {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['x'], 'a.png', { type: 'image/png' })] },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Could not read card metadata/i)).toBeInTheDocument()
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('handles a PNG parse network failure gracefully', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+    const { container } = render(<CharacterCreator {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['x'], 'a.png', { type: 'image/png' })] },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Failed to read the character card/i)).toBeInTheDocument()
+    );
+    vi.unstubAllGlobals();
   });
 
   it('warns when the permanent card exceeds the recommended token ceiling', () => {

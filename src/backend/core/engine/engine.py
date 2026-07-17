@@ -135,9 +135,15 @@ def _relationship_score(stats: Dict[str, Any]) -> int:
 
 
 def _merge_reflection_traits(stats: Dict[str, Any], traits: Any) -> None:
-    """Fold reflection-discovered traits into stats, skipping protected keys."""
-    if isinstance(traits, dict):
-        stats.update({k: v for k, v in traits.items() if k not in PROTECTED_TRAIT_KEYS})
+    """Fold reflection-discovered traits into stats, skipping protected keys.
+    The protection is case-insensitive so an aliased core key ('Energy',
+    'Relationship') can't slip past and pollute/clobber core state (RF-07)."""
+    if not isinstance(traits, dict):
+        return
+    for k, v in traits.items():
+        if isinstance(k, str) and k.lower() in PROTECTED_TRAIT_KEYS:
+            continue
+        stats[k] = v
 
 
 def _roll_active_summary(existing: Optional[str], summary: str) -> str:

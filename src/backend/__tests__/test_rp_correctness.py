@@ -44,6 +44,23 @@ def test_evolve_character_traits_do_not_overwrite_core_stats():
     assert agent.stats.get("mischief") == "high", "non-core trait should still merge"
 
 
+def test_merge_reflection_traits_protection_is_case_insensitive():
+    # RF-07: an aliased core key ('Energy', 'Relationship') must be rejected too,
+    # not leak into stats where a case-sensitive reader could later collide.
+    from src.backend.core.engine.engine import _merge_reflection_traits
+
+    stats = {"energy": 100, "relationship": {"score": 50}}
+    _merge_reflection_traits(
+        stats, {"Energy": 5, "Relationship": "corrupt", "mischief": "high"}
+    )
+
+    assert "Energy" not in stats
+    assert "Relationship" not in stats
+    assert stats["energy"] == 100
+    assert stats["relationship"] == {"score": 50}
+    assert stats["mischief"] == "high"
+
+
 # --- State compression ------------------------------------------------------
 
 def test_compress_state_handles_none_stats():

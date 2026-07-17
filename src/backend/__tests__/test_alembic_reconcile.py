@@ -79,3 +79,20 @@ def test_stamp_is_a_noop_under_testing(monkeypatch):
     monkeypatch.setattr(settings, "TESTING", True)
     # Must return without importing alembic.command / connecting anywhere.
     stamp_alembic_head_if_untracked()
+
+
+def test_wal_and_fk_pragmas_applied_on_file_db(tmp_path):
+    # PF: a file-backed connection gets WAL + FK enforcement (the one perf win
+    # from the analysis). WAL is unsupported on :memory:, so test a file DB.
+    import sqlite3
+    from src.backend.db.database import _apply_sqlite_pragmas
+
+    conn = sqlite3.connect(str(tmp_path / "wal.db"))
+    try:
+        _apply_sqlite_pragmas(conn)
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    finally:
+        conn.close()
+    assert mode.lower() == "wal"
+    assert fk == 1

@@ -10,16 +10,32 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def _apply_sqlite_pragmas(dbapi_connection):
+    """Per-connection SQLite pragmas:
+    - foreign_keys=ON: SQLite ships FK enforcement OFF, so ondelete=CASCADE never
+      fired and deleting a character/chat orphaned its messages/journals/lore.
+    - journal_mode=WAL + synchronous=NORMAL: the default rollback journal fsyncs
+      and takes an exclusive lock on every COMMIT, and a normal turn commits 3+
+      times while the background reflection commits concurrently -- under a
+      rollback journal that background writer also blocks the next turn's reads.
+      WAL lets the single writer and readers proceed without blocking each other
+      and makes each commit far cheaper, while staying fully durable. NORMAL only
+      risks the last committed transaction on an OS-level power loss -- acceptable
+      for a local app and no weaker than the vector store's own durability.
+      (No-op / stays 'memory' on in-memory test DBs, which don't support WAL.)"""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
+
 @event.listens_for(engine, "connect")
-def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
-    """SQLite ships with FK enforcement OFF by default, so ondelete=CASCADE
-    never fired and deleting a character/chat orphaned its messages, journals
-    and lore. Turn it on for every connection. (Endpoints also clean up
-    explicitly, so isolated test engines without this listener stay correct.)"""
+def _configure_sqlite_connection(dbapi_connection, connection_record):
+    # Endpoints also clean up explicitly, so isolated test engines without this
+    # listener stay correct.
     try:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+        _apply_sqlite_pragmas(dbapi_connection)
     except Exception:
         pass
 

@@ -86,7 +86,18 @@ class LlamaCppEmbeddings(Embeddings):
     async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
         tasks = [self.llm_client.embed(t) for t in texts]
         results = await asyncio.gather(*tasks)
-        return [r for r in results if r is not None]
+        # Preserve strict 1:1 text<->vector order. Silently dropping a failed
+        # (None) embedding shifts every later vector onto the wrong text and
+        # metadata in a batch add -> cross-character/chat contamination. Fail
+        # loudly instead, so the caller aborts the whole add rather than
+        # persisting misaligned memories (SEC-03).
+        if any(r is None for r in results):
+            n_failed = sum(1 for r in results if r is None)
+            raise ValueError(
+                f"{n_failed}/{len(results)} embeddings failed; aborting add to "
+                "keep text<->metadata alignment intact"
+            )
+        return list(results)
 
     async def aembed_query(self, text: str) -> List[float]:
         res = await self.llm_client.embed(text)

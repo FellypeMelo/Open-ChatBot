@@ -66,9 +66,13 @@ async def test_llama_cpp_embeddings_methods():
     with patch.object(embeddings, "embed_documents", return_value=[]) as mock_emb:
         assert embeddings.embed_query("test") == []
 
-    # aembed_documents
-    res_docs = await embeddings.aembed_documents(["test", "fail"])
-    assert res_docs == [[0.1]]
+    # aembed_documents must NOT silently drop a failed embedding -- that would
+    # misalign text<->metadata in a batch add. It raises so the caller aborts
+    # the whole add instead (SEC-03).
+    with pytest.raises(ValueError):
+        await embeddings.aembed_documents(["test", "fail"])
+    # All-successful stays 1:1 and ordered.
+    assert await embeddings.aembed_documents(["test", "test"]) == [[0.1], [0.1]]
 
     # aembed_query
     assert await embeddings.aembed_query("test") == [0.1]

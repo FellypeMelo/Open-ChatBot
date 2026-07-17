@@ -182,6 +182,10 @@ class AgentState(Base):
         ForeignKey("characters.id", ondelete="CASCADE"),
         unique=True,
         index=True,
+        # Owning key: an agent state without a character is meaningless, and a
+        # UNIQUE index over a nullable column lets SQLite hold multiple NULL rows,
+        # half-opening the "one state per character" invariant (ER review B4).
+        nullable=False,
     )
     # Pointer FKs: SET NULL, never CASCADE -- deleting the pointed-at message or
     # chat must clear the pointer, not delete the whole agent state.
@@ -248,8 +252,17 @@ class AgentState(Base):
 
 class MessageNode(Base):
     __tablename__ = "message_nodes"
+    # parent_id is the most-queried predicate in the app (variant COUNT, subtree
+    # sweep, branch walk) -- index it, plus composites for the subtree walk and
+    # the per-chat active-history fetch (ER review B3).
+    __table_args__ = (
+        Index("ix_message_nodes_parent_active", "parent_id", "is_active"),
+        Index("ix_message_nodes_chat_active_ts", "chat_id", "is_active", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    parent_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
+    parent_id = Column(
+        Integer, ForeignKey("message_nodes.id"), nullable=True, index=True
+    )
     role = Column(String)  # 'user' or 'assistant'
     content = Column(Text)  # Raw message or sequence JSON
     type = Column(String, default="speech")  # 'thought', 'action', 'speech'

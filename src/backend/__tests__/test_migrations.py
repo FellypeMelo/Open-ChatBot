@@ -55,3 +55,37 @@ def test_migrations_upgrade_head_builds_full_schema():
             os.unlink(path)
         except OSError:
             pass
+
+
+def test_migration_adds_parent_indexes_and_character_id_notnull():
+    # Guards the 4856088c4fcd migration (ER review B3/B4): after upgrade head the
+    # parent_id indexes exist and agent_states.character_id is NOT NULL.
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    url = "sqlite:///" + path.replace(os.sep, "/")
+    try:
+        command.upgrade(_alembic_config(url), "head")
+
+        conn = sqlite3.connect(path)
+        try:
+            index_names = {
+                row[1]
+                for row in conn.execute("PRAGMA index_list('message_nodes')")
+            }
+            assert "ix_message_nodes_parent_id" in index_names
+            assert "ix_message_nodes_parent_active" in index_names
+            assert "ix_message_nodes_chat_active_ts" in index_names
+
+            # PRAGMA table_info columns: (cid, name, type, notnull, dflt, pk).
+            notnull = {
+                row[1]: row[3]
+                for row in conn.execute("PRAGMA table_info('agent_states')")
+            }
+            assert notnull["character_id"] == 1, "character_id must be NOT NULL"
+        finally:
+            conn.close()
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass

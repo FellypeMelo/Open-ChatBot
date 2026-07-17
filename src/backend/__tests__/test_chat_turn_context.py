@@ -1119,6 +1119,34 @@ def test_chat_schedules_consciousness_with_message_id_and_store_memory(
     assert kwargs["store_memory"] is True
 
 
+def test_chat_empty_reply_stores_no_memory(client, db_session):
+    # PZ-07: an empty/failed non-stream reply must not persist an assistant node
+    # or store a "User: ..\nAI: " memory (the stream path already guards this).
+    char = Character(id=523, name="EmptyReplyChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=523))
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "   "}
+        resp = client.post("/chat", json={"character_id": 523, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_not_called()
+    assistant_nodes = (
+        db_session.query(MessageNode)
+        .filter(MessageNode.character_id == 523, MessageNode.role == "assistant")
+        .all()
+    )
+    assert assistant_nodes == []
+
+
 def test_delete_message_not_found_returns_404(client, db_session):
     resp = client.delete("/chat/message/999999")
     assert resp.status_code == 404

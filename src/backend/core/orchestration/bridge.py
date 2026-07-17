@@ -133,13 +133,9 @@ class Brain:
                 )
                 lore_context = "\nLore:\n" + lore_text
 
-        # Layer 1.5: Summary
-        active_summary = state.get("active_summary", "") if state else ""
-        if active_summary:
-            active_summary = self._truncate_tokens(
-                active_summary, allocations.get("chat_summary", 200)
-            )
-        summary_context = f"\nSummary:\n{active_summary}\n" if active_summary else ""
+        # Layer 1.5: Summary (raw here; sanitized + assembled below once _names
+        # is known, so the LLM-generated summary can't forge role markers, PZ-06).
+        raw_summary = state.get("active_summary", "") if state else ""
 
         # Layer 2: History (Dynamic Sliding Window)
         user_name = user.name if user else "User"
@@ -199,6 +195,15 @@ class Brain:
             joined = " ".join(s for s in sanitized if s)
             if joined:
                 context = self._truncate_tokens(joined, allocations.get("memory", 400))
+
+        summary_context = ""
+        if raw_summary:
+            clean_summary = self._truncate_tokens(
+                self._sanitize(raw_summary, _names),
+                allocations.get("chat_summary", 200),
+            )
+            if clean_summary:
+                summary_context = f"\nSummary:\n{clean_summary}\n"
         short_desc = getattr(character, "short_description", None) or getattr(character, "description", None) or ""
         short_desc = self._sanitize(render_macros(short_desc, char_name, user_name), _names)
         identity = (

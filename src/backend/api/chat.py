@@ -882,19 +882,23 @@ async def chat(
             # For now, we log and proceed to maintain responsiveness,
             # but could append a correction instruction to the next prompt.
 
-        parse_actions_to_state(reply, ctx.state)
-        ai_msg = _persist_assistant_reply(db, ctx.state, ctx, reply, request_id)
+        # Only persist + remember a real reply. An empty/failed generation must
+        # not leave a blank assistant node or a "User: ..\nAI: " memory (PZ-07;
+        # mirrors the /chat/stream guard).
+        if reply.strip():
+            parse_actions_to_state(reply, ctx.state)
+            ai_msg = _persist_assistant_reply(db, ctx.state, ctx, reply, request_id)
 
-        background_tasks.add_task(
-            run_consciousness_layer,
-            ctx.character.id,
-            ctx.user_message_content or "",
-            reply,
-            force_reflect=ctx.force_reflect,
-            chat_id=ctx.chat_id,
-            store_memory=not ctx.is_action,
-            message_id=ai_msg.id,
-        )
+            background_tasks.add_task(
+                run_consciousness_layer,
+                ctx.character.id,
+                ctx.user_message_content or "",
+                reply,
+                force_reflect=ctx.force_reflect,
+                chat_id=ctx.chat_id,
+                store_memory=not ctx.is_action,
+                message_id=ai_msg.id,
+            )
 
         latency = (
             {"total": time.perf_counter() - start} if settings.DEBUG_LATENCY else {}

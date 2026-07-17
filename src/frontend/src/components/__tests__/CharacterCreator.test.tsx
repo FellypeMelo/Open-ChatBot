@@ -28,7 +28,7 @@ describe('CharacterCreator', () => {
         ok: true,
         json: () => Promise.resolve({ tokens: 10 }),
       })
-    ) as any;
+    ) as unknown as typeof fetch;
   });
 
   it('should render form for creating a new character', () => {

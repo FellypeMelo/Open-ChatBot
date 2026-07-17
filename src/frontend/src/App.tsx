@@ -11,7 +11,8 @@ import TagCreator from './components/TagCreator'
 import ErrorBoundary from './components/ErrorBoundary'
 import * as api from './services/api'
 import type { MessageNode } from './hooks/useMessageTree'
-import type { Character, Tag, User } from './services/api'
+import type { Character, CharacterInput, Tag, User } from './services/api'
+import type { CharacterFormData } from './components/CharacterCreator'
 import { useSettings } from './hooks/useSettings'
 
 type View = 'chat' | 'characters' | 'archives' | 'library'
@@ -28,6 +29,32 @@ const TEMP_ID_RANGE = 1000000
 const TOAST_DURATION_MS = 3000
 
 const generateMessageId = () => Math.floor(Math.random() * TEMP_ID_RANGE) + Date.now();
+
+// Map the creator form shape to the API payload (tagIds -> tag_ids, drop the file).
+const toCharacterPayload = (data: CharacterFormData): CharacterInput => ({
+  name: data.name,
+  description: data.description,
+  nickname: data.nickname,
+  short_description: data.short_description,
+  persona_prompt: data.persona_prompt,
+  scenario: data.scenario,
+  first_mes: data.first_mes,
+  alternate_greetings: data.alternate_greetings,
+  mes_example: data.mes_example,
+  content_rating: data.content_rating,
+  tag_ids: data.tagIds,
+  compress_backstory: false
+})
+
+// Upload an avatar for a saved character; returns the new URL or null on failure.
+const uploadAvatar = async (characterId: number, file: File): Promise<string | null> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const resp = await fetch(`/characters/${characterId}/avatar`, { method: 'POST', body: formData })
+  if (!resp.ok) return null
+  const result = await resp.json()
+  return result.avatar_url ?? null
+}
 
 function App() {
   const { config } = useSettings()
@@ -218,47 +245,13 @@ function App() {
     }
   }
 
-  const createCharacter = async (data: {
-    name: string
-    description: string
-    nickname: string
-    short_description: string
-    persona_prompt: string
-    scenario: string
-    first_mes: string
-    alternate_greetings: string[]
-    mes_example: string
-    content_rating: string
-    tagIds: number[]
-    avatarFile: File | null
-  }) => {
+  const createCharacter = async (data: CharacterFormData) => {
     try {
-      const characterData = await api.createCharacter({
-        name: data.name,
-        description: data.description,
-        nickname: data.nickname,
-        short_description: data.short_description,
-        persona_prompt: data.persona_prompt,
-        scenario: data.scenario,
-        first_mes: data.first_mes,
-        alternate_greetings: data.alternate_greetings,
-        mes_example: data.mes_example,
-        content_rating: data.content_rating,
-        tag_ids: data.tagIds,
-        compress_backstory: false
-      })
+      const characterData = await api.createCharacter(toCharacterPayload(data))
 
       if (data.avatarFile) {
-        const formData = new FormData()
-        formData.append('file', data.avatarFile)
-        const uploadResponse = await fetch(`/characters/${characterData.id}/avatar`, {
-          method: 'POST',
-          body: formData
-        })
-        if (uploadResponse.ok) {
-          const uploadResult = await uploadResponse.json()
-          characterData.avatar_url = uploadResult.avatar_url
-        }
+        const url = await uploadAvatar(characterData.id, data.avatarFile)
+        if (url) characterData.avatar_url = url
       }
 
       setCharacters((prev) => [...prev, characterData])
@@ -270,50 +263,13 @@ function App() {
     }
   }
 
-  const updateCharacter = async (
-    id: number,
-    data: {
-      name: string
-      description: string
-      nickname: string
-      short_description: string
-      persona_prompt: string
-      scenario: string
-      first_mes: string
-      alternate_greetings: string[]
-      mes_example: string
-      content_rating: string
-      tagIds: number[]
-      avatarFile: File | null
-    }
-  ) => {
+  const updateCharacter = async (id: number, data: CharacterFormData) => {
     try {
-      const characterData = await api.updateCharacter(id, {
-        name: data.name,
-        description: data.description,
-        nickname: data.nickname,
-        short_description: data.short_description,
-        persona_prompt: data.persona_prompt,
-        scenario: data.scenario,
-        first_mes: data.first_mes,
-        alternate_greetings: data.alternate_greetings,
-        mes_example: data.mes_example,
-        content_rating: data.content_rating,
-        tag_ids: data.tagIds,
-        compress_backstory: false
-      })
+      const characterData = await api.updateCharacter(id, toCharacterPayload(data))
 
       if (data.avatarFile) {
-        const formData = new FormData()
-        formData.append('file', data.avatarFile)
-        const uploadResponse = await fetch(`/characters/${characterData.id}/avatar`, {
-          method: 'POST',
-          body: formData
-        })
-        if (uploadResponse.ok) {
-          const uploadResult = await uploadResponse.json()
-          characterData.avatar_url = uploadResult.avatar_url
-        }
+        const url = await uploadAvatar(characterData.id, data.avatarFile)
+        if (url) characterData.avatar_url = url
       }
 
       setCharacters((prev) => prev.map((c) => (c.id === id ? characterData : c)))

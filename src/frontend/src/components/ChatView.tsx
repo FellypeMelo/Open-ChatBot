@@ -247,6 +247,13 @@ const ChatView: React.FC<ChatViewProps> = ({
     setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500)
   }
 
+  // Nudge a 0-100 stat by delta (clamped) and persist. Shared by every stat button.
+  const adjustStat = (key: string, current: number, delta: number) => {
+    if (!activeChar) return
+    const next = Math.max(0, Math.min(100, current + delta))
+    onUpdateState(activeChar.id, { stats: { [key]: next } })
+  }
+
   return (
     <div className="flex-1 flex flex-col h-full bg-[#050505] overflow-hidden relative">
       {/* Background vignette & blur gradients */}
@@ -377,7 +384,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <span className="text-white">{activeChar?.state?.stats?.hunger}%</span>
                 <button
                   type="button"
-                  onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { hunger: Math.max(0, (activeChar.state?.stats?.hunger ?? 0) - 30) } })}
+                  onClick={() => adjustStat('hunger', activeChar?.state?.stats?.hunger ?? 0, -30)}
                   className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none disabled:opacity-20"
                   disabled={activeChar?.state?.stats?.hunger === 0}
                 >
@@ -388,24 +395,24 @@ const ChatView: React.FC<ChatViewProps> = ({
               <StatBar label="HAPPINESS" percent={activeChar?.state?.stats?.happiness ?? 100}>
                 <span className="text-white">{activeChar?.state?.stats?.happiness ?? 100}%</span>
                 <AdjustButtons
-                  onDecrement={() => activeChar && onUpdateState(activeChar.id, { stats: { happiness: Math.max(0, (activeChar.state?.stats?.happiness ?? 100) - 10) } })}
-                  onIncrement={() => activeChar && onUpdateState(activeChar.id, { stats: { happiness: Math.min(100, (activeChar.state?.stats?.happiness ?? 100) + 10) } })}
+                  onDecrement={() => adjustStat('happiness', activeChar?.state?.stats?.happiness ?? 100, -10)}
+                  onIncrement={() => adjustStat('happiness', activeChar?.state?.stats?.happiness ?? 100, 10)}
                 />
               </StatBar>
 
               <StatBar label="SOCIAL" percent={activeChar?.state?.stats?.social ?? 100}>
                 <span className="text-white">{activeChar?.state?.stats?.social ?? 100}%</span>
                 <AdjustButtons
-                  onDecrement={() => activeChar && onUpdateState(activeChar.id, { stats: { social: Math.max(0, (activeChar.state?.stats?.social ?? 100) - 10) } })}
-                  onIncrement={() => activeChar && onUpdateState(activeChar.id, { stats: { social: Math.min(100, (activeChar.state?.stats?.social ?? 100) + 10) } })}
+                  onDecrement={() => adjustStat('social', activeChar?.state?.stats?.social ?? 100, -10)}
+                  onIncrement={() => adjustStat('social', activeChar?.state?.stats?.social ?? 100, 10)}
                 />
               </StatBar>
 
               <StatBar label="RELATIONSHIP" percent={activeChar?.state?.stats?.relationship?.score} barClass="bg-emerald-400">
                 <span className="text-white">{activeChar?.state?.stats?.relationship?.score}%</span>
                 <AdjustButtons
-                  onDecrement={() => activeChar && onUpdateState(activeChar.id, { stats: { relationship_score: Math.max(0, (activeChar.state?.stats?.relationship?.score ?? 0) - 10) } })}
-                  onIncrement={() => activeChar && onUpdateState(activeChar.id, { stats: { relationship_score: Math.min(100, (activeChar.state?.stats?.relationship?.score ?? 0) + 10) } })}
+                  onDecrement={() => adjustStat('relationship_score', activeChar?.state?.stats?.relationship?.score ?? 0, -10)}
+                  onIncrement={() => adjustStat('relationship_score', activeChar?.state?.stats?.relationship?.score ?? 0, 10)}
                 />
               </StatBar>
             </div>

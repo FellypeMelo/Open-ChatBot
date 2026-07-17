@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     # "now" without overriding a clearly-stronger match. See query_memory (RQ-01).
     MEMORY_RECENCY_WEIGHT: float = 0.15
 
+    # Per-(character, chat) memory-store cap. When a scope exceeds this, the
+    # oldest MEMORY_CONSOLIDATE_BATCH memories are condensed by the LLM into a
+    # single consolidated memory, so the store stays bounded without hard-losing
+    # ancient history to eviction (RQ-05). Set to 0 to disable consolidation.
+    MEMORY_STORE_CAP: int = 500
+    # How many of the oldest memories to fold into one consolidated summary each
+    # time the cap is exceeded. Condensing only the oldest slice (not the whole
+    # store) keeps recent memories full-fidelity and avoids re-compressing
+    # already-condensed text every cycle.
+    MEMORY_CONSOLIDATE_BATCH: int = 100
+
     # Minimum fraction of the usable token budget reserved for conversation
     # history. Without a floor, fixed layer allocations (~1560 tok) exceed the
     # usable budget on small/quantized contexts and history_budget silently

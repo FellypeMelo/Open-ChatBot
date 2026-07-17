@@ -261,3 +261,105 @@ def test_atomic_dump_persists_and_reloads(tmp_path):
     texts = [t for t, _m in reloaded.memories_store._docs.values()]
     assert any("hello world" in t for t in texts)
     assert not (vs.memories_path.parent / "memories.tmp").exists()
+
+
+class _FakeLLMWithComplete:
+    """Deterministic embeddings + a mockable complete() for consolidation."""
+
+    def __init__(self, summary="CONDENSED SUMMARY", fail=False):
+        self._summary = summary
+        self._fail = fail
+        self.complete_calls = 0
+
+    async def embed(self, text):
+        vec = [0.1] * 8
+        vec[sum(map(ord, text)) % 8] = 1.0
+        return vec
+
+    async def complete(self, prompt, **kwargs):
+        self.complete_calls += 1
+        if self._fail:
+            raise RuntimeError("llm unavailable")
+        return {"content": self._summary}
+
+
+def _scope(vs, character_id, chat_id):
+    return [
+        (t, m)
+        for t, m in vs.memories_store._docs.values()
+        if m.get("character_id") == character_id and m.get("chat_id") == chat_id
+    ]
+
+
+def test_memory_consolidation_condenses_oldest_when_capped(tmp_path, monkeypatch):
+    # RQ-05: exceeding the cap folds the oldest batch into one consolidated
+    # memory, leaving recent memories intact.
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMWithComplete()
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"User: msg {i}\nAI: reply {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    scope = _scope(vs, 1, 10)
+    assert len(scope) == 4, "should be 6 - 3 oldest + 1 consolidated"
+    assert llm.complete_calls == 1
+    assert any(m.get("consolidated") for _t, m in scope)
+    assert any("CONDENSED SUMMARY" in t for t, _m in scope)
+    # The most recent originals survive full-fidelity.
+    assert any("reply 5" in t for t, _m in scope)
+
+
+def test_consolidation_is_scoped_and_spares_other_chats(tmp_path, monkeypatch):
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMWithComplete()
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"chat10 msg {i}", {"character_id": 1, "chat_id": 10, "message_id": i + 1}
+            )
+        for i in range(2):
+            await vs.add_memory(
+                f"chat20 msg {i}", {"character_id": 1, "chat_id": 20, "message_id": i + 1}
+            )
+
+    asyncio.run(run())
+
+    assert len(_scope(vs, 1, 20)) == 2, "a different chat's memories must be untouched"
+
+
+def test_consolidation_failure_keeps_originals(tmp_path, monkeypatch):
+    # A failed summarize must NOT delete the batch (no data loss without a
+    # replacement in hand).
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMWithComplete(fail=True)
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"User: msg {i}\nAI: reply {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    assert len(_scope(vs, 1, 10)) == 6, "failed consolidation must not drop memories"
+    assert llm.complete_calls == 1

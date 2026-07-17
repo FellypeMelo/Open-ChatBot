@@ -196,8 +196,83 @@ class VectorStore:
             )
             self._atomic_dump(self.memories_store, self.memories_path)
             logger.info("Successfully added memory to TurboVec store and persisted.")
+            # Keep the store bounded: if this (character, chat) scope now exceeds
+            # the cap, fold its oldest memories into one consolidated summary
+            # (RQ-05). Runs after the successful add so a consolidation failure
+            # never blocks storing the new memory.
+            if metadata and metadata.get("character_id") is not None:
+                await self._maybe_consolidate(
+                    metadata.get("character_id"), metadata.get("chat_id")
+                )
         except Exception as e:
             logger.error(f"Error adding to vector store: {e}")
+
+    async def _summarize_memories(self, texts: List[str]) -> str:
+        """Condense a batch of older memory texts into one concise summary via
+        the LLM. Returns "" on any failure so the caller never deletes memories
+        without a replacement in hand."""
+        joined = "\n---\n".join(texts)
+        prompt = (
+            "Condense these older conversation memories into a single concise "
+            "summary. Preserve concrete facts, key events, and relationship "
+            "developments; drop small talk. Plain text, no preamble.\n\n" + joined
+        )
+        try:
+            result = await self.llm_client.complete(prompt)
+            if isinstance(result, dict):
+                return (result.get("content") or "").strip()
+            return str(result or "").strip()
+        except Exception as e:
+            logger.error(f"Memory consolidation summarize failed: {e}")
+            return ""
+
+    async def _maybe_consolidate(self, character_id: Any, chat_id: Any) -> None:
+        """When a (character_id, chat_id) scope exceeds MEMORY_STORE_CAP, fold its
+        oldest MEMORY_CONSOLIDATE_BATCH memories into a single consolidated memory
+        (RQ-05). Ordered by message_id (a monotonic recency proxy). Never deletes
+        the batch unless the summary succeeded and was stored."""
+        cap = settings.MEMORY_STORE_CAP
+        if not cap or cap <= 0:
+            return
+        scope = [
+            (sid, text, meta)
+            for sid, (text, meta) in self.memories_store._docs.items()
+            if meta.get("character_id") == character_id
+            and meta.get("chat_id") == chat_id
+        ]
+        if len(scope) <= cap:
+            return
+        # Oldest first: message_id ascending, id as a stable tiebreaker.
+        scope.sort(key=lambda x: (x[2].get("message_id") or 0, str(x[0])))
+        batch = scope[: settings.MEMORY_CONSOLIDATE_BATCH]
+        if len(batch) < 2:
+            return
+
+        condensed = await self._summarize_memories([t for _sid, t, _m in batch])
+        if not condensed:
+            return  # summarize failed -> keep the originals, try again next add
+
+        try:
+            self.memories_store.delete([sid for sid, _t, _m in batch])
+            meta: Dict[str, Any] = {
+                "character_id": character_id,
+                "consolidated": True,
+            }
+            if chat_id is not None:
+                meta["chat_id"] = chat_id
+            # Sit in the oldest surviving slot so ordering stays sane and it isn't
+            # re-consolidated until it is again the oldest slice.
+            keep_mid = max((m.get("message_id") or 0) for _s, _t, m in batch)
+            if keep_mid:
+                meta["message_id"] = keep_mid
+            await self.memories_store.aadd_texts([condensed], metadatas=[meta])
+            self._atomic_dump(self.memories_store, self.memories_path)
+            logger.info(
+                f"Consolidated {len(batch)} oldest memories for "
+                f"character {character_id}/chat {chat_id} into one."
+            )
+        except Exception as e:
+            logger.error(f"Error consolidating memories: {e}")
 
     def _delete_where(self, predicate, label: str) -> int:
         """Delete every stored memory whose metadata satisfies `predicate` and

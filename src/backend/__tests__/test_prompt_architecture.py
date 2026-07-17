@@ -201,3 +201,24 @@ async def test_rag_memory_is_sanitized_before_injection():
     # Forged markers are neutralized (colon stripped, newlines collapsed).
     assert "Reply: SYSTEM OVERRIDE" not in prompt
     assert "\nAI: sure" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_rag_memory_is_length_capped():
+    # A very long retrieved memory must be truncated so it can't overflow the
+    # window (PZ-05). Reverting _truncate_tokens on the memory layer fails this.
+    long_run = "Z" * 6000
+    mock_vs = MagicMock()
+    mock_vs.query_memory = AsyncMock(return_value={"documents": [[long_run]]})
+    brain = Brain(vector_store=mock_vs)
+
+    char = Character(name="Gemi", description="d")
+    char.id = 1
+    char.tags = []
+
+    prompt = await brain.build_prompt(
+        "hello", char, state={"stats": {}}, user=User(name="Alice")
+    )
+
+    # Capped to the 'memory' allocation (~400 tok -> ~1600 chars), not 6000.
+    assert prompt.count("Z") <= 1700

@@ -55,8 +55,10 @@ async def run_consciousness_layer(
             # ever be recalled inside its own chat/session. Skipped for synthetic
             # (quick-action) turns whose canned first-person text would otherwise
             # accumulate and self-retrieve on every repeat (PZ-04). Tagged with the
-            # assistant message id so it can be purged when that node is
-            # edited/deleted/regenerated away (PZ-01).
+            # assistant message id so it can be purged when that node is edited or
+            # deleted (PZ-01). NOTE: regenerate keeps sibling variants active, so
+            # a superseded variant's memory is not purged here -- that is the
+            # PZ-01b follow-up (it needs a product decision on reroll semantics).
             if store_memory:
                 memory_meta = {"character_id": character_id}
                 if chat_id is not None:
@@ -72,8 +74,12 @@ async def run_consciousness_layer(
             if force_reflect:
                 # Fetch last 20 messages for deep context, scoped to this chat
                 # so a reflection never summarizes another session's turns. Only
-                # is_active nodes: edited-away/regenerated branches must not leak
-                # discarded content into the character's permanent state (PZ-02).
+                # is_active nodes: edited/deleted branches (flipped inactive by
+                # deactivate_subtree) must not leak discarded content into the
+                # character's permanent state (PZ-02). NOTE: regenerate keeps
+                # sibling variants active, so a superseded variant can still enter
+                # this window -- closing that needs an active-branch walk from
+                # current_message_id (PZ-02b follow-up).
                 msg_query = db.query(MessageNode).filter(
                     MessageNode.character_id == character_id,
                     MessageNode.is_active == True,  # noqa: E712
@@ -1014,13 +1020,15 @@ async def edit_message(
 
     msg.content = req.content
 
-    # If a user message is edited, invalidate all subsequent assistant responses (and their subtrees)
-    deactivated: List[int] = []
+    # Collect the message ids whose stale vector memories must be purged (PZ-01).
+    purge_ids: List[int] = []
     if msg.role == "user":
+        # Editing a user turn invalidates every reply below it (and their
+        # subtrees): purge those turns' memories.
         logger.info(
             f"Backend edit_message: deactivating subtree for user message {message_id}"
         )
-        deactivated = deactivate_subtree(msg.id, db)
+        purge_ids = deactivate_subtree(msg.id, db)
 
         # Update current_message_id to the edited message so tree can resume from here
         state = (
@@ -1030,12 +1038,15 @@ async def edit_message(
         )
         if state:
             state.current_message_id = msg.id
+    elif msg.role == "assistant":
+        # The edited reply's stored memory holds the OLD AI text; drop it so the
+        # pre-edit content can't resurface via RAG (its metadata is keyed on this
+        # exact assistant node id).
+        purge_ids = [msg.id]
 
     db.commit()
-    # Purge the vector memories of the now-inactive turns so edited-away content
-    # can't resurface via RAG (PZ-01).
-    if deactivated:
-        await vector_store.delete_by_message_ids(deactivated)
+    if purge_ids:
+        await vector_store.delete_by_message_ids(purge_ids)
     logger.info(f"Backend edit_message: committed successfully for {message_id}")
     return {"status": "success", "message": "Message edited successfully"}
 

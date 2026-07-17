@@ -946,6 +946,92 @@ def test_delete_message_purges_vector_memory_for_deactivated_nodes(client, db_se
     assert {reply.id, follow.id} <= purged
 
 
+def test_edit_assistant_message_purges_its_stale_memory(client, db_session):
+    # PZ-01 (review follow-up): editing an ASSISTANT reply must purge its memory,
+    # which holds the pre-edit text -- otherwise the old content resurfaces.
+    char = Character(id=518, name="EditAsstChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    root = MessageNode(character_id=518, role="user", content="Hi", is_active=True)
+    db_session.add(root)
+    db_session.commit()
+    reply = MessageNode(
+        character_id=518,
+        role="assistant",
+        content="old text",
+        parent_id=root.id,
+        is_active=True,
+    )
+    db_session.add(reply)
+    db_session.commit()
+
+    with patch.object(
+        chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+    ) as mock_del:
+        resp = client.put(f"/chat/message/{reply.id}", json={"content": "new text"})
+
+    assert resp.status_code == 200
+    mock_del.assert_awaited_once()
+    assert reply.id in set(mock_del.call_args[0][0])
+
+
+def test_edit_user_message_purges_subtree_memories(client, db_session):
+    # PZ-01 edit path (coverage): editing a USER turn purges its descendants'
+    # memories (the replies it invalidated).
+    char = Character(id=519, name="EditUserChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    root = MessageNode(character_id=519, role="user", content="Hi", is_active=True)
+    db_session.add(root)
+    db_session.commit()
+    reply = MessageNode(
+        character_id=519,
+        role="assistant",
+        content="a reply",
+        parent_id=root.id,
+        is_active=True,
+    )
+    db_session.add(reply)
+    db_session.commit()
+
+    with patch.object(
+        chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+    ) as mock_del:
+        resp = client.put(f"/chat/message/{root.id}", json={"content": "Hi (edited)"})
+
+    assert resp.status_code == 200
+    mock_del.assert_awaited_once()
+    assert reply.id in set(mock_del.call_args[0][0])
+
+
+def test_chat_schedules_consciousness_with_message_id_and_store_memory(
+    client, db_session
+):
+    # PZ-01/PZ-04 wiring (coverage): a real /chat turn must schedule the
+    # consciousness layer with the assistant message_id and store_memory=True,
+    # or both fixes silently no-op end to end.
+    char = Character(id=520, name="WireChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=520))
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "A reply."}
+        resp = client.post("/chat", json={"character_id": 520, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_called_once()
+    kwargs = mock_rcl.call_args.kwargs
+    assert isinstance(kwargs["message_id"], int)
+    assert kwargs["store_memory"] is True
+
+
 def test_delete_message_not_found_returns_404(client, db_session):
     resp = client.delete("/chat/message/999999")
     assert resp.status_code == 404

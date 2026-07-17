@@ -22,7 +22,8 @@ from fastapi.testclient import TestClient
 from src.backend.db.database import Base, get_db
 from src.backend.db.models import AgentState, Character, MessageNode, SamplerPreset
 from src.backend.api import chat as chat_module
-from src.backend.api.chat import ACTIONS_CONFIG, LLMConfig, _apply_action_stats
+from src.backend.api.chat import LLMConfig
+from src.backend.core.engine.state_transitions import ACTIONS_CONFIG, apply_action_stats
 from src.backend.main import app
 
 
@@ -103,7 +104,7 @@ def test_apply_action_stats_clamps_between_0_and_100():
         "social": 15,
         "relationship_score": 20,
     }
-    result = _apply_action_stats(stats, stat_mod)
+    result = apply_action_stats(stats, stat_mod)
 
     assert result["energy"] == 100
     assert result["hunger"] == 0
@@ -120,13 +121,13 @@ def test_apply_action_stats_relationship_non_dict_falls_back_to_default_score():
         "social": 50,
         "relationship": "corrupted-legacy-value",
     }
-    result = _apply_action_stats(stats, {"relationship_score": 5})
+    result = apply_action_stats(stats, {"relationship_score": 5})
 
     assert result["relationship"] == {"score": 55}
 
 
 def test_apply_action_stats_handles_missing_stats_dict():
-    result = _apply_action_stats(None, {"energy": 10, "hunger": -5})
+    result = apply_action_stats(None, {"energy": 10, "hunger": -5})
 
     assert result["energy"] == 100  # default 100 + 10, clamped
     assert result["hunger"] == 0  # default 0 - 5, clamped

@@ -1,7 +1,7 @@
 import logging
 import copy
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from src.backend.db.models import AgentState, Character, Tag, JournalEntry
 
@@ -125,6 +125,136 @@ def update_needs(stats: Dict[str, Any], current_time: datetime) -> Dict[str, Any
 # --- Evolution & State Management ---
 
 
+def _relationship_score(stats: Dict[str, Any]) -> int:
+    """Read the relationship score, tolerating a missing or malformed entry."""
+    relationship = stats.get("relationship", {})
+    if not isinstance(relationship, dict):
+        return DEFAULT_RELATIONSHIP_SCORE
+    return relationship.get("score", DEFAULT_RELATIONSHIP_SCORE)
+
+
+def _merge_reflection_traits(stats: Dict[str, Any], traits: Any) -> None:
+    """Fold reflection-discovered traits into stats, skipping protected keys."""
+    if isinstance(traits, dict):
+        stats.update({k: v for k, v in traits.items() if k not in PROTECTED_TRAIT_KEYS})
+
+
+def _roll_active_summary(existing: Optional[str], summary: str) -> str:
+    """Append the new summary line and keep only the most recent tail so the
+    rolling active summary can't grow without bound."""
+    new_active = f"{existing or ''}\n- {summary}".strip()
+    if len(new_active) > ACTIVE_SUMMARY_MAX_CHARS:
+        new_active = "..." + new_active[-ACTIVE_SUMMARY_TAIL_CHARS:]
+    return new_active
+
+
+def _append_unique_facts(stats: Dict[str, Any], facts: List[Any]) -> None:
+    """Append any new facts to stats['facts'] without duplicating existing ones."""
+    if not facts:
+        return
+    stored = stats.setdefault("facts", [])
+    for fact in facts:
+        if fact not in stored:
+            stored.append(fact)
+
+
+def _apply_relationship_change(stats: Dict[str, Any], rel_change: int) -> None:
+    """Clamp-adjust the relationship score in place and log the transition."""
+    relationship = stats.get("relationship", {})
+    if not isinstance(relationship, dict):
+        relationship = {"score": DEFAULT_RELATIONSHIP_SCORE}
+    old_score = relationship.get("score", DEFAULT_RELATIONSHIP_SCORE)
+    new_score = clamp_stat(old_score + int(rel_change))
+    relationship["score"] = new_score
+    stats["relationship"] = relationship
+    logger.info(
+        f"State Evolution: Relationship Score {old_score} -> {new_score} (change: {rel_change})"
+    )
+
+
+def _write_journal_entry(
+    db: Session,
+    character_id: int,
+    agent: AgentState,
+    diary_content: Optional[str],
+    summary: Optional[str],
+    stats: Dict[str, Any],
+) -> None:
+    """Persist a diary entry for this reflection, if the reflection produced one."""
+    if not diary_content:
+        return
+    entry = JournalEntry(
+        character_id=character_id,
+        content=diary_content,
+        summary=summary or "",
+        mood_at_time=agent.mood or "Neutral",
+        relationship_score=_relationship_score(stats),
+        energy_level=stats.get("energy", 100),
+    )
+    db.add(entry)
+    logger.info(
+        f"State Evolution: Saved new journal entry for character {character_id}"
+    )
+
+
+def _get_or_create_tag(db: Session, label: str, instruction: str) -> Tag:
+    tag = db.query(Tag).filter(Tag.label == label).first()
+    if not tag:
+        tag = Tag(label=label, instruction=instruction)
+        db.add(tag)
+        db.flush()
+    return tag
+
+
+def _swap_tag(
+    db: Session,
+    character: Character,
+    current_tags: Dict[str, Tag],
+    remove_label: str,
+    add_label: str,
+    add_instruction: str,
+) -> None:
+    """Remove `remove_label` (if the character has it) and add `add_label` (if it
+    doesn't), based on the tag snapshot taken before the swaps began."""
+    if remove_label in current_tags:
+        character.tags.remove(current_tags[remove_label])
+        logger.info(f"Tag Evolution: Removing '{remove_label}'")
+    if add_label not in current_tags:
+        character.tags.append(_get_or_create_tag(db, add_label, add_instruction))
+        logger.info(f"Tag Evolution: Adding '{add_label}'")
+
+
+# Relationship-driven tag pairs: (label, system-instruction).
+_AFFECTIONATE_TAG = (
+    "affectionate",
+    "Be deeply warm, playful, and express physical affection naturally.",
+)
+_VULNERABLE_TAG = (
+    "vulnerable",
+    "Share deep thoughts, express trust, and speak from the heart.",
+)
+_DISTANT_TAG = (
+    "emotionally distant",
+    "Be cold, distant, and maintain strict personal boundaries.",
+)
+_GUARDED_TAG = (
+    "guarded",
+    "Keep your guard up, avoid revealing personal details, and stay defensive.",
+)
+
+
+def _evolve_relationship_tags(db: Session, character: Character, score: int) -> None:
+    """Swap a character's relational tags as affinity crosses the warm/cold
+    thresholds: distant<->affectionate and guarded<->vulnerable."""
+    current_tags = {t.label.lower(): t for t in character.tags}
+    if score >= WARM_TAG_THRESHOLD:
+        _swap_tag(db, character, current_tags, "emotionally distant", *_AFFECTIONATE_TAG)
+        _swap_tag(db, character, current_tags, "guarded", *_VULNERABLE_TAG)
+    elif score <= COLD_TAG_THRESHOLD:
+        _swap_tag(db, character, current_tags, "affectionate", *_DISTANT_TAG)
+        _swap_tag(db, character, current_tags, "vulnerable", *_GUARDED_TAG)
+
+
 def evolve_character(db: Session, character_id: int, reflection: dict):
     """Apply reflections to the agent's permanent state with row-level locking."""
     # Use with_for_update to prevent race conditions during background evolution
@@ -140,149 +270,33 @@ def evolve_character(db: Session, character_id: int, reflection: dict):
     traits = reflection.get("traits", {})
     if isinstance(traits, list):
         traits = {"discovered_traits": traits}
-
     summary = reflection.get("summary")
-    facts = reflection.get("facts", [])
 
     try:
         current_stats = copy.deepcopy(agent.stats) if agent.stats else {}
 
-        if isinstance(traits, dict):
-            safe_traits = {
-                k: v for k, v in traits.items() if k not in PROTECTED_TRAIT_KEYS
-            }
-            current_stats.update(safe_traits)
+        _merge_reflection_traits(current_stats, traits)
 
         if summary:
             current_stats["last_reflection_summary"] = summary
-            # Append to rolling active summary
-            current_active = agent.active_summary or ""
-            new_active = f"{current_active}\n- {summary}".strip()
-            # Prevent infinite growth: keep only the most recent tail.
-            if len(new_active) > ACTIVE_SUMMARY_MAX_CHARS:
-                new_active = "..." + new_active[-ACTIVE_SUMMARY_TAIL_CHARS:]
-            agent.active_summary = new_active
+            agent.active_summary = _roll_active_summary(agent.active_summary, summary)
 
-        if facts:
-            if "facts" not in current_stats:
-                current_stats["facts"] = []
-            for fact in facts:
-                if fact not in current_stats["facts"]:
-                    current_stats["facts"].append(fact)
+        _append_unique_facts(current_stats, reflection.get("facts", []))
 
-        # Update relationship score dynamically
         rel_change = reflection.get("relationship_change", 0)
         if rel_change:
-            relationship = current_stats.get("relationship", {})
-            if not isinstance(relationship, dict):
-                relationship = {"score": DEFAULT_RELATIONSHIP_SCORE}
-            old_score = relationship.get("score", DEFAULT_RELATIONSHIP_SCORE)
-            new_score = clamp_stat(old_score + int(rel_change))
-            relationship["score"] = new_score
-            current_stats["relationship"] = relationship
-            logger.info(
-                f"State Evolution: Relationship Score {old_score} -> {new_score} (change: {rel_change})"
-            )
+            _apply_relationship_change(current_stats, rel_change)
 
         agent.stats = current_stats
         db.add(agent)
 
-        # Save journal entry if present in reflection
-        diary_content = reflection.get("diary_entry")
-        if diary_content:
-            relationship_info = current_stats.get("relationship", {})
-            score = (
-                relationship_info.get("score", DEFAULT_RELATIONSHIP_SCORE)
-                if isinstance(relationship_info, dict)
-                else DEFAULT_RELATIONSHIP_SCORE
-            )
-
-            entry = JournalEntry(
-                character_id=character_id,
-                content=diary_content,
-                summary=summary or "",
-                mood_at_time=agent.mood or "Neutral",
-                relationship_score=score,
-                energy_level=current_stats.get("energy", 100),
-            )
-            db.add(entry)
-            logger.info(
-                f"State Evolution: Saved new journal entry for character {character_id}"
-            )
-
-        # Proposal 2: Dynamic Tag Evolution
-        # Swap tags based on relationship score thresholds
-        relationship_info = current_stats.get("relationship", {})
-        score = (
-            relationship_info.get("score", DEFAULT_RELATIONSHIP_SCORE)
-            if isinstance(relationship_info, dict)
-            else DEFAULT_RELATIONSHIP_SCORE
+        _write_journal_entry(
+            db, character_id, agent, reflection.get("diary_entry"), summary, current_stats
         )
 
         character = db.query(Character).filter(Character.id == character_id).first()
         if character:
-            current_tags = {t.label.lower(): t for t in character.tags}
-
-            # Helper to get or create a tag
-            def get_or_create_tag(label: str, instruction: str) -> Tag:
-                t = db.query(Tag).filter(Tag.label == label).first()
-                if not t:
-                    t = Tag(label=label, instruction=instruction)
-                    db.add(t)
-                    db.flush()
-                return t
-
-            # High affinity: evolve guarded/distant tags into affectionate/vulnerable
-            if score >= WARM_TAG_THRESHOLD:
-                # Swap "emotionally distant" -> "affectionate"
-                if "emotionally distant" in current_tags:
-                    character.tags.remove(current_tags["emotionally distant"])
-                    logger.info("Tag Evolution: Removing 'emotionally distant'")
-                if "affectionate" not in current_tags:
-                    aff_tag = get_or_create_tag(
-                        "affectionate",
-                        "Be deeply warm, playful, and express physical affection naturally.",
-                    )
-                    character.tags.append(aff_tag)
-                    logger.info("Tag Evolution: Adding 'affectionate'")
-
-                # Swap "guarded" -> "vulnerable"
-                if "guarded" in current_tags:
-                    character.tags.remove(current_tags["guarded"])
-                    logger.info("Tag Evolution: Removing 'guarded'")
-                if "vulnerable" not in current_tags:
-                    vuln_tag = get_or_create_tag(
-                        "vulnerable",
-                        "Share deep thoughts, express trust, and speak from the heart.",
-                    )
-                    character.tags.append(vuln_tag)
-                    logger.info("Tag Evolution: Adding 'vulnerable'")
-
-            # Low affinity: swap warm tags back to guarded/distant
-            elif score <= COLD_TAG_THRESHOLD:
-                # Swap "affectionate" -> "emotionally distant"
-                if "affectionate" in current_tags:
-                    character.tags.remove(current_tags["affectionate"])
-                    logger.info("Tag Evolution: Removing 'affectionate'")
-                if "emotionally distant" not in current_tags:
-                    dist_tag = get_or_create_tag(
-                        "emotionally distant",
-                        "Be cold, distant, and maintain strict personal boundaries.",
-                    )
-                    character.tags.append(dist_tag)
-                    logger.info("Tag Evolution: Adding 'emotionally distant'")
-
-                # Swap "vulnerable" -> "guarded"
-                if "vulnerable" in current_tags:
-                    character.tags.remove(current_tags["vulnerable"])
-                    logger.info("Tag Evolution: Removing 'vulnerable'")
-                if "guarded" not in current_tags:
-                    guard_tag = get_or_create_tag(
-                        "guarded",
-                        "Keep your guard up, avoid revealing personal details, and stay defensive.",
-                    )
-                    character.tags.append(guard_tag)
-                    logger.info("Tag Evolution: Adding 'guarded'")
+            _evolve_relationship_tags(db, character, _relationship_score(current_stats))
 
         db.commit()
     except Exception as e:

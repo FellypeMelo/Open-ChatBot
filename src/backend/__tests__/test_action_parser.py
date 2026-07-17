@@ -1,5 +1,5 @@
 from src.backend.db.models import AgentState
-from src.backend.api.chat import parse_actions_to_state
+from src.backend.core.engine.state_transitions import parse_actions_to_state
 
 
 def test_parse_location():

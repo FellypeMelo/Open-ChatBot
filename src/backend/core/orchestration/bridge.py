@@ -110,11 +110,12 @@ class Brain:
             user_message,
             metadata_filter=memory_filter,
         )
-        context = "None."
+        # Raw docs captured here; the injectable string is assembled below once
+        # _names is known, so memories get the same sanitize+cap as every other
+        # free-text layer (PZ-05).
+        memory_docs = []
         if isinstance(context_data, dict) and context_data.get("documents"):
-            docs = context_data["documents"][0]
-            if docs:
-                context = " ".join([str(d) for d in docs if d])
+            memory_docs = context_data["documents"][0] or []
 
         allocations = budget.get("allocations", {})
 
@@ -187,6 +188,17 @@ class Brain:
         # cannot forge role markers ("User:", "Reply:", char/user name + ":").
         char_display_name = character.nickname if (character and getattr(character, "nickname", None)) else (character.name if character else "You")
         _names = (user_name, char_name, char_display_name)
+
+        # Layer 1 (assembled now that _names is known): retrieved memories are
+        # sanitized -- a stored memory can contain "User:"/"Reply:" markers +
+        # newlines and would otherwise forge dialogue turns -- and length-capped
+        # so they can't overflow the context window (PZ-05).
+        context = "None."
+        if memory_docs:
+            sanitized = [self._sanitize(str(d), _names) for d in memory_docs if d]
+            joined = " ".join(s for s in sanitized if s)
+            if joined:
+                context = self._truncate_tokens(joined, allocations.get("memory", 400))
         short_desc = getattr(character, "short_description", None) or getattr(character, "description", None) or ""
         short_desc = self._sanitize(render_macros(short_desc, char_name, user_name), _names)
         identity = (

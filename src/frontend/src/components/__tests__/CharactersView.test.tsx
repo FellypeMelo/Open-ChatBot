@@ -1,8 +1,18 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CharactersView from '../CharactersView';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('../../services/api', () => ({
+  importCharacterPng: vi.fn().mockResolvedValue({}),
+}));
+import { importCharacterPng } from '../../services/api';
 
 describe('CharactersView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (importCharacterPng as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  });
+
   const mockCharacters = [
     {
       id: 1,
@@ -114,6 +124,43 @@ describe('CharactersView', () => {
 
     expect(mockOnNewCharacter).toHaveBeenCalled();
   });
+
+  it('imports a PNG file and notifies the parent', async () => {
+    const { container } = render(<CharactersView {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['x'], 'c.png', { type: 'image/png' })] },
+    });
+    await waitFor(() => expect(importCharacterPng).toHaveBeenCalled());
+    await waitFor(() => expect(mockOnCharacterImported).toHaveBeenCalled());
+  });
+
+  it('opens the file picker when Import PNG is clicked', () => {
+    const { container } = render(<CharactersView {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const clickSpy = vi.spyOn(fileInput, 'click').mockImplementation(() => {});
+    fireEvent.click(screen.getByRole('button', { name: /Import PNG/i }));
+    expect(clickSpy).toHaveBeenCalled();
+  });
+
+  it('ignores an empty file selection', () => {
+    const { container } = render(<CharactersView {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [] } });
+    expect(importCharacterPng).not.toHaveBeenCalled();
+  });
+
+  it('alerts when a PNG import fails', async () => {
+    (importCharacterPng as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const { container } = render(<CharactersView {...defaultProps} />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['x'], 'c.png', { type: 'image/png' })] },
+    });
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('boom')));
+  });
+
   // Small wrapper helper
   function SidebarPropsWrapper({ selectedCharId }: { selectedCharId: number | null }) {
     return (

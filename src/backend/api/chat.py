@@ -44,20 +44,24 @@ async def run_consciousness_layer(
     ai_response: str,
     force_reflect: bool = False,
     chat_id: Optional[int] = None,
+    store_memory: bool = True,
 ):
     """Background task for memory and evolution."""
     try:
         db = SessionLocal()
         try:
-            # 1. Store memory (always), scoped to (character, chat) so this
-            # turn can only ever be recalled inside its own chat/session.
-            memory_meta = {"character_id": character_id}
-            if chat_id is not None:
-                memory_meta["chat_id"] = chat_id
-            await vector_store.add_memory(
-                f"User: {user_message}\nAI: {ai_response}",
-                metadata=memory_meta,
-            )
+            # 1. Store memory, scoped to (character, chat) so this turn can only
+            # ever be recalled inside its own chat/session. Skipped for synthetic
+            # (quick-action) turns whose canned first-person text would otherwise
+            # accumulate and self-retrieve on every repeat (PZ-04).
+            if store_memory:
+                memory_meta = {"character_id": character_id}
+                if chat_id is not None:
+                    memory_meta["chat_id"] = chat_id
+                await vector_store.add_memory(
+                    f"User: {user_message}\nAI: {ai_response}",
+                    metadata=memory_meta,
+                )
 
             # 2. Reflect & Evolve (only on interval or force)
             if force_reflect:
@@ -159,6 +163,7 @@ class ChatTurnContext:
         user_message_content: Optional[str],
         force_reflect: bool,
         chat_id: Optional[int] = None,
+        is_action: bool = False,
     ):
         self.user = user
         self.character = character
@@ -170,6 +175,7 @@ class ChatTurnContext:
         self.user_message_content = user_message_content
         self.force_reflect = force_reflect
         self.chat_id = chat_id
+        self.is_action = is_action
 
 
 def _sync_state_to_chat(db: Session, state: AgentState, chat_id: Optional[int]):
@@ -359,7 +365,8 @@ async def _prepare_chat_turn(
             )
     user_message_content = request.message
 
-    if request.action_id and request.action_id in ACTIONS_CONFIG:
+    is_action = bool(request.action_id and request.action_id in ACTIONS_CONFIG)
+    if is_action:
         action_cfg = ACTIONS_CONFIG[request.action_id]
         user_message_content = action_cfg["message"]
         request.message = user_message_content
@@ -487,6 +494,7 @@ async def _prepare_chat_turn(
         user_message_content=user_message_content,
         force_reflect=force_reflect,
         chat_id=chat.id,
+        is_action=is_action,
     )
 
 
@@ -831,6 +839,7 @@ async def chat(
             reply,
             force_reflect=ctx.force_reflect,
             chat_id=ctx.chat_id,
+            store_memory=not ctx.is_action,
         )
 
         latency = (
@@ -933,6 +942,7 @@ async def chat_stream(
                         full_reply,
                         force_reflect=ctx.force_reflect,
                         chat_id=ctx.chat_id,
+                        store_memory=not ctx.is_action,
                     )
                     # Return full state for reactive HUD
                     updated_state = {

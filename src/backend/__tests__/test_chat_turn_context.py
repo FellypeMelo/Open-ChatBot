@@ -663,6 +663,31 @@ async def test_run_consciousness_layer_reflection_excludes_inactive_messages(
     assert "DISCARDED variant" not in contents
 
 
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_skips_memory_when_store_memory_false(
+    db_session, monkeypatch
+):
+    # Quick-action turns pass store_memory=False so their canned first-person
+    # text ("*I wrap my arms around you*") is never written as a User: memory,
+    # where it would accumulate and self-retrieve on every repeat (PZ-04).
+    char = Character(id=514, name="ActionChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=514))
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with patch.object(
+        chat_module.vector_store, "add_memory", new_callable=AsyncMock
+    ) as mock_add:
+        await chat_module.run_consciousness_layer(
+            514, "*I hug you*", "a reply", store_memory=False
+        )
+
+    mock_add.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # /chat/clear/{character_id} resets AgentState to the documented defaults
 # ---------------------------------------------------------------------------

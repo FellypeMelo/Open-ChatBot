@@ -147,3 +147,21 @@ def test_budget_picks_up_context_size_and_reserves_history():
     assert calc.context_size == 3000
     assert calc.usable_budget == 3000 - 1024 - 128
     assert budget["history_budget"] > 0
+
+
+def test_oversized_card_fields_are_capped():
+    # PB-01: a pathologically long persona/scenario/description must be
+    # length-capped so it can't push the master prompt / history off the top.
+    brain = _brain(2048)
+    char = _char(
+        persona_prompt="P" * 8000,
+        scenario="S" * 8000,
+        short_description="D" * 8000,
+    )
+    prompt = _build(brain, character=char)
+
+    # character_def cap is 300 tokens (~1200 chars); the full 8000-char blobs
+    # must not survive at length.
+    assert "P" * 2000 not in prompt
+    assert "S" * 2000 not in prompt
+    assert "D" * 2000 not in prompt

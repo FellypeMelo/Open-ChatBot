@@ -284,8 +284,15 @@ class Brain:
             )
             if clean_summary:
                 summary_context = f"\nSummary:\n{clean_summary}\n"
+        # Cap each free-text card field so one pathologically long field can't
+        # blow past context_size and push history/master prompt off the top
+        # (PB-01). Each is bounded by the character_def allocation.
+        _card_cap = allocations.get("character_def", 300)
         short_desc = getattr(character, "short_description", None) or getattr(character, "description", None) or ""
-        short_desc = self._sanitize(render_macros(short_desc, char_name, user_name), _names)
+        short_desc = self._truncate_tokens(
+            self._sanitize(render_macros(short_desc, char_name, user_name), _names),
+            _card_cap,
+        )
         identity = (
             f"{char_display_name}. {short_desc}"
             if character
@@ -294,11 +301,19 @@ class Brain:
 
         persona_str = ""
         if character and getattr(character, "persona_prompt", None):
-            persona_str = f"Personality: {self._sanitize(render_macros(character.persona_prompt, char_name, user_name), _names)}\n"
+            persona = self._truncate_tokens(
+                self._sanitize(render_macros(character.persona_prompt, char_name, user_name), _names),
+                _card_cap,
+            )
+            persona_str = f"Personality: {persona}\n"
 
         scenario_str = ""
         if character and getattr(character, "scenario", None):
-            scenario_str = f"Scenario: {self._sanitize(render_macros(character.scenario, char_name, user_name), _names)}\n"
+            scenario = self._truncate_tokens(
+                self._sanitize(render_macros(character.scenario, char_name, user_name), _names),
+                _card_cap,
+            )
+            scenario_str = f"Scenario: {scenario}\n"
 
         example_dialogs_str = ""
         if character and getattr(character, "mes_example", None):
@@ -329,7 +344,10 @@ class Brain:
             if getattr(user, "persona_description", None):
                 persona_parts.append(f"Persona: {self._sanitize(user.persona_description, _names)}")
             if persona_parts:
-                user_persona = f"User ({user_name}): " + " | ".join(persona_parts)
+                user_persona = self._truncate_tokens(
+                    f"User ({user_name}): " + " | ".join(persona_parts),
+                    allocations.get("user_persona", 100),
+                )
 
         # Layer 4: State (Compressed)
         state_str = compress_state(state, user_name)

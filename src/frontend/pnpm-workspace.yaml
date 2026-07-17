@@ -1,4 +1,0 @@
-# Pin virtual-store dir name length to match the existing node_modules/.pnpm
-# layout (created at 120). pnpm v11's Windows default is 60, which otherwise
-# triggers ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF on install/add.
-virtualStoreDirMaxLength: 120

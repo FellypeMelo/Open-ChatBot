@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@11.13.1",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -14,6 +14,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource-variable/material-symbols-outlined": "^5.2.45",
+    "@fontsource-variable/outfit": "^5.2.8",
+    "@fontsource/crimson-text": "^5.2.7",
     "@tailwindcss/vite": "^4.3.0",
     "lucide-react": "^1.14.0",
     "react": "^19.2.5",

@@ -689,6 +689,93 @@ async def test_run_consciousness_layer_skips_memory_when_store_memory_false(
 
 
 @pytest.mark.asyncio
+async def test_run_consciousness_layer_purges_superseded_variant_memories(
+    db_session, monkeypatch
+):
+    # PZ-01b: a regenerate creates a new sibling variant; only the selected
+    # (latest) variant's memory should remain -- purge the superseded siblings.
+    char = Character(id=521, name="RerollChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=521))
+    db_session.commit()
+    parent = MessageNode(character_id=521, role="user", content="hi", is_active=True)
+    db_session.add(parent)
+    db_session.commit()
+    v1 = MessageNode(
+        character_id=521, role="assistant", content="v1", parent_id=parent.id, is_active=True
+    )
+    v2 = MessageNode(
+        character_id=521, role="assistant", content="v2", parent_id=parent.id, is_active=True
+    )
+    db_session.add_all([v1, v2])
+    db_session.commit()
+    # Capture ids before the call (run_consciousness_layer closes the session).
+    v1_id, v2_id = v1.id, v2.id
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+        ) as mock_del,
+    ):
+        await chat_module.run_consciousness_layer(
+            521, "hi", "v2", chat_id=None, message_id=v2_id
+        )
+
+    mock_del.assert_awaited_once()
+    purged = set(mock_del.call_args[0][0])
+    assert v1_id in purged
+    assert v2_id not in purged
+
+
+@pytest.mark.asyncio
+async def test_reflection_walks_active_branch_excluding_offbranch_variant(
+    db_session, monkeypatch
+):
+    # PZ-02b: reflection walks the active branch from the selected leaf, so a
+    # non-selected regenerate variant (off the chosen path) never enters the
+    # permanent-state summary even though it is is_active=True.
+    char = Character(id=522, name="BranchChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=522))
+    db_session.commit()
+    u = MessageNode(character_id=522, role="user", content="u-line", is_active=True)
+    db_session.add(u)
+    db_session.commit()
+    chosen = MessageNode(
+        character_id=522, role="assistant", content="CHOSEN", parent_id=u.id, is_active=True
+    )
+    offbranch = MessageNode(
+        character_id=522, role="assistant", content="OFFBRANCH", parent_id=u.id, is_active=True
+    )
+    db_session.add_all([chosen, offbranch])
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+        patch("src.backend.api.chat.evolve_character"),
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            522, "u-line", "CHOSEN", force_reflect=True, message_id=chosen.id
+        )
+
+    passed = [m["content"] for m in mock_reflect.call_args[0][0]]
+    assert "CHOSEN" in passed
+    assert "u-line" in passed
+    assert "OFFBRANCH" not in passed
+
+
+@pytest.mark.asyncio
 async def test_run_consciousness_layer_tags_memory_with_message_id(
     db_session, monkeypatch
 ):

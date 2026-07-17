@@ -38,6 +38,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _active_branch_messages(
+    db: Session,
+    character_id: int,
+    chat_id: Optional[int],
+    leaf_id: Optional[int],
+    limit: int,
+) -> List[MessageNode]:
+    """The last `limit` messages on the ACTIVE branch -- the parent chain from
+    the selected leaf. Walking the chain (rather than a flat is_active+timestamp
+    fetch) excludes non-selected regenerate variants, so reflection never
+    summarizes a reroll the user swiped away (PZ-02b). Falls back to the flat
+    fetch when no leaf id is available."""
+    if leaf_id is None:
+        q = db.query(MessageNode).filter(
+            MessageNode.character_id == character_id,
+            MessageNode.is_active == True,  # noqa: E712
+        )
+        if chat_id is not None:
+            q = q.filter(MessageNode.chat_id == chat_id)
+        rows = q.order_by(MessageNode.timestamp.desc()).limit(limit).all()
+        return list(reversed(rows))
+
+    chain: List[MessageNode] = []
+    curr = leaf_id
+    while curr is not None and len(chain) < limit:
+        node = db.query(MessageNode).filter(MessageNode.id == curr).first()
+        if node is None or not node.is_active:
+            break
+        chain.append(node)
+        curr = node.parent_id
+    chain.reverse()
+    return chain
+
+
 async def run_consciousness_layer(
     character_id: int,
     user_message: str,
@@ -56,10 +90,31 @@ async def run_consciousness_layer(
             # (quick-action) turns whose canned first-person text would otherwise
             # accumulate and self-retrieve on every repeat (PZ-04). Tagged with the
             # assistant message id so it can be purged when that node is edited or
-            # deleted (PZ-01). NOTE: regenerate keeps sibling variants active, so
-            # a superseded variant's memory is not purged here -- that is the
-            # PZ-01b follow-up (it needs a product decision on reroll semantics).
+            # deleted (PZ-01).
             if store_memory:
+                # Keep only the selected/latest variant's memory for a turn: a
+                # regenerate creates a new sibling under the same parent, so purge
+                # the superseded siblings' memories before storing this one, so
+                # only the chosen reply stays retrievable (PZ-01b).
+                if message_id is not None:
+                    node = (
+                        db.query(MessageNode)
+                        .filter(MessageNode.id == message_id)
+                        .first()
+                    )
+                    if node is not None and node.parent_id is not None:
+                        siblings = (
+                            db.query(MessageNode.id)
+                            .filter(
+                                MessageNode.parent_id == node.parent_id,
+                                MessageNode.id != message_id,
+                            )
+                            .all()
+                        )
+                        if siblings:
+                            await vector_store.delete_by_message_ids(
+                                [s.id for s in siblings]
+                            )
                 memory_meta = {"character_id": character_id}
                 if chat_id is not None:
                     memory_meta["chat_id"] = chat_id
@@ -70,29 +125,16 @@ async def run_consciousness_layer(
                     metadata=memory_meta,
                 )
 
-            # 2. Reflect & Evolve (only on interval or force)
+            # 2. Reflect & Evolve (only on interval or force). Reflect over the
+            # ACTIVE branch from the selected leaf so discarded edit/delete
+            # branches (PZ-02) and non-selected regenerate variants (PZ-02b) can
+            # never leak into the character's permanent state.
             if force_reflect:
-                # Fetch last 20 messages for deep context, scoped to this chat
-                # so a reflection never summarizes another session's turns. Only
-                # is_active nodes: edited/deleted branches (flipped inactive by
-                # deactivate_subtree) must not leak discarded content into the
-                # character's permanent state (PZ-02). NOTE: regenerate keeps
-                # sibling variants active, so a superseded variant can still enter
-                # this window -- closing that needs an active-branch walk from
-                # current_message_id (PZ-02b follow-up).
-                msg_query = db.query(MessageNode).filter(
-                    MessageNode.character_id == character_id,
-                    MessageNode.is_active == True,  # noqa: E712
-                )
-                if chat_id is not None:
-                    msg_query = msg_query.filter(MessageNode.chat_id == chat_id)
-                messages = (
-                    msg_query.order_by(MessageNode.timestamp.desc())
-                    .limit(settings.REFLECTION_INTERVAL)
-                    .all()
+                messages = _active_branch_messages(
+                    db, character_id, chat_id, message_id, settings.REFLECTION_INTERVAL
                 )
                 msg_dicts = [
-                    {"role": m.role, "content": m.content} for m in reversed(messages)
+                    {"role": m.role, "content": m.content} for m in messages
                 ]
 
                 reflection = await brain.reflect(

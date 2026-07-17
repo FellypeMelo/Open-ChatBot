@@ -29,6 +29,7 @@ from src.backend.db.models import (
     Chat,
     JournalEntry,
     SamplerPreset,
+    default_stats,
 )
 import uuid
 from src.backend.core.config import settings
@@ -265,6 +266,12 @@ def _sync_state_to_chat(db: Session, state: AgentState, chat_id: Optional[int]):
         chat.active_summary = state.active_summary or ""
         chat.interaction_count = state.interaction_count or 0
         chat.last_reflected_at_count = state.last_reflected_at_count or 0
+        # Persona snapshot for this storyline (B8): save the live persona so
+        # switching away and back restores this chat's own mood/scene/relationship.
+        chat.location = state.location
+        chat.mood = state.mood
+        chat.clothes = state.clothes
+        chat.stats = state.stats
         chat.updated_at = datetime.now(timezone.utc)
 
 
@@ -274,6 +281,13 @@ def _load_chat_into_state(state: AgentState, chat: Chat):
     state.active_summary = chat.active_summary or ""
     state.interaction_count = chat.interaction_count or 0
     state.last_reflected_at_count = chat.last_reflected_at_count or 0
+    # Restore this storyline's persona snapshot (B8). A chat with no snapshot yet
+    # (created before the persona columns, pre-backfill) keeps the live persona.
+    if chat.stats is not None:
+        state.location = chat.location or "Living Room"
+        state.mood = chat.mood or "Neutral"
+        state.clothes = chat.clothes or "Casual"
+        state.stats = chat.stats
     state.active_chat_id = chat.id
 
 
@@ -365,6 +379,11 @@ def _resolve_active_chat(
             current_message_id=state.current_message_id,
             active_summary=state.active_summary or "",
             interaction_count=state.interaction_count or 0,
+            # Adopt the character's current persona into its first chat (B8).
+            location=state.location,
+            mood=state.mood,
+            clothes=state.clothes,
+            stats=state.stats,
         )
         db.add(target)
         db.flush()
@@ -692,6 +711,11 @@ def seed_initial_chat(
         character_id=character.id,
         user_id=(user.id if user else None),
         title="New Chat",
+        # First chat snapshots the (default, for a new character) persona (B8).
+        location=state.location,
+        mood=state.mood,
+        clothes=state.clothes,
+        stats=state.stats,
     )
     db.add(chat)
     db.flush()
@@ -750,6 +774,11 @@ async def new_chat(
         active_summary="",
         interaction_count=0,
         last_reflected_at_count=0,
+        # A new storyline starts from the character's fresh default persona (B8).
+        location="Living Room",
+        mood="Neutral",
+        clothes="Casual",
+        stats=default_stats(),
     )
     db.add(fresh)
     db.flush()
@@ -761,6 +790,12 @@ async def new_chat(
     # Reset the reflection checkpoint too, or force_reflect goes negative and
     # suppresses reflection for dozens of turns after a reset (RF-04).
     state.last_reflected_at_count = 0
+    # Reset the live persona to defaults too, so the new storyline doesn't
+    # inherit the previous chat's mood/relationship (B8).
+    state.location = "Living Room"
+    state.mood = "Neutral"
+    state.clothes = "Casual"
+    state.stats = default_stats()
 
     # Resolve the opening greeting to seed (explicit text > index > first_mes).
     greetings = _character_greetings(character)
@@ -894,6 +929,11 @@ async def delete_chat(chat_id: int, db: Session = Depends(get_db)):
             state.active_summary = ""
             state.interaction_count = 0
             state.last_reflected_at_count = 0
+            # No chats left: reset the live persona to defaults too (B8).
+            state.location = "Living Room"
+            state.mood = "Neutral"
+            state.clothes = "Casual"
+            state.stats = default_stats()
     db.commit()
 
     removed = await vector_store.clear_chat_memories(chat_id)

@@ -17,6 +17,25 @@ from sqlalchemy.orm import relationship, backref, Session
 from src.backend.db.database import Base
 from datetime import datetime, timezone
 
+
+def default_stats() -> dict:
+    """The fresh-start persona stats for a new agent state / a new storyline
+    (B8). A factory (not a constant) because last_update must be stamped now so
+    need-decay has a baseline (ST-01)."""
+    return {
+        "energy": 100,
+        "hunger": 0,
+        "happiness": 100,
+        "social": 100,
+        "is_sleeping": False,
+        "last_update": datetime.now(timezone.utc).isoformat(),
+        "relationship": {
+            "score": 50,
+            "dynamic_preferences": ["teasing", "playful"],
+            "user_sentiment": "Neutral",
+        },
+    }
+
 # Junction table for Character <-> Tag (Many-to-Many)
 character_tags = Table(
     "character_tags",
@@ -162,6 +181,15 @@ class Chat(Base):
     # an interval boundary that failed is retried on the next turn instead of
     # skipped forever (RF-04).
     last_reflected_at_count = Column(Integer, default=0)
+    # Per-chat persona snapshot (B8, independent storylines): mood/location/
+    # clothes/stats now belong to the chat, not globally to the character. The
+    # active chat's snapshot is mirrored live on AgentState; switching chats
+    # saves the outgoing snapshot here and restores the incoming one, so each
+    # storyline has its own relationship score, mood and scene.
+    location = Column(String, default="Living Room")
+    mood = Column(String, default="Neutral")
+    clothes = Column(String, default="Casual")
+    stats = Column(JSON)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
@@ -235,19 +263,7 @@ class AgentState(Base):
         if self.last_reflected_at_count is None:
             self.last_reflected_at_count = 0
         if not self.stats:
-            self.stats = {
-                "energy": 100,
-                "hunger": 0,
-                "happiness": 100,
-                "social": 100,
-                "is_sleeping": False,
-                "last_update": datetime.now(timezone.utc).isoformat(),
-                "relationship": {
-                    "score": 50,
-                    "dynamic_preferences": ["teasing", "playful"],
-                    "user_sentiment": "Neutral",
-                },
-            }
+            self.stats = default_stats()
 
 
 class MessageNode(Base):

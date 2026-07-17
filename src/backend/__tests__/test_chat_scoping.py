@@ -206,3 +206,61 @@ def test_parent_id_from_other_character_is_rejected(client, db_session):
     assert all(
         "FOREIGN SECRET" not in (m.get("content") or "") for m in captured["history"]
     ), "cross-character parent_id grafted foreign message into the prompt"
+
+
+# --- B8: per-chat persona (independent storylines) ---------------------------
+
+def test_persona_is_per_chat_independent(db_session):
+    # B8: mood/location/relationship belong to the chat, not globally to the
+    # character. A new chat starts fresh; switching back restores the prior
+    # chat's persona; the two never bleed into each other.
+    from src.backend.db.models import User
+    from src.backend.api.chat import (
+        new_chat,
+        _resolve_active_chat,
+        _sync_state_to_chat,
+    )
+
+    db = db_session
+    char = Character(name="B8", description="d")
+    db.add(char)
+    db.commit()
+    user = User.get_or_create_active(db)
+    state = AgentState(character_id=char.id)
+    db.add(state)
+    db.commit()
+    chat_a = Chat(character_id=char.id, title="A")
+    db.add(chat_a)
+    db.commit()
+    state.active_chat_id = chat_a.id
+
+    # Give chat A a distinctive persona and snapshot it.
+    state.mood = "Angry"
+    state.location = "Ballroom"
+    stats = dict(state.stats)
+    stats["relationship"] = {**stats["relationship"], "score": 85}
+    state.stats = stats
+    _sync_state_to_chat(db, state, chat_a.id)
+    db.commit()
+
+    # New chat B -> fresh default persona (independent storyline).
+    asyncio.run(new_chat(char.id, req=None, db=db))
+    db.refresh(state)
+    assert state.mood == "Neutral"
+    assert state.location == "Living Room"
+    assert state.stats["relationship"]["score"] == 50
+    chat_b_id = state.active_chat_id
+    assert chat_b_id != chat_a.id
+
+    # Switch back to A -> its persona is restored intact.
+    _resolve_active_chat(db, char, state, chat_a.id, user)
+    db.commit()
+    db.refresh(state)
+    assert state.mood == "Angry"
+    assert state.location == "Ballroom"
+    assert state.stats["relationship"]["score"] == 85
+
+    # Chat B kept its own fresh persona -- no bleed from A.
+    chat_b = db.query(Chat).filter(Chat.id == chat_b_id).first()
+    assert chat_b.mood == "Neutral"
+    assert chat_b.stats["relationship"]["score"] == 50

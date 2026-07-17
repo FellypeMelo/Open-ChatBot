@@ -92,6 +92,33 @@ def init_db():
                         "ALTER TABLE chats ADD COLUMN last_reflected_at_count INTEGER DEFAULT 0"
                     )
                 )
+            # B8 (independent storylines): per-chat persona snapshot columns.
+            if "location" not in chat_cols:
+                conn.execute(
+                    text("ALTER TABLE chats ADD COLUMN location TEXT DEFAULT 'Living Room'")
+                )
+            if "mood" not in chat_cols:
+                conn.execute(
+                    text("ALTER TABLE chats ADD COLUMN mood TEXT DEFAULT 'Neutral'")
+                )
+            if "clothes" not in chat_cols:
+                conn.execute(
+                    text("ALTER TABLE chats ADD COLUMN clothes TEXT DEFAULT 'Casual'")
+                )
+            if "stats" not in chat_cols:
+                conn.execute(text("ALTER TABLE chats ADD COLUMN stats TEXT"))
+                # One-time backfill: copy each character's current global persona
+                # into ALL its existing chats, so splitting the shared persona into
+                # per-chat storylines loses no accumulated relationship/mood (B8).
+                conn.execute(
+                    text(
+                        "UPDATE chats SET "
+                        "location = COALESCE((SELECT location FROM agent_states s WHERE s.character_id = chats.character_id), 'Living Room'), "
+                        "mood = COALESCE((SELECT mood FROM agent_states s WHERE s.character_id = chats.character_id), 'Neutral'), "
+                        "clothes = COALESCE((SELECT clothes FROM agent_states s WHERE s.character_id = chats.character_id), 'Casual'), "
+                        "stats = (SELECT stats FROM agent_states s WHERE s.character_id = chats.character_id)"
+                    )
+                )
 
         if "users" in insp.get_table_names():
             columns = [col["name"] for col in insp.get_columns("users")]

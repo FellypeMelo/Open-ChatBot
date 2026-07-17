@@ -67,6 +67,9 @@ class CharacterBase(BaseModel):
     alternate_greetings: List[str] = []
     mes_example: Optional[str] = ""
     content_rating: Optional[str] = "limited"
+    # Dynamic = persona evolves (needs decay + reflection adapts to the user);
+    # static = frozen as authored (EPIC Phase 3).
+    dynamic_persona: bool = True
 
 
 class CharacterUpsert(CharacterBase):

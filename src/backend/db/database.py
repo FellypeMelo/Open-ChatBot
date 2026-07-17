@@ -203,6 +203,12 @@ def init_db():
                         "ALTER TABLE characters ADD COLUMN content_rating TEXT DEFAULT 'limited'"
                     )
                 )
+            if "dynamic_persona" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN dynamic_persona BOOLEAN DEFAULT 1"
+                    )
+                )
 
         # Lorebook V2 fields: the table predates the advanced-scanner columns
         # (keys, probability, insertion_order, ...). create_all() never ALTERs

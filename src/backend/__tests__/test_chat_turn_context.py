@@ -1019,6 +1019,66 @@ def test_clear_chat_history_reseeds_opening_greeting(client, db_session):
     assert greeting.chat_id == refreshed.active_chat_id
 
 
+def _mock_chat_turn(client, char_id, message="hi"):
+    with patch(
+        "src.backend.api.chat.brain.build_prompt", new=AsyncMock(return_value="P")
+    ), patch(
+        "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+    ) as mc:
+        mc.return_value = {"content": "a reply"}
+        return client.post("/chat", json={"character_id": char_id, "message": message})
+
+
+def test_static_persona_freezes_needs(client, db_session):
+    # EPIC Phase 3: a static character does not decay its needs over time.
+    old = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    char = Character(id=710, name="StaticChar", description="d", dynamic_persona=False)
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=710)
+    state.stats = {"energy": 100, "hunger": 0, "relationship": {"score": 50}, "last_update": old}
+    db_session.add(state)
+    db_session.commit()
+
+    assert _mock_chat_turn(client, 710).status_code == 200
+
+    refreshed = db_session.query(AgentState).filter(AgentState.character_id == 710).first()
+    assert refreshed.stats["energy"] == 100  # frozen: no decay applied
+    assert refreshed.stats["hunger"] == 0
+
+
+def test_dynamic_persona_decays_needs(client, db_session):
+    old = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    char = Character(id=711, name="DynChar", description="d", dynamic_persona=True)
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=711)
+    state.stats = {"energy": 100, "hunger": 0, "relationship": {"score": 50}, "last_update": old}
+    db_session.add(state)
+    db_session.commit()
+
+    assert _mock_chat_turn(client, 711).status_code == 200
+
+    refreshed = db_session.query(AgentState).filter(AgentState.character_id == 711).first()
+    assert refreshed.stats["energy"] < 100  # dynamic: decayed over the 8h gap
+
+
+def test_dynamic_persona_flag_round_trips_via_api(client, db_session):
+    # The static/dynamic flag survives the character write DTO + read model, so
+    # the Phase 5 UI can toggle it; omitting it defaults to dynamic.
+    resp = client.post(
+        "/characters/",
+        json={"name": "ToggleChar", "description": "d", "dynamic_persona": False, "tag_ids": []},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dynamic_persona"] is False
+
+    resp2 = client.post(
+        "/characters/", json={"name": "DefaultChar", "description": "d", "tag_ids": []}
+    )
+    assert resp2.json()["dynamic_persona"] is True
+
+
 # ---------------------------------------------------------------------------
 # PUT/DELETE /chat/message/{id}
 # ---------------------------------------------------------------------------

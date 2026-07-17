@@ -46,28 +46,34 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
     # Core state
     parts.append(f"Loc:{loc} | Mood:{mood} | E:{energy}% | Rel:{score}%")
 
-    # Forced physiological modifiers
+    # Physiological modifiers -- BIDIRECTIONAL: high energy must read as alert,
+    # not only the low-energy warnings. Otherwise a character at 97% energy still
+    # gets written frail/exhausted, contradicting the HUD (a real divergence seen
+    # in play).
     if energy <= 10:
         parts.append("CRITICAL EXHAUSTION: Barely conscious. Short/weak responses.")
     elif energy <= 30:
         parts.append("EXHAUSTED: Movement is hard, speech is slow.")
+    elif energy >= 80:
+        parts.append("ENERGIZED: Alert, animated, physically present.")
 
     if hunger >= 90:
         parts.append("STARVING: Can't focus, irritable, needs food.")
     elif hunger >= 70:
         parts.append("HUNGRY: Distracted, stomach growls.")
 
-    # Social Dynamics
+    # Warmth toward the user -- a DIAL that modulates how open the character is,
+    # expressed THROUGH its own voice/tics, NOT a generic personality override.
+    # The old "Polite but reserved" label replaced every character's voice with
+    # the same words, homogenizing a bubbly and a sombre character into one tone.
     if score <= 20:
-        parts.append(f"Rel(Stranger): Formal, distant, guarded with {user_name}.")
+        parts.append(f"Warmth to {user_name}: cold ({score}%) -- guard up, make them earn it, in your own voice.")
     elif score <= 50:
-        parts.append(f"Rel(Acquaintance): Polite but reserved with {user_name}.")
+        parts.append(f"Warmth to {user_name}: reserved ({score}%) -- cordial but holding back, open slowly, in your own voice.")
     elif score <= 80:
-        parts.append(f"Rel(Friend): Warm, open, and casual with {user_name}.")
+        parts.append(f"Warmth to {user_name}: warm ({score}%) -- open and at ease, let it show, in your own voice.")
     else:
-        parts.append(
-            f"Rel(Close): Highly familiar, trusting, and at ease with {user_name}."
-        )
+        parts.append(f"Warmth to {user_name}: close ({score}%) -- trusting and unguarded, in your own voice.")
 
     # Reflection-learned memory: surface a bounded, most-recent slice so the
     # character actually uses what it 'learned' about the user (RF-03).

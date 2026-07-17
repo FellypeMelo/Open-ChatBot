@@ -116,6 +116,11 @@ class Character(Base):
     mes_example = Column(Text, default="")
     content_rating = Column(String, default="limited")
     is_active = Column(Boolean, default=True)
+    # Dynamic (default) = needs decay over time + reflection evolves the persona
+    # to adapt to the user. Static = persona frozen as authored: no need-decay,
+    # no reflection-driven drift. Scene tracking + memory recall still run in
+    # both modes (EPIC Phase 3).
+    dynamic_persona = Column(Boolean, default=True)
 
     # Relationships
     tags = relationship("Tag", secondary=character_tags, backref="characters")

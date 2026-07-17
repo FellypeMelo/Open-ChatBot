@@ -461,12 +461,18 @@ async def _prepare_chat_turn(
     # so switching to another chat restores that chat's interaction_count first.
     chat = _resolve_active_chat(db, character, state, request.chat_id, user)
 
-    state.stats = update_needs(state.stats, datetime.now(timezone.utc))
+    # Static-persona mode (EPIC Phase 3): freeze the simulation -- no need-decay
+    # and no reflection-driven evolution -- so the character stays exactly as
+    # authored. Legacy rows with a NULL flag default to dynamic. Scene tracking
+    # + memory recall still run in both modes.
+    is_dynamic = getattr(character, "dynamic_persona", True) is not False
+    if is_dynamic:
+        state.stats = update_needs(state.stats, datetime.now(timezone.utc))
     state.interaction_count += 1
     # Trigger when at least REFLECTION_INTERVAL turns have passed since the last
     # SUCCESSFUL reflection (not a bare modulo): a reflection due on a boundary
     # turn that fails is caught on the next turn instead of skipped forever (RF-04).
-    force_reflect = (
+    force_reflect = is_dynamic and (
         state.interaction_count - (state.last_reflected_at_count or 0)
         >= settings.REFLECTION_INTERVAL
     )
@@ -484,7 +490,7 @@ async def _prepare_chat_turn(
         # attached the way it was before the rollback, which isn't guaranteed.
         db.rollback()
         state = db.query(AgentState).filter(AgentState.id == state.id).first()
-        force_reflect = (
+        force_reflect = is_dynamic and (
             state.interaction_count - (state.last_reflected_at_count or 0)
             >= settings.REFLECTION_INTERVAL
         )

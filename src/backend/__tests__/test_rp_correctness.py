@@ -128,6 +128,30 @@ def test_compress_state_injects_learned_facts_and_traits():
     assert "curious" in out
 
 
+def test_compress_state_high_energy_reads_as_alert():
+    # Bidirectional physicality: energy 97% must surface as ENERGIZED, not leave
+    # the model to write the character frail (which contradicted the HUD).
+    out = compress_state(
+        {"location": "X", "mood": "Y",
+         "stats": {"energy": 97, "hunger": 0, "relationship": {"score": 50}}},
+        "User",
+    )
+    assert "ENERGIZED" in out
+
+
+def test_compress_state_warmth_modulates_without_overriding_voice():
+    # The warmth band is a dial expressed in the character's own voice, not the
+    # old generic "Polite but reserved" that homogenized every character.
+    out = compress_state(
+        {"location": "X", "mood": "Y",
+         "stats": {"energy": 50, "hunger": 0, "relationship": {"score": 40}}},
+        "Bob",
+    )
+    assert "in your own voice" in out
+    assert "40%" in out  # score stays visible
+    assert "Polite but reserved" not in out
+
+
 # --- Time-decay after clear -------------------------------------------------
 
 def test_clear_chat_history_keeps_stats_able_to_decay():

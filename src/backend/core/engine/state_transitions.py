@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-from src.backend.db.models import AgentState
+from src.backend.core.ports import AgentStateLike
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def normalize_state_label(raw: str) -> str:
     return label[:1].upper() + label[1:]
 
 
-def parse_actions_to_state(ai_response: str, state: AgentState) -> None:
+def parse_actions_to_state(ai_response: str, state: AgentStateLike) -> None:
     """Parse an AI reply for narrative actions like **enters [location]** and
     apply them to the live agent state (location, outfit, hunger, sleep)."""
     # Pattern for location: **enters [location]** or **walks into [location]**

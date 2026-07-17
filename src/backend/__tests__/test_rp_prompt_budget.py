@@ -83,6 +83,19 @@ def _build(brain, **kw):
     )
 
 
+# --- A2: card section structure (headers/bullets) survives sanitize ----------
+
+def test_sanitize_preserves_card_section_structure():
+    brain = _brain(history_budget=8000)
+    persona = "Core traits:\n- shy\n- loves math\nVERBAL TICS:\n- says sorry a lot"
+    char = _char(persona_prompt=persona, short_description="", description="")
+    prompt = _build(brain, character=char)
+    # Bullet/section structure reaches the Personality: layer, not flattened.
+    assert "\n- shy" in prompt
+    assert "\n- loves math" in prompt
+    assert "VERBAL TICS:" in prompt  # non-role header keeps its colon
+
+
 # --- EPIC Phase 1: recency anchor + master prompt directives ------------------
 
 def test_recency_anchor_is_last_thing_before_reply():

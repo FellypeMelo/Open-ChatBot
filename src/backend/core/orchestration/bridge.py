@@ -105,11 +105,17 @@ class Brain:
     def _sanitize(text: Any, extra_names=()) -> str:
         """Neutralize role/boundary markers in free-text card/persona fields so a
         crafted value can't forge fake dialogue turns or a premature 'Reply:'
-        cutoff. Collapses newlines (no injected line can start a new role) and
-        strips the colon after any role keyword (incl. the live user/char name)."""
+        cutoff. The colon-strip after any role keyword (incl. the live user/char
+        name) is what actually blocks forgery -- a bare '\\nUser hi' can't be
+        parsed as a turn -- so newlines are PRESERVED. A card's section headers
+        and bullet lists (a real characterization lever for small models) then
+        survive instead of being flattened into a run-on paragraph (A2)."""
         if not text:
             return ""
-        text = re.sub(r"[\r\n]+", " ", str(text))
+        # Keep line structure; only normalize endings and bound runaway blank
+        # runs. Do NOT collapse to a single line.
+        text = re.sub(r"\r\n?", "\n", str(text))
+        text = re.sub(r"\n{3,}", "\n\n", text)
         markers = list(_ROLE_MARKERS) + [str(n).lower() for n in extra_names if n]
         pattern = r"(?i)\b(" + "|".join(re.escape(m) for m in markers) + r")\s*:"
         text = re.sub(pattern, lambda m: m.group(1) + " ", text)

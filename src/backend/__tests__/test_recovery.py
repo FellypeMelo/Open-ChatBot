@@ -1,8 +1,51 @@
 import pytest
 from unittest.mock import patch
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.exc import StaleDataError
+from src.backend.db.database import Base
 from src.backend.db.models import AgentState, Character
 from src.backend.core.engine.engine import evolve_character
 from src.backend.api.chat import run_consciousness_layer
+
+
+def test_evolve_character_retries_on_stale_data_error():
+    # RF-02: a concurrent chat commit advances AgentState.version; evolve's
+    # commit then raises StaleDataError. It must re-query fresh state and retry,
+    # not swallow the whole reflection (relationship/summary/facts/journal lost).
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        char = Character(name="Retry", description="d")
+        db.add(char)
+        db.commit()
+        db.add(AgentState(character_id=char.id))
+        db.commit()
+
+        real_commit = db.commit
+        calls = {"n": 0}
+
+        def flaky_commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise StaleDataError("simulated concurrent update")
+            return real_commit()
+
+        with patch.object(db, "commit", side_effect=flaky_commit):
+            evolve_character(db, char.id, {"relationship_change": 5})
+
+        state = db.query(AgentState).filter_by(character_id=char.id).first()
+        db.refresh(state)
+        # Applied exactly once on the retry (55, not 50 swallowed nor 60 double).
+        assert state.stats["relationship"]["score"] == 55
+        assert calls["n"] == 2
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_evolve_character_race_condition_safety(db_session):

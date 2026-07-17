@@ -3,6 +3,7 @@ import copy
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 from src.backend.db.models import AgentState, Character, Tag, JournalEntry
 
 logger = logging.getLogger(__name__)
@@ -255,53 +256,78 @@ def _evolve_relationship_tags(db: Session, character: Character, score: int) -> 
         _swap_tag(db, character, current_tags, "vulnerable", *_GUARDED_TAG)
 
 
-def evolve_character(db: Session, character_id: int, reflection: dict):
-    """Apply reflections to the agent's permanent state with row-level locking."""
-    # Use with_for_update to prevent race conditions during background evolution
-    agent = (
-        db.query(AgentState)
-        .filter(AgentState.character_id == character_id)
-        .with_for_update()
-        .first()
-    )
-    if not agent:
-        return
-
+def _apply_reflection_to_agent(
+    db: Session, agent: AgentState, character_id: int, reflection: dict
+) -> None:
+    """Fold one reflection into the agent (traits, summary, facts, relationship,
+    journal, tag evolution). Reads only fresh `agent` state so it is safe to
+    re-run against a re-queried row on a concurrency retry."""
     traits = reflection.get("traits", {})
     if isinstance(traits, list):
         traits = {"discovered_traits": traits}
     summary = reflection.get("summary")
 
-    try:
-        current_stats = copy.deepcopy(agent.stats) if agent.stats else {}
+    current_stats = copy.deepcopy(agent.stats) if agent.stats else {}
+    _merge_reflection_traits(current_stats, traits)
 
-        _merge_reflection_traits(current_stats, traits)
+    if summary:
+        current_stats["last_reflection_summary"] = summary
+        agent.active_summary = _roll_active_summary(agent.active_summary, summary)
 
-        if summary:
-            current_stats["last_reflection_summary"] = summary
-            agent.active_summary = _roll_active_summary(agent.active_summary, summary)
+    _append_unique_facts(current_stats, reflection.get("facts", []))
 
-        _append_unique_facts(current_stats, reflection.get("facts", []))
+    rel_change = reflection.get("relationship_change", 0)
+    if rel_change:
+        _apply_relationship_change(current_stats, rel_change)
 
-        rel_change = reflection.get("relationship_change", 0)
-        if rel_change:
-            _apply_relationship_change(current_stats, rel_change)
+    agent.stats = current_stats
+    db.add(agent)
 
-        agent.stats = current_stats
-        db.add(agent)
+    _write_journal_entry(
+        db, character_id, agent, reflection.get("diary_entry"), summary, current_stats
+    )
 
-        _write_journal_entry(
-            db, character_id, agent, reflection.get("diary_entry"), summary, current_stats
+    character = db.query(Character).filter(Character.id == character_id).first()
+    if character:
+        _evolve_relationship_tags(db, character, _relationship_score(current_stats))
+
+
+def evolve_character(
+    db: Session, character_id: int, reflection: dict, _max_retries: int = 2
+) -> None:
+    """Apply a reflection to the agent's permanent state. On a StaleDataError
+    (a concurrent chat commit advanced AgentState.version) re-query the fresh row
+    and retry, so the reflection is not silently lost (RF-02) -- rather than
+    swallowing the whole summary/relationship/facts/journal."""
+    for attempt in range(_max_retries + 1):
+        agent = (
+            db.query(AgentState)
+            .filter(AgentState.character_id == character_id)
+            .with_for_update()
+            .first()
         )
-
-        character = db.query(Character).filter(Character.id == character_id).first()
-        if character:
-            _evolve_relationship_tags(db, character, _relationship_score(current_stats))
-
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Evolution failed: {e}")
+        if not agent:
+            return
+        try:
+            _apply_reflection_to_agent(db, agent, character_id, reflection)
+            db.commit()
+            return
+        except StaleDataError:
+            db.rollback()
+            if attempt >= _max_retries:
+                logger.error(
+                    f"Evolution failed after {_max_retries} retries: concurrent "
+                    f"update for character {character_id}"
+                )
+                return
+            logger.info(
+                f"Evolution retry {attempt + 1} for character {character_id} "
+                "(concurrent state update)"
+            )
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Evolution failed: {e}")
+            return
 
 
 def should_be_sleeping(stats: Dict[str, Any], current_time: datetime) -> bool:

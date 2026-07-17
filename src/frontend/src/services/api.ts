@@ -94,6 +94,7 @@ export interface CharacterInput {
   alternate_greetings?: string[]
   mes_example?: string
   content_rating?: string
+  dynamic_persona?: boolean
   tag_ids: number[]
   compress_backstory: boolean
 }
@@ -175,6 +176,7 @@ export interface Character {
   alternate_greetings?: string[];
   mes_example?: string;
   content_rating?: string;
+  dynamic_persona?: boolean;
   is_active: boolean;
   tags: Tag[];
   state?: CharacterState;

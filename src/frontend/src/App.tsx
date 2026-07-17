@@ -42,6 +42,7 @@ const toCharacterPayload = (data: CharacterFormData): CharacterInput => ({
   alternate_greetings: data.alternate_greetings,
   mes_example: data.mes_example,
   content_rating: data.content_rating,
+  dynamic_persona: data.dynamic_persona,
   tag_ids: data.tagIds,
   compress_backstory: false
 })

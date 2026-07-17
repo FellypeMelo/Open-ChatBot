@@ -218,25 +218,33 @@ def _get_or_create_tag(db: Session, label: str, instruction: str) -> Tag:
     return tag
 
 
-def _swap_tag(
+def _add_evolved_tag(
     db: Session,
     character: Character,
     current_tags: Dict[str, Tag],
-    remove_label: str,
-    add_label: str,
-    add_instruction: str,
+    label: str,
+    instruction: str,
+    evolved: set,
 ) -> None:
-    """Remove `remove_label` (if the character has it) and add `add_label` (if it
-    doesn't), based on the tag snapshot taken before the swaps began."""
-    if remove_label in current_tags:
-        character.tags.remove(current_tags[remove_label])
-        logger.info(f"Tag Evolution: Removing '{remove_label}'")
-    if add_label not in current_tags:
-        character.tags.append(_get_or_create_tag(db, add_label, add_instruction))
-        logger.info(f"Tag Evolution: Adding '{add_label}'")
+    """Add a relationship-driven tag if absent and record that evolution owns it."""
+    if label not in current_tags:
+        character.tags.append(_get_or_create_tag(db, label, instruction))
+        evolved.add(label)
+        logger.info(f"Tag Evolution: Adding '{label}'")
 
 
-# Relationship-driven tag pairs: (label, system-instruction).
+def _remove_evolved_tag(
+    character: Character, current_tags: Dict[str, Tag], label: str, evolved: set
+) -> None:
+    """Remove a tag ONLY if evolution itself added it -- never delete an
+    author-defined personality tag (RF-06, option C)."""
+    if label in current_tags and label in evolved:
+        character.tags.remove(current_tags[label])
+        evolved.discard(label)
+        logger.info(f"Tag Evolution: Removing evolved '{label}'")
+
+
+# Relationship-driven "warmth" tags evolution layers on: (label, instruction).
 _AFFECTIONATE_TAG = (
     "affectionate",
     "Be deeply warm, playful, and express physical affection naturally.",
@@ -245,26 +253,25 @@ _VULNERABLE_TAG = (
     "vulnerable",
     "Share deep thoughts, express trust, and speak from the heart.",
 )
-_DISTANT_TAG = (
-    "emotionally distant",
-    "Be cold, distant, and maintain strict personal boundaries.",
-)
-_GUARDED_TAG = (
-    "guarded",
-    "Keep your guard up, avoid revealing personal details, and stay defensive.",
-)
 
 
-def _evolve_relationship_tags(db: Session, character: Character, score: int) -> None:
-    """Swap a character's relational tags as affinity crosses the warm/cold
-    thresholds: distant<->affectionate and guarded<->vulnerable."""
+def _evolve_relationship_tags(
+    db: Session, character: Character, score: int, stats: Dict[str, Any]
+) -> None:
+    """Evolution manages a warmth LAYER on top of the authored personality: as
+    affinity warms it adds affectionate/vulnerable; as it cools it removes only
+    the warmth tags it itself added. Author-defined tags are never deleted, and
+    evolution never forces contradictory cold tags onto an authored character
+    (RF-06, option C). Evolution-owned tags are tracked in stats['evolved_tags']."""
+    evolved = set(stats.get("evolved_tags", []))
     current_tags = {t.label.lower(): t for t in character.tags}
     if score >= WARM_TAG_THRESHOLD:
-        _swap_tag(db, character, current_tags, "emotionally distant", *_AFFECTIONATE_TAG)
-        _swap_tag(db, character, current_tags, "guarded", *_VULNERABLE_TAG)
+        _add_evolved_tag(db, character, current_tags, *_AFFECTIONATE_TAG, evolved)
+        _add_evolved_tag(db, character, current_tags, *_VULNERABLE_TAG, evolved)
     elif score <= COLD_TAG_THRESHOLD:
-        _swap_tag(db, character, current_tags, "affectionate", *_DISTANT_TAG)
-        _swap_tag(db, character, current_tags, "vulnerable", *_GUARDED_TAG)
+        _remove_evolved_tag(character, current_tags, "affectionate", evolved)
+        _remove_evolved_tag(character, current_tags, "vulnerable", evolved)
+    stats["evolved_tags"] = sorted(evolved)
 
 
 def _apply_reflection_to_agent(
@@ -291,16 +298,21 @@ def _apply_reflection_to_agent(
     if rel_change:
         _apply_relationship_change(current_stats, rel_change)
 
-    agent.stats = current_stats
     db.add(agent)
-
     _write_journal_entry(
         db, character_id, agent, reflection.get("diary_entry"), summary, current_stats
     )
 
     character = db.query(Character).filter(Character.id == character_id).first()
     if character:
-        _evolve_relationship_tags(db, character, _relationship_score(current_stats))
+        _evolve_relationship_tags(
+            db, character, _relationship_score(current_stats), current_stats
+        )
+
+    # Assign LAST, after every in-place mutation (incl. evolved_tags): a plain
+    # JSON column snapshots at assignment, so an assign-then-mutate would lose
+    # the later edits.
+    agent.stats = current_stats
 
 
 def evolve_character(

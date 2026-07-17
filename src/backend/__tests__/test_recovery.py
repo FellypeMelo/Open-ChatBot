@@ -153,23 +153,49 @@ def test_evolve_character_tag_evolution(db_session):
     assert "emotionally distant" in [t.label.lower() for t in char.tags]
     assert "guarded" in [t.label.lower() for t in char.tags]
 
-    # Evolve relationship to score 85 (above threshold of 80)
+    # Warm to 85: evolution LAYERS affectionate + vulnerable on top; the
+    # author-defined distant + guarded are preserved (RF-06 option C).
     evolve_character(db_session, char.id, {"relationship_change": 35})
     db_session.refresh(char)
 
-    # Distant and guarded tags should be swapped for affectionate and vulnerable
     tag_labels = [t.label.lower() for t in char.tags]
-    assert "emotionally distant" not in tag_labels
-    assert "guarded" not in tag_labels
     assert "affectionate" in tag_labels
     assert "vulnerable" in tag_labels
+    assert "emotionally distant" in tag_labels  # authored, retained
+    assert "guarded" in tag_labels  # authored, retained
 
-    # Evolve relationship back down to 25 (below threshold of 30)
+    # Cool to 25: evolution removes ONLY the warmth it added; authored tags stay.
     evolve_character(db_session, char.id, {"relationship_change": -60})
     db_session.refresh(char)
 
     tag_labels_low = [t.label.lower() for t in char.tags]
     assert "affectionate" not in tag_labels_low
     assert "vulnerable" not in tag_labels_low
-    assert "emotionally distant" in tag_labels_low
+    assert "emotionally distant" in tag_labels_low  # authored, retained
     assert "guarded" in tag_labels_low
+
+
+def test_evolve_character_preserves_authored_warm_tag_on_cold_swing(db_session):
+    # RF-06 (option C): a tag the AUTHOR defined must never be deleted by tag
+    # evolution -- only evolution-owned tags are removable.
+    from src.backend.db.models import Tag
+
+    authored = Tag(label="affectionate", instruction="Authored: always warm.")
+    db_session.add(authored)
+    db_session.commit()
+
+    char = Character(name="Sunny", description="Warm by design", tags=[authored])
+    db_session.add(char)
+    db_session.commit()
+
+    state = AgentState(character_id=char.id)
+    state.stats["relationship"]["score"] = 50
+    db_session.add(state)
+    db_session.commit()
+
+    # Relationship collapses well below the cold threshold.
+    evolve_character(db_session, char.id, {"relationship_change": -40})  # 50 -> 10
+    db_session.refresh(char)
+
+    labels = [t.label.lower() for t in char.tags]
+    assert "affectionate" in labels, "authored tag must survive a cold swing"

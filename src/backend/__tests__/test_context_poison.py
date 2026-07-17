@@ -13,6 +13,7 @@ no real embeddings, no production DB).
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.documents import Document
 
 from src.backend.core.memory.vector_store import VectorStore
@@ -57,6 +58,22 @@ def test_clear_character_memories_removes_only_that_character(tmp_path):
     assert 1 not in remaining
     assert 2 in remaining
     assert vs.memories_store.dumped is True
+
+
+def test_clear_by_metadata_surfaces_persist_failure(tmp_path):
+    """A dump() failure during a purge must propagate, not be swallowed as a
+    silent 0 (PZ-03). Otherwise the endpoint reports 'cleared' while the on-disk
+    store still holds the memories, which resurface after a restart."""
+    vs = _make_vs(tmp_path)
+    vs.memories_store = _FakeStore({"m1": ("secret", {"chat_id": 9})})
+
+    def _boom(_path):
+        raise OSError("disk full")
+
+    vs.memories_store.dump = _boom
+
+    with pytest.raises(OSError):
+        asyncio.run(vs.clear_chat_memories(9))
 
 
 def test_query_memory_drops_results_below_relevance_threshold(tmp_path):

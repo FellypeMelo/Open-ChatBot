@@ -185,8 +185,11 @@ class VectorStore:
                 logger.info(f"Cleared {len(ids)} memories for {label}.")
             return len(ids)
         except Exception as e:
+            # Do NOT swallow into a 0: a failed purge that reports success lets
+            # "deleted" memories persist on disk and resurface after a restart
+            # (PZ-03). Surface it so the caller can fail the request.
             logger.error(f"Error clearing memories for {label}: {e}")
-            return 0
+            raise
 
     async def clear_character_memories(self, character_id: int) -> int:
         """Delete every stored memory belonging to a character so a reset

@@ -22,6 +22,7 @@ erDiagram
     AGENT_STATES }o..|| CHATS : "active_chat_id (SET NULL)"
     AGENT_STATES }o..o| MESSAGE_NODES : "current_message_id (SET NULL)"
     MESSAGE_NODES ||--o{ MESSAGE_NODES : "parent_id (self-ref, indexed, no ondelete)"
+    CHARACTERS { bool dynamic_persona }
     SAMPLER_PRESETS { int id }
 ```
 
@@ -30,7 +31,7 @@ erDiagram
 | Table | Role |
 | :-- | :-- |
 | **users** | The single local-user persona. A partial unique index (`uq_users_single_active`, `WHERE is_active`) makes "only one active user" a DB constraint. |
-| **characters** | The AI character/card (name, persona_prompt, scenario, first_mes, alternate_greetings, mes_example…). |
+| **characters** | The AI character/card (name, persona_prompt, scenario, first_mes, alternate_greetings, mes_example…). `dynamic_persona` (Boolean, default True) toggles behavioral simulation. |
 | **tags** | A personality tag + prompt instruction. M:N with characters via `character_tags`. |
 | **chats** | A conversation/session with a character. Canonical store of the conversation-local fields **and** (since B8) the per-chat persona snapshot. |
 | **agent_states** | The character's live state. `character_id` is `unique` + **NOT NULL** (one per character). Holds the live mirror of the active chat. |
@@ -90,6 +91,29 @@ erDiagram
 8. **Nullable `chat_id`** on message_nodes/journal_entries: legacy rows predating
    the Chat entity, adopted into a lazily-created first chat.
 
+9. **`characters.dynamic_persona` gates the behavioral simulation (EPIC Phase 3).**
+   A single Boolean (default **True**) on the character, not a per-chat field.
+   *Dynamic* (default): needs decay over time and reflection evolves the persona to
+   adapt to the user (relationship drift, new facts/traits, tag warmth). *Static*:
+   the persona is frozen exactly as authored — no need-decay, no reflection-driven
+   drift. Scene tracking (location/mood) and RAG memory recall still run in **both**
+   modes; only the self-modifying simulation is switched off. Being on the character
+   (not the chat), the mode is shared across all of that character's chats.
+
+10. **Prompt-time features that deliberately add NO schema.** Three recently-shipped
+    behaviors reuse existing fields/config, so a reader should *not* expect new
+    tables or columns for them:
+    - **Per-turn scene extractor.** A cheap LLM call each turn updates the existing
+      `agent_states.location`/`mood` (and their mirrored `chats.location`/`mood`
+      snapshot) — no new column; it writes the existing persona/mirror fields.
+    - **Recency anchor.** The persona is re-injected at prompt-build time, derived
+      from existing `characters` fields (`persona_prompt`/`short_description`). Pure
+      prompt assembly — no schema, and no new `voice_style`-type column was added
+      (deliberate).
+    - **Token bounds.** Card size is capped by config constants (`CARD_MAX_TOKENS`,
+      `RECOMMENDED_CARD_TOKENS`) and history by `HISTORY_WINDOW_TOKENS` — config,
+      not schema.
+
 ## Schema management (B1)
 
 `init_db()` builds/updates the schema on startup (`create_all` + idempotent
@@ -99,3 +123,9 @@ instead of colliding with existing tables. **Migrations are never auto-applied;
 the user runs `alembic upgrade head`.** New schema changes ship as Alembic
 migrations (`src/backend/db/migrations/versions/`). `PRAGMA foreign_keys=ON` is set
 per connection.
+
+Current Alembic head: **`b2f1a9c4d7e3`** (`character_dynamic_persona`, revises
+`f6926d3f5da7`), which adds `characters.dynamic_persona`. The migration is guarded
+(checks the column isn't already present) so it stays idempotent with the matching
+`init_db` `ALTER TABLE characters ADD COLUMN dynamic_persona BOOLEAN DEFAULT 1`
+compat path in `database.py`.

@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from src.backend.db.models import Character, AgentState
+from src.backend.db.models import Character
 from src.backend.core.orchestration.bridge import Brain
 
 

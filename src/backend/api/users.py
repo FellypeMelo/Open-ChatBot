@@ -38,14 +38,9 @@ def get_me(db: Session = Depends(get_db)):
 def update_me(request: UserUpdateSchema, db: Session = Depends(get_db)):
     user = User.get_or_create_active(db)
 
-    if request.name is not None:
-        user.name = request.name
-    if request.gender is not None:
-        user.gender = request.gender
-    if request.persona_description is not None:
-        user.persona_description = request.persona_description
-    if request.appearance is not None:
-        user.appearance = request.appearance
+    # Only overwrite fields the caller actually sent (None means "leave as-is").
+    for key, value in request.model_dump(exclude_none=True).items():
+        setattr(user, key, value)
 
     db.commit()
     db.refresh(user)

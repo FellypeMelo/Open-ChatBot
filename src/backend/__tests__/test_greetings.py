@@ -1,9 +1,8 @@
 """Alternate greetings: storage on the character card + seeding the opening
 message when a new chat starts (with {{char}}/{{user}} macros resolved)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.backend.db.models import AgentState, Character, MessageNode, Chat
+from src.backend.db.models import AgentState, MessageNode
 
 
 def _make_char(client, **overrides):

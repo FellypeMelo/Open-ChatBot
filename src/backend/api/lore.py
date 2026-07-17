@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from src.backend.db.database import get_db
 from src.backend.db.models import LorebookEntry
 from src.backend.core.deps import vector_store
+from src.backend.api.common import get_or_404
 
 router = APIRouter()
 
@@ -43,19 +44,7 @@ class LoreResponse(BaseModel):
 
 @router.post("/", response_model=LoreResponse)
 async def create_lore_entry(entry: LoreCreate, db: Session = Depends(get_db)):
-    db_entry = LorebookEntry(
-        keyword=entry.keyword,
-        keys=entry.keys,
-        secondary_keys=entry.secondary_keys,
-        content=entry.content,
-        character_id=entry.character_id,
-        is_global=entry.is_global,
-        insertion_order=entry.insertion_order,
-        probability=entry.probability,
-        scan_depth=entry.scan_depth,
-        is_constant=entry.is_constant,
-        cooldown_turns=entry.cooldown_turns,
-    )
+    db_entry = LorebookEntry(**entry.model_dump())
     db.add(db_entry)
     db.commit()
     db.refresh(db_entry)
@@ -78,9 +67,7 @@ def list_lore_entries(db: Session = Depends(get_db)):
 
 @router.delete("/{lore_id}")
 def delete_lore_entry(lore_id: int, db: Session = Depends(get_db)):
-    entry = db.query(LorebookEntry).filter(LorebookEntry.id == lore_id).first()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Lore entry not found")
+    entry = get_or_404(db, LorebookEntry, lore_id, "Lore entry")
     db.delete(entry)
     db.commit()
     return {"message": "Lore entry deleted"}

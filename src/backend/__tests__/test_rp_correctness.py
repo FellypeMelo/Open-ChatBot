@@ -5,13 +5,13 @@ analysis. All isolated: no llama-server, no real DB, no vector store.
 
 import asyncio
 import types
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.backend.core.context.compressor import compress_state
 from src.backend.core.engine.engine import evolve_character, update_needs
 from src.backend.core.context.lorebook_scanner import LorebookScanner
-from src.backend.db.models import AgentState, Character
+from src.backend.db.models import AgentState
 
 
 # --- Reflection / evolution -------------------------------------------------

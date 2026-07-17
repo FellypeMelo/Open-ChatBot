@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from typing import List, Dict, Any, Optional
@@ -153,9 +153,6 @@ async def run_consciousness_layer(
                 )
         finally:
             db.close()
-            import gc
-
-            gc.collect()
     except Exception as e:
         logger.exception(f"Consciousness layer error: {e}")
 
@@ -322,6 +319,42 @@ def _load_chat_into_state(state: AgentState, chat: Chat):
     state.active_summary = chat.active_summary or ""
     state.interaction_count = chat.interaction_count or 0
     state.active_chat_id = chat.id
+
+
+def _persist_assistant_reply(
+    db: Session,
+    state: Optional[AgentState],
+    ctx: "ChatTurnContext",
+    reply: str,
+    request_id: str,
+) -> MessageNode:
+    """Persist an assistant reply as the next variant under the turn's parent,
+    advance the conversation pointer, and commit. Shared by /chat and /chat/stream
+    so the two paths can never diverge. `state` may be None (a stream re-query
+    that failed): the message is still saved, only the pointer update is skipped.
+    Callers apply parse_actions_to_state before calling."""
+    variant_count = (
+        db.query(MessageNode)
+        .filter(MessageNode.parent_id == ctx.effective_parent_id)
+        .count()
+    )
+    ai_msg = MessageNode(
+        character_id=ctx.character.id,
+        chat_id=ctx.chat_id,
+        user_id=ctx.user.id,
+        role="assistant",
+        content=reply,
+        parent_id=ctx.effective_parent_id,
+        variant_index=variant_count,
+        request_id=request_id,
+    )
+    db.add(ai_msg)
+    db.flush()
+    if state is not None:
+        state.current_message_id = ai_msg.id
+        _sync_state_to_chat(db, state, ctx.chat_id)
+    db.commit()
+    return ai_msg
 
 
 def _resolve_active_chat(
@@ -729,23 +762,25 @@ async def list_chats(character_id: int, db: Session = Depends(get_db)):
         .order_by(Chat.updated_at.desc())
         .all()
     )
-    out = []
-    for c in chats:
-        count = (
-            db.query(MessageNode).filter(MessageNode.chat_id == c.id).count()
-        )
-        out.append(
-            {
-                "id": c.id,
-                "title": c.title,
-                "is_archived": bool(c.is_archived),
-                "is_active": c.id == active_id,
-                "message_count": count,
-                "created_at": c.created_at,
-                "updated_at": c.updated_at,
-            }
-        )
-    return out
+    # Single grouped COUNT instead of one query per chat (avoids an N+1).
+    counts = dict(
+        db.query(MessageNode.chat_id, func.count(MessageNode.id))
+        .filter(MessageNode.chat_id.in_([c.id for c in chats]))
+        .group_by(MessageNode.chat_id)
+        .all()
+    )
+    return [
+        {
+            "id": c.id,
+            "title": c.title,
+            "is_archived": bool(c.is_archived),
+            "is_active": c.id == active_id,
+            "message_count": counts.get(c.id, 0),
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        for c in chats
+    ]
 
 
 @router.put("/chat/{chat_id}")
@@ -915,27 +950,7 @@ async def chat(
             # but could append a correction instruction to the next prompt.
 
         parse_actions_to_state(reply, ctx.state)
-
-        variant_count = (
-            db.query(MessageNode)
-            .filter(MessageNode.parent_id == ctx.effective_parent_id)
-            .count()
-        )
-        ai_msg = MessageNode(
-            character_id=ctx.character.id,
-            chat_id=ctx.chat_id,
-            user_id=ctx.user.id,
-            role="assistant",
-            content=reply,
-            parent_id=ctx.effective_parent_id,
-            variant_index=variant_count,
-            request_id=request_id,
-        )
-        db.add(ai_msg)
-        db.flush()
-        ctx.state.current_message_id = ai_msg.id
-        _sync_state_to_chat(db, ctx.state, ctx.chat_id)
-        db.commit()
+        _persist_assistant_reply(db, ctx.state, ctx, reply, request_id)
 
         background_tasks.add_task(
             run_consciousness_layer,
@@ -1026,28 +1041,11 @@ async def chat_stream(
                         .filter(AgentState.id == ctx.state.id)
                         .first()
                     )
-                    variant_count = (
-                        inner_db.query(MessageNode)
-                        .filter(MessageNode.parent_id == ctx.effective_parent_id)
-                        .count()
-                    )
-                    ai_msg = MessageNode(
-                        character_id=ctx.character.id,
-                        chat_id=ctx.chat_id,
-                        user_id=ctx.user.id,
-                        role="assistant",
-                        content=full_reply,
-                        parent_id=ctx.effective_parent_id,
-                        variant_index=variant_count,
-                        request_id=request_id,
-                    )
-                    inner_db.add(ai_msg)
-                    inner_db.flush()
                     if inner_state:
-                        inner_state.current_message_id = ai_msg.id
                         parse_actions_to_state(full_reply, inner_state)
-                        _sync_state_to_chat(inner_db, inner_state, ctx.chat_id)
-                    inner_db.commit()
+                    ai_msg = _persist_assistant_reply(
+                        inner_db, inner_state, ctx, full_reply, request_id
+                    )
 
                     # RN-003: Formatting Validation (Stream)
                     is_formatted = validate_narrative_formatting(full_reply)
@@ -1088,10 +1086,21 @@ async def chat_stream(
 
 
 def deactivate_subtree(node_id: int, db: Session):
-    children = db.query(MessageNode).filter(MessageNode.parent_id == node_id).all()
-    for child in children:
-        child.is_active = False
-        deactivate_subtree(child.id, db)
+    """Mark every descendant of node_id inactive (the node itself is untouched).
+    Iterative, level-batched walk -- avoids per-node queries and unbounded
+    recursion on a long linear message chain."""
+    frontier = [node_id]
+    while frontier:
+        children = (
+            db.query(MessageNode)
+            .filter(MessageNode.parent_id.in_(frontier))
+            .all()
+        )
+        if not children:
+            break
+        for child in children:
+            child.is_active = False
+        frontier = [child.id for child in children]
 
 
 @router.put("/chat/message/{message_id}")

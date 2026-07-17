@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 from src.backend.core.engine.runner import runner
+from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class ServerConfigModel(BaseModel):
     port: int
     threads: int
     gpu_layers: int
-    context_size: int = 4096
+    context_size: int = settings.CONTEXT_SIZE
     additional_args: str
 
     @field_validator("binary_path")
@@ -143,4 +144,19 @@ async def restart_all_servers():
         }
     except Exception as e:
         logger.error(f"Failed to restart servers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TokenizeRequest(BaseModel):
+    text: str
+
+
+@router.post("/tokenize")
+async def tokenize_text(payload: TokenizeRequest):
+    try:
+        from src.backend.core.deps import brain
+        count = await brain.budget_calc.count_tokens(payload.text)
+        return {"tokens": count}
+    except Exception as e:
+        logger.error(f"Failed to tokenize text: {e}")
         raise HTTPException(status_code=500, detail=str(e))

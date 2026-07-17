@@ -39,8 +39,6 @@ async def lifespan(app: FastAPI):
     is_e2e = os.environ.get("E2E_TESTING") == "1"
     is_testing = is_pytest or is_e2e
 
-    os.makedirs("static/avatars", exist_ok=True)
-
     if not is_pytest:
         # Startup: Initialize DB
         logger.info("Initializing database...")

@@ -2,6 +2,63 @@ import React, { useState, useEffect } from 'react'
 import * as api from '../services/api'
 import type { RunnerStatus } from '../services/api'
 
+// Default llama-server config values (used for initial state and when a numeric
+// field is cleared) and the storage-path prefixes the backend expects.
+const DEFAULT_INFERENCE_PORT = 8080
+const DEFAULT_EMBEDDING_PORT = 8081
+const DEFAULT_THREADS = 4
+const DEFAULT_GPU_LAYERS = -1
+const DEFAULT_CONTEXT_SIZE = 4096
+const BINARY_PREFIX = 'llama_bin/'
+const MODEL_PREFIX = 'models/'
+
+// Shared control styling for every field in the server-config forms (both the
+// inference and embedding tabs render the same input/select chrome).
+const FIELD_CLASS = 'bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none'
+const FIELD_LABEL_CLASS = 'font-label-sm text-[10px] text-[#71717A] uppercase'
+
+// Label + control wrapper. `wrapperClassName` lets a field span grid columns.
+const Field: React.FC<{
+  id: string
+  label: string
+  wrapperClassName?: string
+  children: React.ReactNode
+}> = ({ id, label, wrapperClassName = 'flex flex-col gap-1', children }) => (
+  <div className={wrapperClassName}>
+    <label htmlFor={id} className={FIELD_LABEL_CLASS}>{label}</label>
+    {children}
+  </div>
+)
+
+// Numeric config field. `fallback` is used when the input is cleared; set
+// `allowZero` for fields where 0 is a real value (GPU layers) rather than a
+// sentinel that should snap back to the fallback (port/threads/context).
+const NumberField: React.FC<{
+  id: string
+  label: string
+  value: number
+  onChange: (v: number) => void
+  fallback: number
+  allowZero?: boolean
+  disabled?: boolean
+  wrapperClassName?: string
+}> = ({ id, label, value, onChange, fallback, allowZero, disabled, wrapperClassName }) => (
+  <Field id={id} label={label} wrapperClassName={wrapperClassName}>
+    <input
+      id={id}
+      type="number"
+      value={value}
+      onChange={(e) => {
+        const v = parseInt(e.target.value, 10)
+        onChange(Number.isNaN(v) ? fallback : allowZero ? v : v || fallback)
+      }}
+      className={FIELD_CLASS}
+      required
+      disabled={disabled}
+    />
+  </Field>
+)
+
 interface SettingsModalProps {
   onClose: () => void
 }
@@ -15,18 +72,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   // Local form state for inference
   const [infBinary, setInfBinary] = useState('')
   const [infModel, setInfModel] = useState('')
-  const [infPort, setInfPort] = useState(8080)
-  const [infThreads, setInfThreads] = useState(4)
-  const [infGpuLayers, setInfGpuLayers] = useState(-1)
-  const [infContext, setInfContext] = useState(4096)
+  const [infPort, setInfPort] = useState(DEFAULT_INFERENCE_PORT)
+  const [infThreads, setInfThreads] = useState(DEFAULT_THREADS)
+  const [infGpuLayers, setInfGpuLayers] = useState(DEFAULT_GPU_LAYERS)
+  const [infContext, setInfContext] = useState(DEFAULT_CONTEXT_SIZE)
   const [infArgs, setInfArgs] = useState('')
 
   // Local form state for embedding
   const [embBinary, setEmbBinary] = useState('')
   const [embModel, setEmbModel] = useState('')
-  const [embPort, setEmbPort] = useState(8081)
-  const [embThreads, setEmbThreads] = useState(4)
-  const [embGpuLayers, setEmbGpuLayers] = useState(-1)
+  const [embPort, setEmbPort] = useState(DEFAULT_EMBEDDING_PORT)
+  const [embThreads, setEmbThreads] = useState(DEFAULT_THREADS)
+  const [embGpuLayers, setEmbGpuLayers] = useState(DEFAULT_GPU_LAYERS)
   const [embArgs, setEmbArgs] = useState('')
 
   // Consolidated mode state (whether embedding runs on the same server/port/model)
@@ -110,7 +167,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       setEmbGpuLayers(infGpuLayers)
       setEmbArgs(infArgs)
     } else {
-      setEmbPort(8081)
+      setEmbPort(DEFAULT_EMBEDDING_PORT)
     }
   }
 
@@ -136,7 +193,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           port: isConsolidated ? infPort : embPort,
           threads: isConsolidated ? infThreads : embThreads,
           gpu_layers: isConsolidated ? infGpuLayers : embGpuLayers,
-          context_size: 4096, // Fixed default
+          context_size: DEFAULT_CONTEXT_SIZE, // embedding server ignores context; keep a sane default
           additional_args: isConsolidated ? infArgs : embArgs
         }
       }
@@ -284,13 +341,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
               {/* Form Fields */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-sm">
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="inf-binary" className="font-label-sm text-[10px] text-[#71717A] uppercase">Runner Binary</label>
+                <Field id="inf-binary" label="Runner Binary">
                   <select
                     id="inf-binary"
-                    value={infBinary.replace('llama_bin/', '')}
-                    onChange={e => setInfBinary(`llama_bin/${e.target.value}`)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                    value={infBinary.replace(BINARY_PREFIX, '')}
+                    onChange={e => setInfBinary(`${BINARY_PREFIX}${e.target.value}`)}
+                    className={FIELD_CLASS}
                   >
                     {status?.available_binaries.map(b => (
                       <option key={b} value={b}>{b}</option>
@@ -299,15 +355,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       <option value="llama-server.exe">llama-server.exe (Default)</option>
                     )}
                   </select>
-                </div>
+                </Field>
 
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="inf-model" className="font-label-sm text-[10px] text-[#71717A] uppercase">Active GGUF Model</label>
+                <Field id="inf-model" label="Active GGUF Model">
                   <select
                     id="inf-model"
-                    value={infModel.replace('models/', '')}
-                    onChange={e => setInfModel(e.target.value ? `models/${e.target.value}` : '')}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                    value={infModel.replace(MODEL_PREFIX, '')}
+                    onChange={e => setInfModel(e.target.value ? `${MODEL_PREFIX}${e.target.value}` : '')}
+                    className={FIELD_CLASS}
                     required
                   >
                     <option value="">-- Choose Model --</option>
@@ -320,71 +375,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       No models in ./models directory. Add GGUF files.
                     </span>
                   )}
-                </div>
+                </Field>
 
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="inf-port" className="font-label-sm text-[10px] text-[#71717A] uppercase">Port</label>
-                  <input
-                    id="inf-port"
-                    type="number"
-                    value={infPort}
-                    onChange={e => setInfPort(parseInt(e.target.value) || 8080)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="inf-threads" className="font-label-sm text-[10px] text-[#71717A] uppercase">CPU Threads</label>
-                  <input
-                    id="inf-threads"
-                    type="number"
-                    value={infThreads}
-                    onChange={e => setInfThreads(parseInt(e.target.value) || 4)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="inf-gpu-layers" className="font-label-sm text-[10px] text-[#71717A] uppercase">GPU Layers (-1 to disable)</label>
-                  <input
-                    id="inf-gpu-layers"
-                    type="number"
-                    value={infGpuLayers}
-                    onChange={e => {
-                      const v = parseInt(e.target.value, 10)
-                      setInfGpuLayers(Number.isNaN(v) ? -1 : v)
-                    }}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="inf-context" className="font-label-sm text-[10px] text-[#71717A] uppercase">Context Size (tokens)</label>
-                  <input
-                    id="inf-context"
-                    type="number"
-                    value={infContext}
-                    onChange={e => setInfContext(parseInt(e.target.value) || 4096)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                  />
-                </div>
+                <NumberField id="inf-port" label="Port" value={infPort} onChange={setInfPort} fallback={DEFAULT_INFERENCE_PORT} />
+                <NumberField id="inf-threads" label="CPU Threads" value={infThreads} onChange={setInfThreads} fallback={DEFAULT_THREADS} />
+                <NumberField id="inf-gpu-layers" label="GPU Layers (-1 to disable)" value={infGpuLayers} onChange={setInfGpuLayers} fallback={DEFAULT_GPU_LAYERS} allowZero />
+                <NumberField id="inf-context" label="Context Size (tokens)" value={infContext} onChange={setInfContext} fallback={DEFAULT_CONTEXT_SIZE} />
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label htmlFor="inf-args" className="font-label-sm text-[10px] text-[#71717A] uppercase">Additional CLI Arguments</label>
+              <Field id="inf-args" label="Additional CLI Arguments">
                 <input
                   id="inf-args"
                   type="text"
                   value={infArgs}
                   onChange={e => setInfArgs(e.target.value)}
                   placeholder="e.g. --cache-type-k q8_0"
-                  className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                  className={FIELD_CLASS}
                 />
-              </div>
+              </Field>
             </div>
           )}
 
@@ -452,19 +460,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               {isConsolidated && (
                 <div className="text-[10px] text-emerald-400/90 font-label-sm bg-emerald-500/5 border border-emerald-500/10 rounded-[0.75rem] p-sm flex items-center gap-2">
                   <span className="material-symbols-outlined text-sm">info</span>
-                  <span>Sharing port {infPort} and model {infModel.replace('models/', '') || 'Inference Model'}. Llama server will launch consolidated.</span>
+                  <span>Sharing port {infPort} and model {infModel.replace(MODEL_PREFIX, '') || 'Inference Model'}. Llama server will launch consolidated.</span>
                 </div>
               )}
 
               {/* Form Fields */}
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-sm transition-all duration-300 ${isConsolidated ? 'opacity-40 pointer-events-none' : ''}`}>
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="emb-binary" className="font-label-sm text-[10px] text-[#71717A] uppercase">Runner Binary</label>
+                <Field id="emb-binary" label="Runner Binary">
                   <select
                     id="emb-binary"
-                    value={embBinary.replace('llama_bin/', '')}
-                    onChange={e => setEmbBinary(`llama_bin/${e.target.value}`)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                    value={embBinary.replace(BINARY_PREFIX, '')}
+                    onChange={e => setEmbBinary(`${BINARY_PREFIX}${e.target.value}`)}
+                    className={FIELD_CLASS}
                     disabled={isConsolidated}
                   >
                     {status?.available_binaries.map(b => (
@@ -474,15 +481,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       <option value="llama-server.exe">llama-server.exe (Default)</option>
                     )}
                   </select>
-                </div>
+                </Field>
 
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="emb-model" className="font-label-sm text-[10px] text-[#71717A] uppercase">Active GGUF Model</label>
+                <Field id="emb-model" label="Active GGUF Model">
                   <select
                     id="emb-model"
-                    value={embModel.replace('models/', '')}
-                    onChange={e => setEmbModel(e.target.value ? `models/${e.target.value}` : '')}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                    value={embModel.replace(MODEL_PREFIX, '')}
+                    onChange={e => setEmbModel(e.target.value ? `${MODEL_PREFIX}${e.target.value}` : '')}
+                    className={FIELD_CLASS}
                     required
                     disabled={isConsolidated}
                   >
@@ -491,63 +497,24 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       <option key={m} value={m}>{m}</option>
                     ))}
                   </select>
-                </div>
+                </Field>
 
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="emb-port" className="font-label-sm text-[10px] text-[#71717A] uppercase">Port</label>
-                  <input
-                    id="emb-port"
-                    type="number"
-                    value={embPort}
-                    onChange={e => setEmbPort(parseInt(e.target.value) || 8081)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                    disabled={isConsolidated}
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <label htmlFor="emb-threads" className="font-label-sm text-[10px] text-[#71717A] uppercase">CPU Threads</label>
-                  <input
-                    id="emb-threads"
-                    type="number"
-                    value={embThreads}
-                    onChange={e => setEmbThreads(parseInt(e.target.value) || 4)}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                    disabled={isConsolidated}
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1 col-span-2">
-                  <label htmlFor="emb-gpu-layers" className="font-label-sm text-[10px] text-[#71717A] uppercase">GPU Layers (-1 to disable)</label>
-                  <input
-                    id="emb-gpu-layers"
-                    type="number"
-                    value={embGpuLayers}
-                    onChange={e => {
-                      const v = parseInt(e.target.value, 10)
-                      setEmbGpuLayers(Number.isNaN(v) ? -1 : v)
-                    }}
-                    className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
-                    required
-                    disabled={isConsolidated}
-                  />
-                </div>
+                <NumberField id="emb-port" label="Port" value={embPort} onChange={setEmbPort} fallback={DEFAULT_EMBEDDING_PORT} disabled={isConsolidated} />
+                <NumberField id="emb-threads" label="CPU Threads" value={embThreads} onChange={setEmbThreads} fallback={DEFAULT_THREADS} disabled={isConsolidated} />
+                <NumberField id="emb-gpu-layers" label="GPU Layers (-1 to disable)" value={embGpuLayers} onChange={setEmbGpuLayers} fallback={DEFAULT_GPU_LAYERS} allowZero disabled={isConsolidated} wrapperClassName="flex flex-col gap-1 col-span-2" />
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label htmlFor="emb-args" className="font-label-sm text-[10px] text-[#71717A] uppercase">Additional CLI Arguments</label>
+              <Field id="emb-args" label="Additional CLI Arguments">
                 <input
                   id="emb-args"
                   type="text"
                   value={embArgs}
                   onChange={e => setEmbArgs(e.target.value)}
                   placeholder="e.g. --pooling cls"
-                  className={`bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none ${isConsolidated ? 'opacity-40 pointer-events-none' : ''}`}
+                  className={`${FIELD_CLASS} ${isConsolidated ? 'opacity-40 pointer-events-none' : ''}`}
                   disabled={isConsolidated}
                 />
-              </div>
+              </Field>
             </div>
           )}
 
@@ -563,7 +530,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <select
                   value={presets.find(p => p.is_default)?.id || ''}
                   onChange={async (e) => {
-                    const id = parseInt(e.target.value);
+                    const id = parseInt(e.target.value, 10);
                     if (id) {
                       setLoading(true);
                       try {

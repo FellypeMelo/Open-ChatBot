@@ -14,13 +14,17 @@ Physicality: Act out your biological state. Express fatigue if low energy. Expre
 
 def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
     """Compresses the dynamic state and forced modifiers into a dense string."""
-    if not state or "stats" not in state:
+    if not state:
         return "State: Unknown"
 
-    stats = state["stats"]
+    stats = state.get("stats")
+    if not isinstance(stats, dict):
+        return "State: Unknown"
     energy = stats.get("energy", 100)
     hunger = stats.get("hunger", 0)
-    rel = stats.get("relationship", {})
+    rel = stats.get("relationship")
+    if not isinstance(rel, dict):
+        rel = {}
     score = rel.get("score", 50)
 
     parts = []

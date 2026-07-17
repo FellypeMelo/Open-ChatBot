@@ -8,12 +8,15 @@ Constructing them once here and importing from here everywhere keeps the app
 in sync with itself.
 """
 
+from src.backend.core.config import settings
 from src.backend.core.engine.llm import LlamaClient
 from src.backend.core.memory.vector_store import VectorStore
 from src.backend.core.orchestration.bridge import Brain
 
 llama_client = LlamaClient()
-vector_store = VectorStore(llm_client=llama_client)
+# CHROMA_PATH is redirected to an isolated dir under E2E/pytest (see config.py)
+# so tests can never pollute the real ./chroma_db memory store.
+vector_store = VectorStore(llm_client=llama_client, path=settings.CHROMA_PATH)
 brain = Brain(vector_store=vector_store)
 
 

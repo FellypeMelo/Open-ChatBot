@@ -5,6 +5,15 @@ from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Fallback token estimate when the llama-server /tokenize endpoint is unreachable:
+# English averages ~1.3 tokens per whitespace-delimited word.
+_WORD_TO_TOKEN_RATIO = 1.3
+
+
+def _estimate_tokens_from_words(text: str) -> int:
+    """Rough offline token estimate from the word count."""
+    return int(len(text.split()) * _WORD_TO_TOKEN_RATIO)
+
 
 def _configured_context_size() -> int:
     """The llama-server context size actually in effect (models_config.json,
@@ -41,6 +50,10 @@ class ContextBudgetCalculator:
             "chat_summary": 200,
             "post_history": 200,
             "dynamic_state": 60,
+            # mes_example was previously unbudgeted -> a large example-dialog card
+            # blew past context_size and llama truncated the master prompt off the
+            # top. Give it an explicit cap so build_prompt can enforce it.
+            "mes_example": 300,
         }
 
     async def count_tokens(self, text: str) -> int:
@@ -59,19 +72,37 @@ class ContextBudgetCalculator:
                     return len(tokens)
                 else:
                     logger.warning(
-                        f"Tokenize endpoint failed with {response.status_code}. Fallback to word count * 1.3"
+                        f"Tokenize endpoint failed with {response.status_code}. "
+                        "Falling back to word-count estimate."
                     )
-                    return int(len(text.split()) * 1.3)
+                    return _estimate_tokens_from_words(text)
         except Exception as e:
             logger.error(
-                f"Error calling tokenize endpoint: {e}. Fallback to word count * 1.3"
+                f"Error calling tokenize endpoint: {e}. "
+                "Falling back to word-count estimate."
             )
-            return int(len(text.split()) * 1.3)
+            return _estimate_tokens_from_words(text)
 
     async def get_budget(self) -> Dict[str, Any]:
         """Returns the current usable budget and allocations."""
         fixed_cost = sum(self.allocations.values())
-        history_budget = max(0, self.usable_budget - fixed_cost)
+        # Reserve a minimum share of the usable budget for conversation history.
+        # Otherwise, on a small/quantized context (usable < fixed_cost) history
+        # silently floors to 0 and the character loses all turn-to-turn recall.
+        min_history = max(0, int(self.usable_budget * settings.MIN_HISTORY_BUDGET_RATIO))
+        history_budget = self.usable_budget - fixed_cost
+        if history_budget < min_history:
+            logger.warning(
+                "Fixed prompt allocations (%s tok) leave only %s tok for history "
+                "on a usable budget of %s; flooring history to the minimum reserve "
+                "%s. Increase context_size to avoid dropping fixed layers.",
+                fixed_cost,
+                history_budget,
+                self.usable_budget,
+                min_history,
+            )
+            history_budget = min_history
+        history_budget = max(0, min(history_budget, self.usable_budget))
 
         return {
             "total_context": self.context_size,

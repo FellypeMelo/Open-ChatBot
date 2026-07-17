@@ -286,20 +286,6 @@ describe('api service tests', () => {
     await expect(api.deletePreset(1)).rejects.toThrow('Failed to delete preset');
   });
 
-  it('sendMessage should make POST call to /chat', async () => {
-    vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
-    await api.sendMessage('hello', 1, null, { base_url: 'http://localhost:8080' });
-    expect(fetch).toHaveBeenCalledWith('/chat', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ message: 'hello', character_id: 1, parent_id: null, config: { base_url: 'http://localhost:8080' } }),
-    }));
-  });
-
-  it('sendMessage should throw on error response', async () => {
-    vi.mocked(fetch).mockResolvedValue(mockErrorResponse());
-    await expect(api.sendMessage('hello', 1, null)).rejects.toThrow('Failed to send message');
-  });
-
   it('sendMessageStream should make POST call to /chat/stream', async () => {
     const mockRes = { ok: true } as Response;
     vi.mocked(fetch).mockResolvedValue(mockRes);

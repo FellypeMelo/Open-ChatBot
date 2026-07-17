@@ -11,9 +11,59 @@ logger = logging.getLogger(__name__)
 
 class LlamaClient:
     def __init__(self):
-        self.client = httpx.AsyncClient(timeout=120.0)
+        self.client = httpx.AsyncClient(timeout=settings.LLM_TIMEOUT)
         self._url = None
         self._embedding_url = None
+
+    @staticmethod
+    def _build_extra_body(preset: dict = None, grammar: str = None) -> dict:
+        """llama.cpp-specific sampler params, from the preset (if any) else
+        settings defaults. Shared by complete() and complete_stream()."""
+
+        def p(key, default):
+            return preset.get(key, default) if preset else default
+
+        extra_body = {
+            "repeat_penalty": p("repeat_penalty", settings.REPEAT_PENALTY),
+            "repeat_last_n": settings.REPEAT_LAST_N,
+            "min_p": p("min_p", settings.MIN_P),
+            "top_k": p("top_k", settings.TOP_K),
+            "smoothing_factor": settings.SMOOTHING_FACTOR,
+            "dry_multiplier": p("dry_multiplier", settings.DRY_MULTIPLIER),
+            "dry_base": p("dry_base", settings.DRY_BASE),
+            "dry_range": p("dry_range", settings.DRY_RANGE),
+            "xtc_threshold": p("xtc_threshold", settings.XTC_THRESHOLD),
+            "xtc_probability": p("xtc_probability", settings.XTC_PROBABILITY),
+        }
+        if grammar:
+            extra_body["grammar"] = grammar
+        return extra_body
+
+    def _build_chat_llm(
+        self,
+        base_url: str,
+        model_name: str,
+        preset: dict = None,
+        grammar: str = None,
+        timeout: float = None,
+    ) -> ChatOpenAI:
+        """Construct the ChatOpenAI client shared by complete()/complete_stream()
+        (they differed only in the request timeout)."""
+
+        def p(key, default):
+            return preset.get(key, default) if preset else default
+
+        return ChatOpenAI(
+            base_url=base_url,
+            openai_api_key="sk-anything",
+            model_name=model_name,
+            temperature=p("temperature", settings.TEMPERATURE),
+            top_p=p("top_p", settings.TOP_P),
+            max_tokens=settings.N_PREDICT,
+            extra_body=self._build_extra_body(preset, grammar),
+            timeout=timeout if timeout is not None else settings.LLM_TIMEOUT,
+            http_async_client=self.client,
+        )
 
     @property
     def url(self) -> str:
@@ -21,7 +71,7 @@ class LlamaClient:
             return self._url
         from src.backend.core.engine.runner import runner
 
-        return f"http://127.0.0.1:{runner.config['inference']['port']}"
+        return f"http://{settings.LLAMA_HOST}:{runner.config['inference']['port']}"
 
     @url.setter
     def url(self, value: str):
@@ -33,7 +83,7 @@ class LlamaClient:
             return self._embedding_url
         from src.backend.core.engine.runner import runner
 
-        return f"http://127.0.0.1:{runner.config['embedding']['port']}"
+        return f"http://{settings.LLAMA_HOST}:{runner.config['embedding']['port']}"
 
     @embedding_url.setter
     def embedding_url(self, value: str):
@@ -55,46 +105,8 @@ class LlamaClient:
 
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
-
-        extra_body = {
-            "repeat_penalty": preset.get("repeat_penalty", settings.REPEAT_PENALTY)
-            if preset
-            else settings.REPEAT_PENALTY,
-            "repeat_last_n": settings.REPEAT_LAST_N,
-            "min_p": preset.get("min_p", settings.MIN_P) if preset else settings.MIN_P,
-            "top_k": preset.get("top_k", settings.TOP_K) if preset else settings.TOP_K,
-            "smoothing_factor": settings.SMOOTHING_FACTOR,
-            "dry_multiplier": preset.get("dry_multiplier", settings.DRY_MULTIPLIER)
-            if preset
-            else settings.DRY_MULTIPLIER,
-            "dry_base": preset.get("dry_base", settings.DRY_BASE)
-            if preset
-            else settings.DRY_BASE,
-            "dry_range": preset.get("dry_range", settings.DRY_RANGE)
-            if preset
-            else settings.DRY_RANGE,
-            "xtc_threshold": preset.get("xtc_threshold", settings.XTC_THRESHOLD)
-            if preset
-            else settings.XTC_THRESHOLD,
-            "xtc_probability": preset.get("xtc_probability", settings.XTC_PROBABILITY)
-            if preset
-            else settings.XTC_PROBABILITY,
-        }
-        if grammar:
-            extra_body["grammar"] = grammar
-
-        llm = ChatOpenAI(
-            base_url=base_url,
-            openai_api_key="sk-anything",
-            model_name=model_name,
-            temperature=preset.get("temperature", settings.TEMPERATURE)
-            if preset
-            else settings.TEMPERATURE,
-            top_p=preset.get("top_p", settings.TOP_P) if preset else settings.TOP_P,
-            max_tokens=settings.N_PREDICT,
-            extra_body=extra_body,
-            timeout=120.0,
-            http_async_client=self.client,
+        llm = self._build_chat_llm(
+            base_url, model_name, preset, grammar, settings.LLM_TIMEOUT
         )
 
         message = HumanMessage(content=prompt)
@@ -131,46 +143,8 @@ class LlamaClient:
 
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
-
-        extra_body = {
-            "repeat_penalty": preset.get("repeat_penalty", settings.REPEAT_PENALTY)
-            if preset
-            else settings.REPEAT_PENALTY,
-            "repeat_last_n": settings.REPEAT_LAST_N,
-            "min_p": preset.get("min_p", settings.MIN_P) if preset else settings.MIN_P,
-            "top_k": preset.get("top_k", settings.TOP_K) if preset else settings.TOP_K,
-            "smoothing_factor": settings.SMOOTHING_FACTOR,
-            "dry_multiplier": preset.get("dry_multiplier", settings.DRY_MULTIPLIER)
-            if preset
-            else settings.DRY_MULTIPLIER,
-            "dry_base": preset.get("dry_base", settings.DRY_BASE)
-            if preset
-            else settings.DRY_BASE,
-            "dry_range": preset.get("dry_range", settings.DRY_RANGE)
-            if preset
-            else settings.DRY_RANGE,
-            "xtc_threshold": preset.get("xtc_threshold", settings.XTC_THRESHOLD)
-            if preset
-            else settings.XTC_THRESHOLD,
-            "xtc_probability": preset.get("xtc_probability", settings.XTC_PROBABILITY)
-            if preset
-            else settings.XTC_PROBABILITY,
-        }
-        if grammar:
-            extra_body["grammar"] = grammar
-
-        llm = ChatOpenAI(
-            base_url=base_url,
-            openai_api_key="sk-anything",
-            model_name=model_name,
-            temperature=preset.get("temperature", settings.TEMPERATURE)
-            if preset
-            else settings.TEMPERATURE,
-            top_p=preset.get("top_p", settings.TOP_P) if preset else settings.TOP_P,
-            max_tokens=settings.N_PREDICT,
-            extra_body=extra_body,
-            timeout=300.0,
-            http_async_client=self.client,
+        llm = self._build_chat_llm(
+            base_url, model_name, preset, grammar, settings.LLM_STREAM_TIMEOUT
         )
 
         message = HumanMessage(content=prompt)
@@ -214,7 +188,9 @@ class LlamaClient:
 
         # Check Inference Server
         try:
-            response = await self.client.get(f"{self.url}/health", timeout=5.0)
+            response = await self.client.get(
+                f"{self.url}/health", timeout=settings.HEALTH_CHECK_TIMEOUT
+            )
             if response.status_code == 200:
                 results["inference"] = True
         except Exception:
@@ -223,7 +199,7 @@ class LlamaClient:
         # Check Embedding Server
         try:
             response = await self.client.get(
-                f"{self.embedding_url}/health", timeout=5.0
+                f"{self.embedding_url}/health", timeout=settings.HEALTH_CHECK_TIMEOUT
             )
             if response.status_code == 200:
                 results["embedding"] = True

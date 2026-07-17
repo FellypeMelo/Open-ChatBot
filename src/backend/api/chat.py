@@ -3,18 +3,28 @@ import logging
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from typing import List, Dict, Any, Optional
 
 from src.backend.core.deps import llama_client as llama, vector_store, brain
 from src.backend.core.orchestration.validator import validate_narrative_formatting
+from src.backend.core.context.macros import render_macros
 from src.backend.core.engine.engine import update_needs, evolve_character
 from src.backend.db.database import get_db, SessionLocal
-from src.backend.db.models import AgentState, Character, User, MessageNode
+from src.backend.db.models import (
+    AgentState,
+    Character,
+    User,
+    MessageNode,
+    Chat,
+    JournalEntry,
+    SamplerPreset,
+)
 import re
 import uuid
 from src.backend.core.config import settings
@@ -96,33 +106,47 @@ router = APIRouter()
 
 
 async def run_consciousness_layer(
-    character_id: int, user_message: str, ai_response: str, force_reflect: bool = False
+    character_id: int,
+    user_message: str,
+    ai_response: str,
+    force_reflect: bool = False,
+    chat_id: Optional[int] = None,
 ):
     """Background task for memory and evolution."""
     try:
         db = SessionLocal()
         try:
-            # 1. Store memory (always)
+            # 1. Store memory (always), scoped to (character, chat) so this
+            # turn can only ever be recalled inside its own chat/session.
+            memory_meta = {"character_id": character_id}
+            if chat_id is not None:
+                memory_meta["chat_id"] = chat_id
             await vector_store.add_memory(
                 f"User: {user_message}\nAI: {ai_response}",
-                metadata={"character_id": character_id},
+                metadata=memory_meta,
             )
 
             # 2. Reflect & Evolve (only on interval or force)
             if force_reflect:
-                # Fetch last 20 messages for deep context
+                # Fetch last 20 messages for deep context, scoped to this chat
+                # so a reflection never summarizes another session's turns.
+                msg_query = db.query(MessageNode).filter(
+                    MessageNode.character_id == character_id
+                )
+                if chat_id is not None:
+                    msg_query = msg_query.filter(MessageNode.chat_id == chat_id)
                 messages = (
-                    db.query(MessageNode)
-                    .filter(MessageNode.character_id == character_id)
-                    .order_by(MessageNode.timestamp.desc())
-                    .limit(20)
+                    msg_query.order_by(MessageNode.timestamp.desc())
+                    .limit(settings.REFLECTION_INTERVAL)
                     .all()
                 )
                 msg_dicts = [
                     {"role": m.role, "content": m.content} for m in reversed(messages)
                 ]
 
-                reflection = await brain.reflect(msg_dicts, window_size=20)
+                reflection = await brain.reflect(
+                    msg_dicts, window_size=settings.REFLECTION_INTERVAL
+                )
                 evolve_character(db, character_id, reflection)
                 logger.info(
                     f"Consciousness Layer: Reflection complete for character {character_id}"
@@ -198,6 +222,7 @@ class ChatRequest(BaseModel):
     message: Optional[str] = None
     character_id: int = 1
     parent_id: Optional[int] = None
+    chat_id: Optional[int] = None
     config: Optional[LLMConfig] = None
     action_id: Optional[str] = None
 
@@ -236,6 +261,7 @@ class ChatTurnContext:
         effective_parent_id: Optional[int],
         user_message_content: Optional[str],
         force_reflect: bool,
+        chat_id: Optional[int] = None,
     ):
         self.user = user
         self.character = character
@@ -246,6 +272,7 @@ class ChatTurnContext:
         self.effective_parent_id = effective_parent_id
         self.user_message_content = user_message_content
         self.force_reflect = force_reflect
+        self.chat_id = chat_id
 
 
 def _apply_action_stats(
@@ -276,6 +303,89 @@ def _apply_action_stats(
     return stats
 
 
+def _sync_state_to_chat(db: Session, state: AgentState, chat_id: Optional[int]):
+    """Persist AgentState's conversation-local fields (pointer/summary/counter)
+    into its Chat row so switching away and back restores this session."""
+    if not chat_id:
+        return
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if chat:
+        chat.current_message_id = state.current_message_id
+        chat.active_summary = state.active_summary or ""
+        chat.interaction_count = state.interaction_count or 0
+        chat.updated_at = datetime.now(timezone.utc)
+
+
+def _load_chat_into_state(state: AgentState, chat: Chat):
+    """Mirror a Chat's conversation-local snapshot onto the live AgentState."""
+    state.current_message_id = chat.current_message_id
+    state.active_summary = chat.active_summary or ""
+    state.interaction_count = chat.interaction_count or 0
+    state.active_chat_id = chat.id
+
+
+def _resolve_active_chat(
+    db: Session,
+    character: Character,
+    state: AgentState,
+    requested_chat_id: Optional[int],
+    user: Optional[User],
+) -> Chat:
+    """Resolve which Chat/session this turn belongs to, switching if the client
+    asked for a different chat than the currently-active one. Lazily creates a
+    first chat for a character that has none (adopting its existing live
+    conversation), so a config-less clone always resolves a valid session."""
+    target = None
+    if requested_chat_id is not None:
+        target = (
+            db.query(Chat)
+            .filter(Chat.id == requested_chat_id, Chat.character_id == character.id)
+            .first()
+        )
+        if not target:
+            raise HTTPException(
+                status_code=400, detail="chat_id does not belong to this character"
+            )
+    elif state.active_chat_id:
+        target = db.query(Chat).filter(Chat.id == state.active_chat_id).first()
+
+    if target is None:
+        # No chat yet: adopt the character's existing live conversation into a
+        # first Chat row so pre-Chat-entity history stays intact.
+        target = Chat(
+            character_id=character.id,
+            user_id=(user.id if user else None),
+            title="New Chat",
+            current_message_id=state.current_message_id,
+            active_summary=state.active_summary or "",
+            interaction_count=state.interaction_count or 0,
+        )
+        db.add(target)
+        db.flush()
+        state.active_chat_id = target.id
+        # Adopt any pre-existing (pre-Chat-entity) messages/journals for this
+        # character into this first chat, so a later "New Chat" doesn't inherit
+        # or display them.
+
+        db.query(MessageNode).filter(
+            MessageNode.character_id == character.id,
+            MessageNode.chat_id.is_(None),
+        ).update({MessageNode.chat_id: target.id}, synchronize_session=False)
+        db.query(JournalEntry).filter(
+            JournalEntry.character_id == character.id,
+            JournalEntry.chat_id.is_(None),
+        ).update({JournalEntry.chat_id: target.id}, synchronize_session=False)
+        db.flush()
+        return target
+
+    # Switching to a different chat: save the outgoing session, load the target.
+    if state.active_chat_id != target.id:
+        _sync_state_to_chat(db, state, state.active_chat_id)
+        _load_chat_into_state(state, target)
+
+    return target
+
+
 async def _prepare_chat_turn(
     request: ChatRequest, db: Session, request_id: str
 ) -> ChatTurnContext:
@@ -292,9 +402,13 @@ async def _prepare_chat_turn(
         db.add(state)
         db.flush()
 
+    # Resolve the chat/session this turn belongs to BEFORE bumping the counter,
+    # so switching to another chat restores that chat's interaction_count first.
+    chat = _resolve_active_chat(db, character, state, request.chat_id, user)
+
     state.stats = update_needs(state.stats, datetime.now(timezone.utc))
     state.interaction_count += 1
-    force_reflect = state.interaction_count % 20 == 0
+    force_reflect = state.interaction_count % settings.REFLECTION_INTERVAL == 0
     # Commit the decay/counter bump now, unconditionally -- a message-less
     # "regenerate" call never reaches the request.message commit below, and
     # this session gets closed (without a commit) once the request ends.
@@ -309,11 +423,35 @@ async def _prepare_chat_turn(
         # attached the way it was before the rollback, which isn't guaranteed.
         db.rollback()
         state = db.query(AgentState).filter(AgentState.id == state.id).first()
-        force_reflect = state.interaction_count % 20 == 0
+        force_reflect = state.interaction_count % settings.REFLECTION_INTERVAL == 0
 
     effective_parent_id = (
         request.parent_id if request.parent_id is not None else state.current_message_id
     )
+    # Reject a client-supplied parent_id that belongs to a different character
+    # or a different chat (cross-thread grafting) -- otherwise the history walk
+    # would splice another conversation's messages into this prompt. Fall back
+    # to this chat's own current pointer.
+    if effective_parent_id is not None:
+        parent_node = (
+            db.query(MessageNode)
+            .filter(MessageNode.id == effective_parent_id)
+            .first()
+        )
+        if parent_node is not None and (
+            parent_node.character_id != character.id
+            or (parent_node.chat_id is not None and parent_node.chat_id != chat.id)
+        ):
+            logger.warning(
+                f"[{request_id}] Rejected cross-thread parent_id={effective_parent_id} "
+                f"(char {parent_node.character_id}/chat {parent_node.chat_id}) for "
+                f"char {character.id}/chat {chat.id}; falling back to chat pointer."
+            )
+            effective_parent_id = (
+                state.current_message_id
+                if state.current_message_id != effective_parent_id
+                else None
+            )
     user_message_content = request.message
 
     if request.action_id and request.action_id in ACTIONS_CONFIG:
@@ -332,6 +470,7 @@ async def _prepare_chat_turn(
     if request.message:
         user_msg = MessageNode(
             character_id=character.id,
+            chat_id=chat.id,
             user_id=user.id,
             role="user",
             content=request.message,
@@ -361,7 +500,16 @@ async def _prepare_chat_turn(
     while curr_id and len(history) < 50:
         m = (
             db.query(MessageNode)
-            .filter(MessageNode.id == curr_id, MessageNode.is_active == True)
+            .filter(
+                MessageNode.id == curr_id,
+                MessageNode.is_active == True,
+                # Stay within this chat: match its chat_id, or NULL for legacy
+                # nodes adopted into a lazily-created first chat.
+                or_(
+                    MessageNode.chat_id == chat.id,
+                    MessageNode.chat_id.is_(None),
+                ),
+            )
             .first()
         )
         if not m:
@@ -369,6 +517,17 @@ async def _prepare_chat_turn(
         history.append({"role": m.role, "content": m.content})
         curr_id = m.parent_id
     history.reverse()
+
+    # Drop the trailing history line when it is the same user turn we re-append
+    # below as "{user}: {message}". This is the last line in BOTH paths: a normal
+    # send (the just-inserted user node) and a regenerate (message is None, so
+    # effective_parent_id still points at that user node). Without this, a
+    # regenerate feeds the model the user's last line twice in a row.
+    prompt_history = history
+    if history and user_message_content:
+        last = history[-1]
+        if last.get("role") == "user" and last.get("content") == user_message_content:
+            prompt_history = history[:-1]
 
     prompt = await brain.build_prompt(
         user_message_content or "",
@@ -380,13 +539,13 @@ async def _prepare_chat_turn(
             "active_summary": getattr(state, "active_summary", ""),
         },
         user=user,
-        history=history[:-1] if request.message else history,
+        history=prompt_history,
         db=db,
+        chat_id=chat.id,
     )
 
     config = request.config or LLMConfig()
 
-    from src.backend.db.models import SamplerPreset
 
     if config.preset_id:
         preset_obj = (
@@ -422,18 +581,34 @@ async def _prepare_chat_turn(
         effective_parent_id=effective_parent_id,
         user_message_content=user_message_content,
         force_reflect=force_reflect,
+        chat_id=chat.id,
     )
 
 
 @router.get("/history/{character_id}", response_model=List[Dict[str, Any]])
-async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
-    messages = (
-        db.query(MessageNode)
-        .filter(MessageNode.character_id == character_id, MessageNode.is_active == True)
-        .order_by(MessageNode.timestamp.desc())
-        .limit(100)
-        .all()
+async def get_chat_history(
+    character_id: int,
+    chat_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Messages for a character, scoped to one chat/session. Defaults to the
+    character's active chat so the current UI (which passes only character_id)
+    never mixes messages from different sessions."""
+    q = db.query(MessageNode).filter(
+        MessageNode.character_id == character_id, MessageNode.is_active == True
     )
+    if chat_id is None:
+        state = (
+            db.query(AgentState)
+            .filter(AgentState.character_id == character_id)
+            .first()
+        )
+        chat_id = state.active_chat_id if state else None
+    if chat_id is not None:
+        q = q.filter(
+            or_(MessageNode.chat_id == chat_id, MessageNode.chat_id.is_(None))
+        )
+    messages = q.order_by(MessageNode.timestamp.desc()).limit(100).all()
     return [
         {
             "id": m.id,
@@ -442,40 +617,266 @@ async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
             "content": m.content,
             "variant_index": m.variant_index,
             "timestamp": m.timestamp,
+            "chat_id": m.chat_id,
         }
         for m in reversed(messages)
     ]
 
 
+class ChatUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    is_archived: Optional[bool] = None
+
+
+class NewChatRequest(BaseModel):
+    # The opening greeting to seed. Either explicit text, or an index into the
+    # character's greetings ([first_mes, *alternate_greetings]). If neither is
+    # given, greeting #1 (first_mes) is used when present.
+    greeting: Optional[str] = None
+    greeting_index: Optional[int] = None
+
+
+def _character_greetings(character: Character) -> List[str]:
+    """The ordered greeting list: first_mes is #1, alternate_greetings follow."""
+    greetings = []
+    if getattr(character, "first_mes", None):
+        greetings.append(character.first_mes)
+    alts = getattr(character, "alternate_greetings", None) or []
+    greetings.extend([g for g in alts if g])
+    return greetings
+
+
+@router.post("/chat/new/{character_id}")
+async def new_chat(
+    character_id: int,
+    req: Optional[NewChatRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+):
+    """Start a fresh chat/session with a character WITHOUT destroying the
+    previous one. Saves the currently-active chat's live state, creates a new
+    Chat row, points the character at it with reset conversation-local fields
+    (persona/relationship/stats persist across a character's chats), and seeds
+    the chosen opening greeting as the first assistant message."""
+    user = User.get_or_create_active(db)
+    character = db.query(Character).filter(Character.id == character_id).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    state = character.state or AgentState(character_id=character.id)
+    if not state.id:
+        db.add(state)
+        db.flush()
+
+    # Persist the outgoing session so it can be revisited later.
+    _sync_state_to_chat(db, state, state.active_chat_id)
+
+    fresh = Chat(
+        character_id=character.id,
+        user_id=user.id,
+        title="New Chat",
+        current_message_id=None,
+        active_summary="",
+        interaction_count=0,
+    )
+    db.add(fresh)
+    db.flush()
+
+    state.active_chat_id = fresh.id
+    state.current_message_id = None
+    state.active_summary = ""
+    state.interaction_count = 0
+
+    # Resolve the opening greeting to seed (explicit text > index > first_mes).
+    greetings = _character_greetings(character)
+    greeting_text = None
+    if req and req.greeting is not None:
+        greeting_text = req.greeting
+    elif req and req.greeting_index is not None:
+        if 0 <= req.greeting_index < len(greetings):
+            greeting_text = greetings[req.greeting_index]
+    elif greetings:
+        greeting_text = greetings[0]
+
+    if greeting_text and greeting_text.strip():
+        rendered = render_macros(greeting_text, character.name, user.name)
+        greeting_msg = MessageNode(
+            character_id=character.id,
+            chat_id=fresh.id,
+            user_id=user.id,
+            role="assistant",
+            content=rendered,
+            parent_id=None,
+            request_id=None,
+        )
+        db.add(greeting_msg)
+        db.flush()
+        state.current_message_id = greeting_msg.id
+        fresh.current_message_id = greeting_msg.id
+
+    db.commit()
+    return {"chat_id": fresh.id, "title": fresh.title}
+
+
+@router.get("/chats/{character_id}", response_model=List[Dict[str, Any]])
+async def list_chats(character_id: int, db: Session = Depends(get_db)):
+    """List a character's chats (newest first) for a chat-picker sidebar."""
+    character = db.query(Character).filter(Character.id == character_id).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    active_id = character.state.active_chat_id if character.state else None
+    chats = (
+        db.query(Chat)
+        .filter(Chat.character_id == character_id)
+        .order_by(Chat.updated_at.desc())
+        .all()
+    )
+    out = []
+    for c in chats:
+        count = (
+            db.query(MessageNode).filter(MessageNode.chat_id == c.id).count()
+        )
+        out.append(
+            {
+                "id": c.id,
+                "title": c.title,
+                "is_archived": bool(c.is_archived),
+                "is_active": c.id == active_id,
+                "message_count": count,
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+            }
+        )
+    return out
+
+
+@router.put("/chat/{chat_id}")
+async def update_chat(
+    chat_id: int, req: ChatUpdateRequest, db: Session = Depends(get_db)
+):
+    """Rename or archive a chat."""
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    if req.title is not None:
+        chat.title = req.title
+    if req.is_archived is not None:
+        chat.is_archived = req.is_archived
+    chat.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "id": chat.id,
+        "title": chat.title,
+        "is_archived": bool(chat.is_archived),
+    }
+
+
+@router.delete("/chat/{chat_id}")
+async def delete_chat(chat_id: int, db: Session = Depends(get_db)):
+    """Delete a single chat: its messages, journals and vector memories only.
+    Sibling chats of the same character are untouched. If it was the active
+    chat, repoint the character to its most recent remaining chat."""
+
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    character_id = chat.character_id
+    state = (
+        db.query(AgentState).filter(AgentState.character_id == character_id).first()
+    )
+    was_active = bool(state and state.active_chat_id == chat_id)
+
+    # Null pointers that reference rows we are about to delete (FK-safe order).
+    if was_active:
+        state.current_message_id = None
+    if state and state.active_chat_id == chat_id:
+        state.active_chat_id = None
+    chat.current_message_id = None
+    db.flush()
+
+    db.query(MessageNode).filter(MessageNode.chat_id == chat_id).delete(
+        synchronize_session=False
+    )
+    db.query(JournalEntry).filter(JournalEntry.chat_id == chat_id).delete(
+        synchronize_session=False
+    )
+    db.delete(chat)
+    db.flush()
+
+    if was_active:
+        remaining = (
+            db.query(Chat)
+            .filter(Chat.character_id == character_id)
+            .order_by(Chat.updated_at.desc())
+            .first()
+        )
+        if remaining:
+            _load_chat_into_state(state, remaining)
+        else:
+            state.current_message_id = None
+            state.active_summary = ""
+            state.interaction_count = 0
+    db.commit()
+
+    removed = await vector_store.clear_chat_memories(chat_id)
+    return {"status": "success", "removed_memories": removed}
+
+
 @router.post("/chat/clear/{character_id}")
 async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
+    """Destructive full reset for a character: wipes ALL of its chats, messages,
+    journals, summary and RAG memories and resets its live state. This is the
+    'nuke everything' path -- use POST /chat/new for a non-destructive fresh
+    session that keeps prior chats."""
     try:
-        from src.backend.db.models import JournalEntry
 
-        # Delete all messages and journal entries for this character
-        db.query(MessageNode).filter(MessageNode.character_id == character_id).delete()
-        db.query(JournalEntry).filter(
-            JournalEntry.character_id == character_id
-        ).delete()
-        # Reset current message ID and states on AgentState
+        # Reset AgentState first and null its pointers into rows we will delete
+        # (FK-safe once PRAGMA foreign_keys=ON is in effect).
         state = (
             db.query(AgentState).filter(AgentState.character_id == character_id).first()
         )
         if state:
             state.current_message_id = None
+            state.active_chat_id = None
             state.location = "Living Room"
             state.clothes = "Casual"
             state.mood = "Neutral"
             state.interaction_count = 0
+            # Wipe the running summary too; otherwise summary-based context
+            # (including hallucinated content) survives a reset.
+            state.active_summary = ""
             state.stats = {
                 "energy": 100,
                 "hunger": 0,
                 "happiness": 100,
                 "social": 100,
                 "is_sleeping": False,
+                # Without last_update, update_needs early-returns forever and
+                # time-decay of needs freezes for the rest of the character's life.
+                "last_update": datetime.now(timezone.utc).isoformat(),
                 "relationship": {"score": 50, "history": [], "nickname": None},
             }
+        # Null chat->message pointers before deleting the messages they reference.
+        db.query(Chat).filter(Chat.character_id == character_id).update(
+            {Chat.current_message_id: None}, synchronize_session=False
+        )
+        db.flush()
+
+        # Delete all messages, journals and chats for this character.
+        db.query(MessageNode).filter(MessageNode.character_id == character_id).delete(
+            synchronize_session=False
+        )
+        db.query(JournalEntry).filter(
+            JournalEntry.character_id == character_id
+        ).delete(synchronize_session=False)
+        db.query(Chat).filter(Chat.character_id == character_id).delete(
+            synchronize_session=False
+        )
         db.commit()
+
+        # Purge this character's RAG memories. Without this, a reset leaves the
+        # vector store intact and old/hallucinated memories get re-injected into
+        # future prompts (context poisoning).
+        await vector_store.clear_character_memories(character_id)
+
         return {"status": "success", "message": "Chat history cleared successfully."}
     except Exception as e:
         db.rollback()
@@ -522,6 +923,7 @@ async def chat(
         )
         ai_msg = MessageNode(
             character_id=ctx.character.id,
+            chat_id=ctx.chat_id,
             user_id=ctx.user.id,
             role="assistant",
             content=reply,
@@ -532,6 +934,7 @@ async def chat(
         db.add(ai_msg)
         db.flush()
         ctx.state.current_message_id = ai_msg.id
+        _sync_state_to_chat(db, ctx.state, ctx.chat_id)
         db.commit()
 
         background_tasks.add_task(
@@ -540,6 +943,7 @@ async def chat(
             ctx.user_message_content or "",
             reply,
             force_reflect=ctx.force_reflect,
+            chat_id=ctx.chat_id,
         )
 
         latency = (
@@ -629,6 +1033,7 @@ async def chat_stream(
                     )
                     ai_msg = MessageNode(
                         character_id=ctx.character.id,
+                        chat_id=ctx.chat_id,
                         user_id=ctx.user.id,
                         role="assistant",
                         content=full_reply,
@@ -641,6 +1046,7 @@ async def chat_stream(
                     if inner_state:
                         inner_state.current_message_id = ai_msg.id
                         parse_actions_to_state(full_reply, inner_state)
+                        _sync_state_to_chat(inner_db, inner_state, ctx.chat_id)
                     inner_db.commit()
 
                     # RN-003: Formatting Validation (Stream)
@@ -656,6 +1062,7 @@ async def chat_stream(
                         ctx.user_message_content or "",
                         full_reply,
                         force_reflect=ctx.force_reflect,
+                        chat_id=ctx.chat_id,
                     )
                     # Return full state for reactive HUD
                     updated_state = {

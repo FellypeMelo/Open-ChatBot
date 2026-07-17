@@ -6,7 +6,7 @@ import { useTokenQueue } from '../hooks/useTokenQueue'
 import { useAtmosphere } from '../hooks/useAtmosphere'
 import { useAudio } from '../hooks/useAudio'
 import { fetchJournal } from '../services/api'
-import type { JournalEntry, Character } from '../services/api'
+import type { JournalEntry, Character, ChatSession } from '../services/api'
 
 const ACTIONS = [
   { id: 'hug', name: 'Hug', icon: 'favorite', effect: 'HAPPINESS +5 • SOCIAL +10 • RELATION +2' },
@@ -22,6 +22,73 @@ const GIFTS = [
   { id: 'necklace', name: 'Necklace', icon: 'diamond', effect: 'HAPPINESS +15 • SOCIAL +10 • RELATION +8' }
 ]
 
+// Inline editor shared by the user-prompt and assistant-reply message editors --
+// same textarea + Cancel/Save row, differing only in the textarea's type styling.
+const MessageEditor: React.FC<{
+  value: string
+  onChange: (v: string) => void
+  onCancel: () => void
+  onSave: () => void
+  textareaClassName: string
+  wrapperClassName?: string
+}> = ({ value, onChange, onCancel, onSave, textareaClassName, wrapperClassName = 'w-full flex flex-col gap-2' }) => (
+  <div className={wrapperClassName}>
+    <textarea
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={textareaClassName}
+      autoFocus
+    />
+    <div className="flex gap-2 self-end">
+      <button onClick={onCancel} className="px-3 py-1 text-xs font-mono text-zinc-400 hover:text-white">
+        CANCEL
+      </button>
+      <button onClick={onSave} className="px-3 py-1 bg-white text-black text-xs font-bold rounded">
+        SAVE
+      </button>
+    </div>
+  </div>
+)
+
+// Stat gauge shell: label row + progress bar. The right-hand value and controls
+// vary per stat, so each caller passes them as children.
+const StatBar: React.FC<{
+  label: string
+  percent?: number
+  barClass?: string
+  children: React.ReactNode
+}> = ({ label, percent, barClass = 'bg-white', children }) => (
+  <div className="flex flex-col gap-1">
+    <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
+      <span>{label}</span>
+      <div className="flex items-center gap-1.5">{children}</div>
+    </div>
+    <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+      <div className={`h-full ${barClass} transition-all duration-500`} style={{ width: `${percent}%` }} />
+    </div>
+  </div>
+)
+
+// The identical minus/plus pair used by happiness / social / relationship.
+const AdjustButtons: React.FC<{ onDecrement: () => void; onIncrement: () => void }> = ({ onDecrement, onIncrement }) => (
+  <div className="flex gap-0.5">
+    <button
+      type="button"
+      onClick={onDecrement}
+      className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
+    >
+      -
+    </button>
+    <button
+      type="button"
+      onClick={onIncrement}
+      className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
+    >
+      +
+    </button>
+  </div>
+)
+
 interface ChatViewProps {
   activeChar: Character | null
   messages: MessageNode[]
@@ -35,6 +102,12 @@ interface ChatViewProps {
   onSendAction: (actionId: string, parentId?: number) => Promise<void>
   onEditMessage?: (messageId: number, content: string) => Promise<void>
   onDeleteMessage?: (messageId: number) => Promise<void>
+  chats?: ChatSession[]
+  activeChatId?: number | null
+  greetings?: string[]
+  onNewChat?: (greetingIndex?: number) => void
+  onSelectChat?: (chatId: number) => void
+  onDeleteChat?: (chatId: number) => void
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
@@ -49,10 +122,18 @@ const ChatView: React.FC<ChatViewProps> = ({
   onClearChat,
   onSendAction,
   onEditMessage,
-  onDeleteMessage
+  onDeleteMessage,
+  chats = [],
+  activeChatId = null,
+  greetings = [],
+  onNewChat,
+  onSelectChat,
+  onDeleteChat
 }) => {
+  // Which opening greeting seeds the next "New Chat" (only relevant when the
+  // character has more than one greeting).
+  const [greetingChoice, setGreetingChoice] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
-  const mainRef = useRef<HTMLElement>(null)
   const { activePath, nextVariant, prevVariant, getSiblings } = useMessageTree(messages)
   const { playTypewriterClick, resumeAudio, playAmbient, stopAmbient } = useAudio()
   const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20, playTypewriterClick)
@@ -66,6 +147,9 @@ const ChatView: React.FC<ChatViewProps> = ({
   const [drawerTab, setDrawerTab] = useState<'actions' | 'gifts'>('actions')
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null)
   const [editContent, setEditContent] = useState('')
+  // Mobile: stats HUD is collapsed by default so the story text owns the
+  // viewport. Tapping the summary chip expands the full editable grid.
+  const [statsExpanded, setStatsExpanded] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -180,7 +264,7 @@ const ChatView: React.FC<ChatViewProps> = ({
         <div className="max-w-[850px] mx-auto w-full px-md md:px-lg py-sm flex flex-col gap-2">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-xs sm:gap-none">
             <div className="flex flex-col">
-              <span className="font-label-sm text-[9px] uppercase tracking-[0.25em] text-[#71717A]">
+              <span className="hidden sm:block font-label-sm text-[9px] uppercase tracking-[0.25em] text-[#71717A]">
                 ACTIVE NARRATIVE UNIT
               </span>
               <h1 className="font-sans text-xl font-extrabold text-white tracking-tight leading-none mt-0.5">
@@ -193,15 +277,65 @@ const ChatView: React.FC<ChatViewProps> = ({
                   {(activeChar.state?.location || '').toUpperCase()} • {(activeChar.state?.clothes || '').toUpperCase()}
                 </span>
               )}
+              {/* Session picker: switch between this character's independent chats */}
+              {activeChar && onSelectChat && chats.length > 0 && (
+                <select
+                  value={activeChatId ?? ''}
+                  onChange={(e) => onSelectChat(Number(e.target.value))}
+                  title="Switch chat session"
+                  className="font-mono text-[9.5px] text-zinc-200 bg-white/5 border border-white/10 rounded-full px-2 py-1 max-w-[160px] cursor-pointer focus:outline-none focus:border-white/25"
+                >
+                  {chats.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-[#0A0A0B]">
+                      {c.title || 'Untitled'} · {c.message_count}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {/* Opening-greeting picker: only when the card has alternates */}
+              {activeChar && onNewChat && greetings.length > 1 && (
+                <select
+                  value={greetingChoice}
+                  onChange={(e) => setGreetingChoice(Number(e.target.value))}
+                  title="Opening greeting for the next new chat"
+                  className="font-mono text-[9.5px] text-zinc-200 bg-white/5 border border-white/10 rounded-full px-2 py-1 max-w-[150px] cursor-pointer focus:outline-none focus:border-white/25"
+                >
+                  {greetings.map((g, i) => (
+                    <option key={i} value={i} className="bg-[#0A0A0B]">
+                      Greeting {i + 1}: {g.slice(0, 24)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {activeChar && onNewChat && (
+                <button
+                  type="button"
+                  onClick={() => onNewChat(greetings.length > 1 ? greetingChoice : undefined)}
+                  className="font-mono text-[9.5px] text-emerald-200 hover:text-emerald-100 bg-emerald-950/25 hover:bg-emerald-900/40 border border-emerald-800/40 px-3 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
+                  title="Start a new chat (keeps this one)"
+                >
+                  <span className="material-symbols-outlined text-[11px] leading-none">add</span>
+                  NEW CHAT
+                </button>
+              )}
+              {activeChar && onDeleteChat && activeChatId != null && chats.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteChat(activeChatId)}
+                  className="font-mono text-[9.5px] text-[#FDA4AF] hover:text-red-400 bg-red-950/20 hover:bg-red-950/45 border border-red-900/40 px-2.5 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
+                  title="Delete this chat session"
+                >
+                  <span className="material-symbols-outlined text-[11px] leading-none">delete</span>
+                </button>
+              )}
               {activeChar && (
                 <button
                   type="button"
                   onClick={onClearChat}
-                  className="font-mono text-[9.5px] text-[#FDA4AF] hover:text-red-400 bg-red-950/20 hover:bg-red-950/45 border border-red-900/40 px-3 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
-                  title="Clear conversation history and start a new chat"
+                  className="font-mono text-[9.5px] text-[#A1A1AA] hover:text-red-400 bg-white/5 hover:bg-red-950/40 border border-white/10 hover:border-red-900/40 px-2.5 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
+                  title="Reset: delete this character's entire history"
                 >
-                  <span className="material-symbols-outlined text-[11px] leading-none">delete</span>
-                  NEW CHAT
+                  <span className="material-symbols-outlined text-[11px] leading-none">restart_alt</span>
                 </button>
               )}
             </div>
@@ -209,131 +343,74 @@ const ChatView: React.FC<ChatViewProps> = ({
 
           {/* Stats Bar */}
           {activeChar?.state?.stats && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-md border-t border-white/5 pt-2">
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
-                  <span>ENERGY</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar?.state?.stats?.energy}%</span>
-                    <button
-                      type="button"
-                      onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { is_sleeping: !activeChar.state?.stats?.is_sleeping } })}
-                      className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                    >
-                      {activeChar?.state?.stats?.is_sleeping ? 'Wake' : 'Sleep'}
-                    </button>
-                  </div>
-                </div>
-                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.energy}%` }} />
-                </div>
-              </div>
+            <>
+            {/* Mobile: one-line summary; tap to expand the full grid. Desktop: always shown. */}
+            <button
+              type="button"
+              onClick={() => setStatsExpanded((v) => !v)}
+              className="md:hidden flex items-center justify-between gap-2 border-t border-white/5 pt-2 font-mono text-[11px] text-zinc-300 select-none"
+              aria-expanded={statsExpanded}
+            >
+              <span className="flex items-center gap-3">
+                <span>EN {activeChar?.state?.stats?.energy}</span>
+                <span>HU {activeChar?.state?.stats?.hunger}</span>
+                <span className="text-emerald-400">REL {activeChar?.state?.stats?.relationship?.score}</span>
+              </span>
+              <span className="flex items-center gap-0.5 text-zinc-500">
+                {statsExpanded ? 'Hide' : 'Stats'}
+                <span className="material-symbols-outlined text-[16px]">{statsExpanded ? 'expand_less' : 'expand_more'}</span>
+              </span>
+            </button>
+            <div className={`${statsExpanded ? 'grid' : 'hidden'} md:grid grid-cols-2 md:grid-cols-5 gap-md border-t border-white/5 pt-2`}>
+              <StatBar label="ENERGY" percent={activeChar?.state?.stats?.energy}>
+                <span className="text-white">{activeChar?.state?.stats?.energy}%</span>
+                <button
+                  type="button"
+                  onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { is_sleeping: !activeChar.state?.stats?.is_sleeping } })}
+                  className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
+                >
+                  {activeChar?.state?.stats?.is_sleeping ? 'Wake' : 'Sleep'}
+                </button>
+              </StatBar>
 
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
-                  <span>HUNGER</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar?.state?.stats?.hunger}%</span>
-                    <button
-                      type="button"
-                      onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { hunger: Math.max(0, (activeChar.state?.stats?.hunger ?? 0) - 30) } })}
-                      className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none disabled:opacity-20"
-                      disabled={activeChar?.state?.stats?.hunger === 0}
-                    >
-                      Feed
-                    </button>
-                  </div>
-                </div>
-                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.hunger}%` }} />
-                </div>
-              </div>
+              <StatBar label="HUNGER" percent={activeChar?.state?.stats?.hunger}>
+                <span className="text-white">{activeChar?.state?.stats?.hunger}%</span>
+                <button
+                  type="button"
+                  onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { hunger: Math.max(0, (activeChar.state?.stats?.hunger ?? 0) - 30) } })}
+                  className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none disabled:opacity-20"
+                  disabled={activeChar?.state?.stats?.hunger === 0}
+                >
+                  Feed
+                </button>
+              </StatBar>
 
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
-                  <span>HAPPINESS</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar?.state?.stats?.happiness ?? 100}%</span>
-                    <div className="flex gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { happiness: Math.max(0, (activeChar.state?.stats?.happiness ?? 100) - 10) } })}
-                        className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                      >
-                        -
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { happiness: Math.min(100, (activeChar.state?.stats?.happiness ?? 100) + 10) } })}
-                        className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.happiness ?? 100}%` }} />
-                </div>
-              </div>
+              <StatBar label="HAPPINESS" percent={activeChar?.state?.stats?.happiness ?? 100}>
+                <span className="text-white">{activeChar?.state?.stats?.happiness ?? 100}%</span>
+                <AdjustButtons
+                  onDecrement={() => activeChar && onUpdateState(activeChar.id, { stats: { happiness: Math.max(0, (activeChar.state?.stats?.happiness ?? 100) - 10) } })}
+                  onIncrement={() => activeChar && onUpdateState(activeChar.id, { stats: { happiness: Math.min(100, (activeChar.state?.stats?.happiness ?? 100) + 10) } })}
+                />
+              </StatBar>
 
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
-                  <span>SOCIAL</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar?.state?.stats?.social ?? 100}%</span>
-                    <div className="flex gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { social: Math.max(0, (activeChar.state?.stats?.social ?? 100) - 10) } })}
-                        className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                      >
-                        -
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { social: Math.min(100, (activeChar.state?.stats?.social ?? 100) + 10) } })}
-                        className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-white transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.social ?? 100}%` }} />
-                </div>
-              </div>
+              <StatBar label="SOCIAL" percent={activeChar?.state?.stats?.social ?? 100}>
+                <span className="text-white">{activeChar?.state?.stats?.social ?? 100}%</span>
+                <AdjustButtons
+                  onDecrement={() => activeChar && onUpdateState(activeChar.id, { stats: { social: Math.max(0, (activeChar.state?.stats?.social ?? 100) - 10) } })}
+                  onIncrement={() => activeChar && onUpdateState(activeChar.id, { stats: { social: Math.min(100, (activeChar.state?.stats?.social ?? 100) + 10) } })}
+                />
+              </StatBar>
 
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
-                  <span>RELATIONSHIP</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white">{activeChar?.state?.stats?.relationship?.score}%</span>
-                    <div className="flex gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { relationship_score: Math.max(0, (activeChar.state?.stats?.relationship?.score ?? 0) - 10) } })}
-                        className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                      >
-                        -
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { relationship_score: Math.min(100, (activeChar.state?.stats?.relationship?.score ?? 0) + 10) } })}
-                        className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-400 transition-all duration-500" style={{ width: `${activeChar?.state?.stats?.relationship?.score}%` }} />
-                </div>
-              </div>
+              <StatBar label="RELATIONSHIP" percent={activeChar?.state?.stats?.relationship?.score} barClass="bg-emerald-400">
+                <span className="text-white">{activeChar?.state?.stats?.relationship?.score}%</span>
+                <AdjustButtons
+                  onDecrement={() => activeChar && onUpdateState(activeChar.id, { stats: { relationship_score: Math.max(0, (activeChar.state?.stats?.relationship?.score ?? 0) - 10) } })}
+                  onIncrement={() => activeChar && onUpdateState(activeChar.id, { stats: { relationship_score: Math.min(100, (activeChar.state?.stats?.relationship?.score ?? 0) + 10) } })}
+                />
+              </StatBar>
             </div>
-          ) || null}
+            </>
+          )}
 
           {/* Tab Selector */}
           <div className="flex border-t border-white/5 pt-2 mt-2 gap-4 select-none">
@@ -369,8 +446,7 @@ const ChatView: React.FC<ChatViewProps> = ({
       </header>
 
       {/* Message Canvas */}
-      <main 
-        ref={mainRef}
+      <main
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto w-full flex flex-col items-center custom-scrollbar z-[1] transition-opacity duration-500"
         style={{ opacity: textOpacity }}
@@ -414,7 +490,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                         </div>
                         
                         {!isEditing && (
-                          <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                             <button 
                               onClick={() => {
                                 setEditingMessageId(msg.id)
@@ -441,31 +517,16 @@ const ChatView: React.FC<ChatViewProps> = ({
                       </div>
                       
                       {isEditing ? (
-                        <div className="w-full flex flex-col gap-2">
-                          <textarea
-                            value={editContent}
-                            onChange={(e) => setEditContent(e.target.value)}
-                            className="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-sans text-sm resize-y min-h-[80px]"
-                            autoFocus
-                          />
-                          <div className="flex gap-2 self-end">
-                            <button
-                              onClick={() => setEditingMessageId(null)}
-                              className="px-3 py-1 text-xs font-mono text-zinc-400 hover:text-white"
-                            >
-                              CANCEL
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (onEditMessage) onEditMessage(msg.id, editContent)
-                                setEditingMessageId(null)
-                              }}
-                              className="px-3 py-1 bg-white text-black text-xs font-bold rounded"
-                            >
-                              SAVE
-                            </button>
-                          </div>
-                        </div>
+                        <MessageEditor
+                          value={editContent}
+                          onChange={setEditContent}
+                          onCancel={() => setEditingMessageId(null)}
+                          onSave={() => {
+                            if (onEditMessage) onEditMessage(msg.id, editContent)
+                            setEditingMessageId(null)
+                          }}
+                          textareaClassName="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-sans text-sm resize-y min-h-[80px]"
+                        />
                       ) : (
                         <div className="w-full border-l-2 border-white/10 pl-5 py-1 text-zinc-400 font-sans text-sm leading-relaxed whitespace-pre-wrap">
                           {msg.content}
@@ -493,7 +554,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 
                       {/* Variant Navigation switcher */}
                       {hasSiblings && (
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                           <button 
                             onClick={() => prevVariant(msg.id)}
                             disabled={currentIndex === 0}
@@ -517,31 +578,17 @@ const ChatView: React.FC<ChatViewProps> = ({
 
                     {/* Message Body (No bubble, flows directly on background) */}
                     {editingMessageId === msg.id ? (
-                      <div className="w-full flex flex-col gap-2 mt-2">
-                        <textarea
-                          value={editContent}
-                          onChange={(e) => setEditContent(e.target.value)}
-                          className="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-serif text-[17px] leading-[1.8] resize-y min-h-[120px]"
-                          autoFocus
-                        />
-                        <div className="flex gap-2 self-end">
-                          <button
-                            onClick={() => setEditingMessageId(null)}
-                            className="px-3 py-1 text-xs font-mono text-zinc-400 hover:text-white"
-                          >
-                            CANCEL
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (onEditMessage) onEditMessage(msg.id, editContent)
-                              setEditingMessageId(null)
-                            }}
-                            className="px-3 py-1 bg-white text-black text-xs font-bold rounded"
-                          >
-                            SAVE
-                          </button>
-                        </div>
-                      </div>
+                      <MessageEditor
+                        value={editContent}
+                        onChange={setEditContent}
+                        onCancel={() => setEditingMessageId(null)}
+                        onSave={() => {
+                          if (onEditMessage) onEditMessage(msg.id, editContent)
+                          setEditingMessageId(null)
+                        }}
+                        textareaClassName="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-serif text-[17px] leading-[1.8] resize-y min-h-[120px]"
+                        wrapperClassName="w-full flex flex-col gap-2 mt-2"
+                      />
                     ) : (
                       <div className="font-serif text-[17px] text-zinc-200 leading-[1.8] antialiased select-text">
                         <MessageRenderer content={isStreaming ? displayedContent : msg.content} />
@@ -549,7 +596,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                     )}
 
                     {/* Controls Footer */}
-                    <div className="flex gap-4 mt-3 items-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <div className="flex gap-4 mt-3 items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                       <button 
                         onClick={() => handleRegenerate(msg)}
                         className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer"
@@ -666,7 +713,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 
       {/* Floating Glass Input Container */}
       <div 
-        className="bg-gradient-to-t from-[#050505] via-[#050505]/95 to-transparent w-full flex-none pb-lg pt-sm px-md md:px-lg z-10 transition-opacity duration-500"
+        className="bg-gradient-to-t from-[#050505] via-[#050505]/95 to-transparent w-full flex-none pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-sm px-md md:px-lg z-10 transition-opacity duration-500"
         style={{ opacity: textOpacity }}
       >
         <div className="max-w-[850px] mx-auto relative flex flex-col gap-2">
@@ -709,52 +756,28 @@ const ChatView: React.FC<ChatViewProps> = ({
                 </button>
               </div>
 
-              {/* Items Grid */}
-              {drawerTab === 'actions' ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {ACTIONS.map((act) => (
-                    <button
-                      key={act.id}
-                      type="button"
-                      onClick={() => handleActionTrigger(act.id)}
-                      disabled={isLoading}
-                      className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
-                    >
-                      <span className="material-symbols-outlined text-[20px] text-emerald-400 group-hover:scale-110 transition-transform duration-300">
-                        {act.icon}
-                      </span>
-                      <span className="font-mono text-[10px] text-zinc-200 font-medium">
-                        {act.name}
-                      </span>
-                      <span className="text-[8px] text-zinc-500 font-mono tracking-tighter">
-                        {act.effect}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {GIFTS.map((gift) => (
-                    <button
-                      key={gift.id}
-                      type="button"
-                      onClick={() => handleActionTrigger(gift.id)}
-                      disabled={isLoading}
-                      className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
-                    >
-                      <span className="material-symbols-outlined text-[20px] text-emerald-400 group-hover:scale-110 transition-transform duration-300">
-                        {gift.icon}
-                      </span>
-                      <span className="font-mono text-[10px] text-zinc-200 font-medium">
-                        {gift.name}
-                      </span>
-                      <span className="text-[8px] text-zinc-500 font-mono tracking-tighter">
-                        {gift.effect}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Items Grid (actions and gifts share one layout) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(drawerTab === 'actions' ? ACTIONS : GIFTS).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleActionTrigger(item.id)}
+                    disabled={isLoading}
+                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
+                  >
+                    <span className="material-symbols-outlined text-[20px] text-emerald-400 group-hover:scale-110 transition-transform duration-300">
+                      {item.icon}
+                    </span>
+                    <span className="font-mono text-[10px] text-zinc-200 font-medium">
+                      {item.name}
+                    </span>
+                    <span className="text-[8px] text-zinc-500 font-mono tracking-tighter">
+                      {item.effect}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

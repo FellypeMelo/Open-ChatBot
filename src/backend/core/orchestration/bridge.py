@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from src.backend.core.memory.vector_store import VectorStore
@@ -7,6 +8,7 @@ from src.backend.db.models import Tag
 from langchain_core.prompts import PromptTemplate
 from src.backend.core.context.compressor import COMPRESSED_MASTER_PROMPT, compress_state
 from src.backend.core.context.budget import ContextBudgetCalculator
+from src.backend.core.context.macros import render_macros
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +24,31 @@ space ::= [ \t\n\r]*
 ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
     "{master_prompt}\n\n"
     "Identity: {identity}\n"
+    "{persona_str}"
+    "{scenario_str}"
     "{modifiers}\n"
     "{user_persona}\n"
     "{state_str}\n\n"
     "Memories:\n{context}{lore_context}\n"
     "{summary_context}\n"
+    "{example_dialogs_str}"
     "History:\n{history_str}\n\n"
     "{user_info}: {user_message}\n\n"
     "Reply:"
+)
+
+
+# Role/boundary words that must never be forgeable from injected free text.
+_ROLE_MARKERS = (
+    "reply",
+    "user",
+    "assistant",
+    "system",
+    "you",
+    "human",
+    "ai",
+    "char",
+    "character",
 )
 
 
@@ -39,6 +58,33 @@ class Brain:
         self.llm = llm_client or vector_store.llm_client
         self.budget_calc = ContextBudgetCalculator(llama_url=self.llm.url)
 
+    @staticmethod
+    def _sanitize(text: Any, extra_names=()) -> str:
+        """Neutralize role/boundary markers in free-text card/persona fields so a
+        crafted value can't forge fake dialogue turns or a premature 'Reply:'
+        cutoff. Collapses newlines (no injected line can start a new role) and
+        strips the colon after any role keyword (incl. the live user/char name)."""
+        if not text:
+            return ""
+        text = re.sub(r"[\r\n]+", " ", str(text))
+        markers = list(_ROLE_MARKERS) + [str(n).lower() for n in extra_names if n]
+        pattern = r"(?i)\b(" + "|".join(re.escape(m) for m in markers) + r")\s*:"
+        text = re.sub(pattern, lambda m: m.group(1) + " ", text)
+        return text.strip()
+
+    @staticmethod
+    def _truncate_tokens(text: Any, max_tokens: int) -> str:
+        """Hard-cap a layer to ~max_tokens (1 tok ~ 4 chars) so an oversized
+        field can't blow past context_size and push the master prompt off the
+        top of the window."""
+        if not text:
+            return ""
+        text = str(text)
+        max_chars = max(0, int(max_tokens) * 4)
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars].rstrip() + " […]"
+
     async def build_prompt(
         self,
         user_message: str,
@@ -47,20 +93,30 @@ class Brain:
         user: Any = None,
         history: List[Any] = None,
         db: Session = None,
+        chat_id: Any = None,
     ) -> str:
         """Assembles the ultra-compact 6-layer prompt for models 1-4B using Token Budgeting."""
         budget = await self.budget_calc.get_budget()
 
-        # Layer 1: Memories (RAG)
+        # Layer 1: Memories (RAG). Scope to (character, chat) so one chat/session
+        # never retrieves another's memories. Legacy memories with no chat_id
+        # simply won't match the exact-match filter -> no cross-chat poison.
+        memory_filter = None
+        if character:
+            memory_filter = {"character_id": character.id}
+            if chat_id is not None:
+                memory_filter["chat_id"] = chat_id
         context_data = await self.vector_store.query_memory(
             user_message,
-            metadata_filter={"character_id": character.id} if character else None,
+            metadata_filter=memory_filter,
         )
         context = "None."
         if isinstance(context_data, dict) and context_data.get("documents"):
             docs = context_data["documents"][0]
             if docs:
                 context = " ".join([str(d) for d in docs if d])
+
+        allocations = budget.get("allocations", {})
 
         # Layer 1.5: Lorebooks (Keyword-triggered via Regex Scanner V2)
         lore_context = ""
@@ -70,10 +126,18 @@ class Brain:
             scanner = LorebookScanner(db)
             active_lore = scanner.scan_and_extract(user_message, character.id)
             if active_lore:
-                lore_context = "\nLore:\n" + "\n".join([f"- {d}" for d in active_lore])
+                lore_text = "\n".join([f"- {self._sanitize(d)}" for d in active_lore])
+                lore_text = self._truncate_tokens(
+                    lore_text, allocations.get("lorebook_cap", 500)
+                )
+                lore_context = "\nLore:\n" + lore_text
 
         # Layer 1.5: Summary
         active_summary = state.get("active_summary", "") if state else ""
+        if active_summary:
+            active_summary = self._truncate_tokens(
+                active_summary, allocations.get("chat_summary", 200)
+            )
         summary_context = f"\nSummary:\n{active_summary}\n" if active_summary else ""
 
         # Layer 2: History (Dynamic Sliding Window)
@@ -100,36 +164,73 @@ class Brain:
             allowed_lines = []
 
             # Start from the most recent (end of list) and go backwards
-            for line in reversed(history_lines):
+            for idx, line in enumerate(reversed(history_lines)):
                 # Approximation for speed: 1 token ~ 4 chars
                 est_tokens = len(line) // 4 + 5
                 if current_tokens + est_tokens <= history_budget:
                     allowed_lines.insert(0, line)
                     current_tokens += est_tokens
+                elif idx == 0:
+                    # The most recent turn is the single most important line for
+                    # continuity -- never drop it wholesale. Hard-truncate its
+                    # head to fit (small floor so a tiny budget still yields a
+                    # usable fragment), keeping the leading role marker.
+                    keep_chars = max(history_budget * 4, 240)
+                    allowed_lines.insert(0, line[:keep_chars])
+                    break
                 else:
                     break
             history_str = "\n".join(allowed_lines)
 
-        # Layer 3: Identity & Tags & Persona
+        # Layer 3: Identity & Tags & Persona.
+        # All free-text card/persona fields are sanitized so a crafted value
+        # cannot forge role markers ("User:", "Reply:", char/user name + ":").
+        char_display_name = character.nickname if (character and getattr(character, "nickname", None)) else (character.name if character else "You")
+        _names = (user_name, char_name, char_display_name)
+        short_desc = getattr(character, "short_description", None) or getattr(character, "description", None) or ""
+        short_desc = self._sanitize(render_macros(short_desc, char_name, user_name), _names)
         identity = (
-            f"{character.name}. {character.description}"
+            f"{char_display_name}. {short_desc}"
             if character
             else "You are unique."
         )
+
+        persona_str = ""
+        if character and getattr(character, "persona_prompt", None):
+            persona_str = f"Personality: {self._sanitize(render_macros(character.persona_prompt, char_name, user_name), _names)}\n"
+
+        scenario_str = ""
+        if character and getattr(character, "scenario", None):
+            scenario_str = f"Scenario: {self._sanitize(render_macros(character.scenario, char_name, user_name), _names)}\n"
+
+        example_dialogs_str = ""
+        if character and getattr(character, "mes_example", None):
+            # mes_example is few-shot dialogue: its role labels ("{{char}}:",
+            # "{{user}}:") are the intended format, and it's authored at the same
+            # trust level as the rest of the card -- so resolve macros and cap
+            # its length, but do NOT sanitize role markers out of it.
+            example = self._truncate_tokens(
+                render_macros(character.mes_example, char_name, user_name),
+                allocations.get("mes_example", 300),
+            )
+            example_dialogs_str = f"Example Dialogs:\n{example}\n\n"
+
         tags = []
         if character and character.tags:
             for t in character.tags:
-                tags.append(f"[{t.label}]: {t.instruction}")
+                tags.append(
+                    f"[{self._sanitize(t.label, _names)}]: {self._sanitize(t.instruction, _names)}"
+                )
 
         user_persona = ""
         if user:
             persona_parts = []
             if user.gender and user.gender != "Unknown":
-                persona_parts.append(f"Gender: {user.gender}")
+                persona_parts.append(f"Gender: {self._sanitize(user.gender, _names)}")
             if getattr(user, "appearance", None):
-                persona_parts.append(f"Appearance: {user.appearance}")
+                persona_parts.append(f"Appearance: {self._sanitize(user.appearance, _names)}")
             if getattr(user, "persona_description", None):
-                persona_parts.append(f"Persona: {user.persona_description}")
+                persona_parts.append(f"Persona: {self._sanitize(user.persona_description, _names)}")
             if persona_parts:
                 user_persona = f"User ({user_name}): " + " | ".join(persona_parts)
 
@@ -140,6 +241,9 @@ class Brain:
         return ENTITY_PROMPT_TEMPLATE.format(
             master_prompt=COMPRESSED_MASTER_PROMPT,
             identity=identity,
+            persona_str=persona_str,
+            scenario_str=scenario_str,
+            example_dialogs_str=example_dialogs_str,
             modifiers="\n".join(tags),
             user_persona=user_persona,
             state_str=state_str,

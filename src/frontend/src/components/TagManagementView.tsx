@@ -68,7 +68,7 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
                   <span className="font-label-sm text-label-sm text-on-surface border border-outline rounded px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-primary transition-colors">
                     {tag.label}
                   </span>
-                  <div className="flex items-center gap-xs opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => onEditTag(tag)}
                       className="text-on-surface-variant hover:text-primary transition-colors"

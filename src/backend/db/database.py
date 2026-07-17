@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import create_engine, text, inspect, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 from src.backend.core.config import settings
 
@@ -6,6 +6,20 @@ engine = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread":
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+
+@event.listens_for(engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    """SQLite ships with FK enforcement OFF by default, so ondelete=CASCADE
+    never fired and deleting a character/chat orphaned its messages, journals
+    and lore. Turn it on for every connection. (Endpoints also clean up
+    explicitly, so isolated test engines without this listener stay correct.)"""
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+    except Exception:
+        pass
 
 
 def init_db():
@@ -88,6 +102,144 @@ def init_db():
                     text(
                         "ALTER TABLE characters ADD COLUMN persona_prompt TEXT DEFAULT ''"
                     )
+                )
+            if "nickname" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN nickname TEXT DEFAULT ''"
+                    )
+                )
+            if "scenario" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN scenario TEXT DEFAULT ''"
+                    )
+                )
+            if "first_mes" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN first_mes TEXT DEFAULT ''"
+                    )
+                )
+            if "mes_example" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN mes_example TEXT DEFAULT ''"
+                    )
+                )
+            if "alternate_greetings" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN alternate_greetings TEXT DEFAULT '[]'"
+                    )
+                )
+            if "content_rating" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE characters ADD COLUMN content_rating TEXT DEFAULT 'limited'"
+                    )
+                )
+
+        # Lorebook V2 fields: the table predates the advanced-scanner columns
+        # (keys, probability, insertion_order, ...). create_all() never ALTERs
+        # an existing table, so a DB created before these columns crashes every
+        # chat turn (lorebook_scanner SELECTs them). Backfill idempotently.
+        if "lorebook_entries" in insp.get_table_names():
+            columns = [col["name"] for col in insp.get_columns("lorebook_entries")]
+            lorebook_additions = [
+                ("keys", "TEXT DEFAULT '[]'"),
+                ("secondary_keys", "TEXT DEFAULT '[]'"),
+                ("insertion_order", "INTEGER DEFAULT 100"),
+                ("probability", "INTEGER DEFAULT 100"),
+                ("scan_depth", "INTEGER DEFAULT 5"),
+                ("is_constant", "BOOLEAN DEFAULT 0"),
+                ("cooldown_turns", "INTEGER DEFAULT 0"),
+            ]
+            for col_name, col_def in lorebook_additions:
+                if col_name not in columns:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE lorebook_entries ADD COLUMN {col_name} {col_def}"
+                        )
+                    )
+
+        # Chat/Session scoping (per-chat memory isolation). create_all() makes
+        # the new `chats` table but never ALTERs the existing message/journal/
+        # agent_state tables, so add their scoping columns idempotently.
+        if "message_nodes" in insp.get_table_names():
+            columns = [col["name"] for col in insp.get_columns("message_nodes")]
+            if "chat_id" not in columns:
+                conn.execute(
+                    text("ALTER TABLE message_nodes ADD COLUMN chat_id INTEGER")
+                )
+        if "journal_entries" in insp.get_table_names():
+            columns = [col["name"] for col in insp.get_columns("journal_entries")]
+            if "chat_id" not in columns:
+                conn.execute(
+                    text("ALTER TABLE journal_entries ADD COLUMN chat_id INTEGER")
+                )
+        if "agent_states" in insp.get_table_names():
+            columns = [col["name"] for col in insp.get_columns("agent_states")]
+            if "active_chat_id" not in columns:
+                conn.execute(
+                    text("ALTER TABLE agent_states ADD COLUMN active_chat_id INTEGER")
+                )
+
+        # Backfill: give every pre-existing conversation a Chat row so its
+        # history/journal become chat-scoped and the character gets an active
+        # chat pointer. Idempotent -- only touches rows still lacking a chat_id.
+        if (
+            "chats" in insp.get_table_names()
+            and "message_nodes" in insp.get_table_names()
+        ):
+            orphan_char_ids = conn.execute(
+                text(
+                    "SELECT DISTINCT character_id FROM message_nodes "
+                    "WHERE chat_id IS NULL AND character_id IS NOT NULL"
+                )
+            ).fetchall()
+            for (cid,) in orphan_char_ids:
+                res = conn.execute(
+                    text(
+                        "INSERT INTO chats "
+                        "(character_id, title, is_archived, active_summary, interaction_count) "
+                        "VALUES (:cid, 'Imported Chat', 0, '', 0)"
+                    ),
+                    {"cid": cid},
+                )
+                new_chat_id = res.lastrowid
+                conn.execute(
+                    text(
+                        "UPDATE message_nodes SET chat_id = :chat "
+                        "WHERE character_id = :cid AND chat_id IS NULL"
+                    ),
+                    {"chat": new_chat_id, "cid": cid},
+                )
+                conn.execute(
+                    text(
+                        "UPDATE journal_entries SET chat_id = :chat "
+                        "WHERE character_id = :cid AND chat_id IS NULL"
+                    ),
+                    {"chat": new_chat_id, "cid": cid},
+                )
+                # Point the character's AgentState at the imported chat and copy
+                # its conversation-local snapshot (pointer/summary/counter).
+                conn.execute(
+                    text(
+                        "UPDATE chats SET "
+                        "current_message_id = (SELECT current_message_id FROM agent_states WHERE character_id = :cid), "
+                        "active_summary = COALESCE((SELECT active_summary FROM agent_states WHERE character_id = :cid), ''), "
+                        "interaction_count = COALESCE((SELECT interaction_count FROM agent_states WHERE character_id = :cid), 0) "
+                        "WHERE id = :chat"
+                    ),
+                    {"cid": cid, "chat": new_chat_id},
+                )
+                conn.execute(
+                    text(
+                        "UPDATE agent_states SET active_chat_id = :chat "
+                        "WHERE character_id = :cid AND active_chat_id IS NULL"
+                    ),
+                    {"chat": new_chat_id, "cid": cid},
                 )
 
 

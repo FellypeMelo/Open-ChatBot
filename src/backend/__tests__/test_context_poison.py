@@ -1,0 +1,107 @@
+"""Regression tests for RAG context poisoning.
+
+Reproduces the bug where a character's hallucinated/old replies were stored as
+vector memories and then re-injected into every prompt (even an unrelated
+"hello"), because:
+  1. query_memory returned the top-k memories with NO relevance threshold, and
+  2. clear_chat_history purged messages/journal but left the vector store intact.
+
+These tests use lightweight fakes so they are fully isolated (no llama-server,
+no real embeddings, no production DB).
+"""
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from langchain_core.documents import Document
+
+from src.backend.core.memory.vector_store import VectorStore
+
+
+class _FakeStore:
+    """Minimal stand-in for TurboQuantVectorStore: just the surface our
+    VectorStore wrapper touches (_docs, delete, dump)."""
+
+    def __init__(self, docs=None):
+        # id -> (text, metadata)
+        self._docs = dict(docs or {})
+        self.dumped = False
+
+    def delete(self, ids):
+        for i in ids:
+            self._docs.pop(i, None)
+
+    def dump(self, path):
+        self.dumped = True
+
+
+def _make_vs(tmp_path):
+    vs = VectorStore(llm_client=MagicMock(), path=str(tmp_path / "cdb"))
+    vs.memories_store = _FakeStore()
+    return vs
+
+
+def test_clear_character_memories_removes_only_that_character(tmp_path):
+    vs = _make_vs(tmp_path)
+    vs.memories_store = _FakeStore(
+        {
+            "m1": ("User: hi\nAI: We danced at the Baile ballroom", {"character_id": 1}),
+            "m2": ("User: hi\nAI: tuxedo again", {"character_id": 1}),
+            "m3": ("memory belonging to a different character", {"character_id": 2}),
+        }
+    )
+    removed = asyncio.run(vs.clear_character_memories(1))
+
+    assert removed == 2
+    remaining = {cid for _t, meta in vs.memories_store._docs.values() for cid in [meta.get("character_id")]}
+    assert 1 not in remaining
+    assert 2 in remaining
+    assert vs.memories_store.dumped is True
+
+
+def test_query_memory_drops_results_below_relevance_threshold(tmp_path):
+    vs = _make_vs(tmp_path)
+    high = (Document(id="a", page_content="genuinely relevant memory", metadata={}), 0.82)
+    low = (Document(id="b", page_content="Baile ballroom poison", metadata={}), 0.06)
+    vs.memories_store.asimilarity_search_with_score = AsyncMock(return_value=[high, low])
+
+    out = asyncio.run(vs.query_memory("hello", min_relevance=0.5))
+    docs = out["documents"][0]
+
+    assert "genuinely relevant memory" in docs
+    assert all("poison" not in d for d in docs), "irrelevant memory leaked past the threshold"
+
+
+def test_clear_chat_history_purges_vector_memory():
+    """The clear-chat endpoint must purge the character's vector memories,
+    otherwise 'New Chat' still resurfaces old/hallucinated content via RAG."""
+    import src.backend.api.chat as chatmod
+
+    fake_vs = MagicMock()
+    fake_vs.clear_character_memories = AsyncMock(return_value=3)
+
+    db = MagicMock()
+    state = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = state
+
+    with patch.object(chatmod, "vector_store", fake_vs):
+        asyncio.run(chatmod.clear_chat_history(7, db=db))
+
+    fake_vs.clear_character_memories.assert_awaited_once_with(7)
+    # active_summary must also be wiped so summary-based poison cannot survive.
+    assert state.active_summary == ""
+
+
+def test_e2e_and_pytest_isolate_the_vector_store_path():
+    """E2E/unit runs must NOT use the real ./chroma_db, otherwise mock test
+    memories leak into real chats (the root cause of the Baile/Ballroom poison)."""
+    from src.backend.core.config import Settings
+
+    e2e = Settings(E2E_TESTING=True)
+    assert e2e.CHROMA_PATH != "./chroma_db"
+    assert "e2e" in e2e.CHROMA_PATH.lower()
+    assert e2e.DATABASE_URL == "sqlite:///./e2e_test.db"
+
+    # This process is pytest, so even a plain Settings() must avoid the real store.
+    default = Settings()
+    assert default.CHROMA_PATH != "./chroma_db"

@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 from typing import Dict, Any, List
+from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,13 @@ def get_oneapi_env() -> Dict[str, str]:
 
 
 CONFIG_FILE = Path("models_config.json")
+
+# llama-server spawn tunables (named instead of magic literals sprinkled across
+# start_inference / start_embedding).
+EMBEDDING_UBATCH_SIZE = 2048
+EMBEDDING_POOLING = "cls"
+CRASH_DETECT_SECONDS = 0.5
+
 DEFAULT_CONFIG = {
     "inference": {
         "binary_path": "llama_bin/llama-server.exe",
@@ -72,8 +80,8 @@ DEFAULT_CONFIG = {
         "port": 8080,
         "threads": 4,
         "gpu_layers": -1,
-        "context_size": 4096,
-        "additional_args": "--cache-type-k q4_0 --cache-type-v q4_0 --flash-attn on --parallel 1",
+        "context_size": settings.CONTEXT_SIZE,
+        "additional_args": "--cache-type-k q8_0 --cache-type-v turbo3 --flash-attn on --parallel 1",
     },
     "embedding": {
         "binary_path": "llama_bin/llama-server.exe",
@@ -112,14 +120,21 @@ class LlamaServerRunner:
                                 self.config[key][subkey] = val
                                 updated = True
 
-                # Migrate config files containing old q8_0 Cache parameters to q4_0 for inference
+                # KV cache-type handling for the turboquant SYCL binary. Its
+                # flash-attn vec kernel only accepts a *supported* K/V pair; an
+                # invalid pair (e.g. q4_0 K + turbo3 V) makes llama-server abort
+                # at boot ("fattn.cpp: Not match KV type in vec") and crash-loop
+                # on 503. The recommended default is near-lossless K (q8_0) with
+                # a compressed V (turbo3).
+                #
+                # Only INJECT a cache-type when the user set none. Never rewrite
+                # an explicit choice: a previous migration force-replaced q8_0
+                # with q4_0 on every startup, silently corrupting a valid config
+                # and breaking inference. That behavior is intentionally removed.
                 inf_args = self.config["inference"].get("additional_args", "")
-                if "q8_0" in inf_args:
-                    inf_args = inf_args.replace("q8_0", "q4_0")
-                    updated = True
                 if "--cache-type-k" not in inf_args:
                     inf_args = (
-                        inf_args + " --cache-type-k q4_0 --cache-type-v q4_0"
+                        inf_args + " --cache-type-k q8_0 --cache-type-v turbo3"
                     ).strip()
                     updated = True
                 # -fa now requires an explicit value; upgrade any bare --flash-attn
@@ -255,55 +270,41 @@ class LlamaServerRunner:
             return p
         return (self._project_root / p).resolve()
 
-    def start_inference(self) -> bool:
-        self.stop_inference()
-        cfg = self.config["inference"]
-
-        logger.info("[start_inference] ======= BEGIN =======")
-        logger.info(f"[start_inference] Current CWD: {Path.cwd()}")
-        logger.info(f"[start_inference] Project root: {self._project_root}")
-        logger.info(f"[start_inference] Config: {json.dumps(cfg, indent=2)}")
-
+    def _resolve_binary_and_model(self, cfg: dict, label: str):
+        """Resolve (with llama_bin fallback) and validate the binary + model for
+        a server config. Returns (binary, model, is_hf, model_str) or None on a
+        fatal resolution error (missing binary/model). Shared by both starters."""
         binary = self._resolve_path(cfg["binary_path"])
         model_str = cfg["model_path"]
 
-        # Detect Hugging Face model paths BEFORE resolving to disk path
-        is_hf = False
-        if (
+        # Detect Hugging Face model paths (owner/repo) BEFORE resolving to disk.
+        is_hf = bool(
             model_str
             and "/" in model_str
             and not model_str.startswith("models/")
             and not Path(model_str).is_absolute()
-        ):
-            is_hf = True
-
+        )
         model = self._resolve_path(model_str) if (model_str and not is_hf) else None
 
-        logger.info(
-            f"[start_inference] Resolved binary: {binary} (exists={binary.exists()})"
-        )
-
+        logger.info(f"[{label}] Resolved binary: {binary} (exists={binary.exists()})")
         if not binary.exists():
-            # Try fallback
             binary = self._resolve_path(f"llama_bin/{Path(cfg['binary_path']).name}")
             logger.info(
-                f"[start_inference] Fallback binary: {binary} (exists={binary.exists()})"
+                f"[{label}] Fallback binary: {binary} (exists={binary.exists()})"
             )
             if not binary.exists():
-                logger.error(f"[start_inference] ABORT: binary not found at {binary}")
-                return False
-
-        if model:
-            logger.info(
-                f"[start_inference] Resolved model: {model} (exists={model.exists()}, is_hf={is_hf})"
-            )
-        elif is_hf:
-            logger.info(f"[start_inference] HF model path: {model_str}")
+                logger.error(f"[{label}] ABORT: binary not found at {binary}")
+                return None
 
         if not is_hf and model and (not model.exists() or not model.is_file()):
-            logger.error(f"[start_inference] ABORT: model not found at {model}")
-            return False
+            logger.error(f"[{label}] ABORT: model not found at {model}")
+            return None
 
+        return binary, model, is_hf, model_str
+
+    def _base_args(self, cfg: dict, binary, model, is_hf, model_str, label: str):
+        """Build the argv common to both servers: binary, model, port, threads,
+        context (if configured) and GPU layers."""
         args = [str(binary)]
         if is_hf:
             args.extend(["-hf", model_str])
@@ -313,132 +314,126 @@ class LlamaServerRunner:
         threads = int(cfg["threads"])
         if threads <= 0:
             threads = max(1, (os.cpu_count() or 8) // 2)
-            logger.info(f"[start_inference] Auto-detected thread count: {threads}")
+            logger.info(f"[{label}] Auto-detected thread count: {threads}")
 
-        args.extend(
-            [
-                "--port",
-                str(cfg["port"]),
-                "-t",
-                str(threads),
-                "-c",
-                str(cfg["context_size"]),
-            ]
-        )
+        args.extend(["--port", str(cfg["port"]), "-t", str(threads)])
+        if cfg.get("context_size"):
+            args.extend(["-c", str(cfg["context_size"])])
 
         gpu_layers = int(cfg["gpu_layers"])
         if gpu_layers >= 0:
             args.extend(["-ngl", str(gpu_layers)])
+        return args
 
-        extra = cfg.get("additional_args", "").strip()
-        extra_args = extra.split() if extra else []
-
-        # Consolidation check: if embedding port matches inference, make sure --embedding is enabled
-        emb_cfg = self.config.get("embedding", {})
-        if emb_cfg.get("port") == cfg["port"]:
-            if "--embedding" not in extra_args and "-emb" not in extra_args:
-                extra_args.append("--embedding")
-            if "--ubatch-size" not in extra_args and "-ub" not in extra_args:
-                extra_args.extend(["--ubatch-size", "2048"])
-            if "--pooling" not in extra_args:
-                extra_args.extend(["--pooling", "cls"])
-
-        # Enforce --parallel 1 if not defined to save memory allocations for slot caches
-        if "--parallel" not in extra_args and "-np" not in extra_args:
-            extra_args.extend(["--parallel", "1"])
-
-        if extra_args:
-            args.extend(extra_args)
-
-        cmd_str = " ".join(args)
-        logger.info(f"[start_inference] Full command: {cmd_str}")
-
+    def _spawn_process(
+        self, args, log_name: str, proc_attr: str, log_attr: str, binary, label: str
+    ) -> bool:
+        """Launch a llama-server: open its log, build the oneAPI/SYCL/PATH env,
+        Popen it, and detect an instant crash. Records the process/log-file on
+        self via proc_attr/log_attr. Shared by both starters."""
+        logger.info(f"[{label}] Full command: {' '.join(args)}")
         try:
             log_path = self._project_root / "logs"
             log_path.mkdir(exist_ok=True)
-            inf_log_path = log_path / "llama_inference.log"
-            self.inf_log_file = open(inf_log_path, "w", encoding="utf-8")
+            out_log_path = log_path / log_name
+            log_file = open(out_log_path, "w", encoding="utf-8")
+            setattr(self, log_attr, log_file)
 
             spawn_env = get_oneapi_env()
-
-            # Add binary parent directory to PATH so Windows finds DLLs like ggml.dll
+            # Add the binary's dir to PATH so Windows finds its DLLs (ggml.dll).
             current_path = spawn_env.get("PATH", "")
             bin_dir = str(binary.parent.absolute())
             if bin_dir not in current_path:
                 spawn_env["PATH"] = (
                     f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir
                 )
-
-            # SYCL JIT-compiles turbo kernels on first run; cache them to disk so
+            # SYCL JIT-compiles turbo kernels on first run; persist the cache so
             # later starts don't blow past the health-check warmup window.
             spawn_env.setdefault("SYCL_CACHE_PERSISTENT", "1")
 
-            # Log critical env vars for diagnosis
-            sycl_vars = {
-                k: v
-                for k, v in spawn_env.items()
-                if "SYCL" in k.upper() or "ONEAPI" in k.upper() or k == "PATH"
-            }
-            logger.info(
-                f"[start_inference] Key env vars: ONEAPI_ROOT={spawn_env.get('ONEAPI_ROOT', '<MISSING>')}, "
-                f"SETVARS_COMPLETED={spawn_env.get('SETVARS_COMPLETED', '<MISSING>')}"
-            )
-            logger.debug(f"[start_inference] Full SYCL/oneAPI env: {sycl_vars}")
-
-            self.inference_proc = subprocess.Popen(
+            proc = subprocess.Popen(
                 args,
-                stdout=self.inf_log_file,
-                stderr=self.inf_log_file,
+                stdout=log_file,
+                stderr=log_file,
                 env=spawn_env,
                 cwd=str(self._project_root),
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
-            logger.info(
-                f"[start_inference] Popen succeeded. PID={self.inference_proc.pid}"
-            )
+            setattr(self, proc_attr, proc)
+            logger.info(f"[{label}] Started (PID={proc.pid}).")
 
-            # Wait briefly to detect instant crashes (e.g. DLL not found = 0xC0000135)
-            time.sleep(0.5)
-            exit_code = self.inference_proc.poll()
+            # Wait briefly to catch instant crashes (e.g. missing DLL = 0xC0000135).
+            time.sleep(CRASH_DETECT_SECONDS)
+            exit_code = proc.poll()
             if exit_code is not None:
-                # Process died immediately
-                self.inf_log_file.flush()
-                self.inf_log_file.close()
-                # Read what the log captured
-                log_content = inf_log_path.read_text(encoding="utf-8", errors="replace")
+                log_file.flush()
+                log_file.close()
+                log_content = out_log_path.read_text(encoding="utf-8", errors="replace")
                 try:
                     hex_code = f"0x{int(exit_code) & 0xFFFFFFFF:08X}"
                 except (TypeError, ValueError):
                     hex_code = str(exit_code)
                 logger.error(
-                    f"[start_inference] PROCESS CRASHED IMMEDIATELY! exit_code={exit_code} (hex={hex_code})"
+                    f"[{label}] Process crashed immediately: exit_code={exit_code} "
+                    f"(hex={hex_code})"
                 )
                 logger.error(
-                    f"[start_inference] Log output: {log_content[:2000] if log_content else '<empty>'}"
+                    f"[{label}] Log output: {log_content[:2000] if log_content else '<empty>'}"
                 )
-                self.inference_proc = None
-                self.inf_log_file = None
+                setattr(self, proc_attr, None)
+                setattr(self, log_attr, None)
                 return False
 
-            logger.info(
-                f"[start_inference] Process still running after 0.5s. Log file: {inf_log_path}"
-            )
-            logger.info("[start_inference] ======= SUCCESS =======")
+            logger.info(f"[{label}] Running after {CRASH_DETECT_SECONDS}s. Log: {out_log_path}")
             return True
         except OSError as e:
-            logger.exception(f"[start_inference] OSError spawning process: {e}")
-            self._close_log_file("inf_log_file")
+            logger.exception(f"[{label}] OSError spawning process: {e}")
+            self._close_log_file(log_attr)
             return False
         except Exception as e:
-            logger.exception(f"[start_inference] Unexpected error: {e}")
-            self._close_log_file("inf_log_file")
+            logger.exception(f"[{label}] Unexpected error: {e}")
+            self._close_log_file(log_attr)
             return False
+
+    def start_inference(self) -> bool:
+        self.stop_inference()
+        cfg = self.config["inference"]
+        logger.info(f"[start_inference] Starting with config: {json.dumps(cfg)}")
+
+        resolved = self._resolve_binary_and_model(cfg, "start_inference")
+        if resolved is None:
+            return False
+        binary, model, is_hf, model_str = resolved
+        args = self._base_args(cfg, binary, model, is_hf, model_str, "start_inference")
+
+        extra = cfg.get("additional_args", "").strip()
+        extra_args = extra.split() if extra else []
+
+        # Consolidation: if the embedding server shares this port, serve both.
+        emb_cfg = self.config.get("embedding", {})
+        if emb_cfg.get("port") == cfg["port"]:
+            if "--embedding" not in extra_args and "-emb" not in extra_args:
+                extra_args.append("--embedding")
+            if "--ubatch-size" not in extra_args and "-ub" not in extra_args:
+                extra_args.extend(["--ubatch-size", str(EMBEDDING_UBATCH_SIZE)])
+            if "--pooling" not in extra_args:
+                extra_args.extend(["--pooling", EMBEDDING_POOLING])
+
+        # Enforce --parallel 1 unless set, to save slot-cache memory.
+        if "--parallel" not in extra_args and "-np" not in extra_args:
+            extra_args.extend(["--parallel", "1"])
+
+        args.extend(extra_args)
+        return self._spawn_process(
+            args, "llama_inference.log", "inference_proc", "inf_log_file",
+            binary, "start_inference",
+        )
 
     def start_embedding(self) -> bool:
         cfg = self.config["embedding"]
         inf_cfg = self.config["inference"]
 
-        # Consolidation check: if ports match, we use inference server for both
+        # Consolidation: if ports match, the inference server serves embeddings.
         if cfg["port"] == inf_cfg["port"]:
             logger.info(
                 "[start_embedding] Consolidated server mode: using inference server for embeddings."
@@ -446,139 +441,31 @@ class LlamaServerRunner:
             inference_running = (
                 self.inference_proc is not None and self.inference_proc.poll() is None
             )
-            if not inference_running:
-                return self.start_inference()
-            return True
+            return True if inference_running else self.start_inference()
 
         self.stop_embedding()
-        cfg = self.config["embedding"]
+        logger.info("[start_embedding] Starting dedicated embedding server.")
 
-        logger.info("[start_embedding] ======= BEGIN =======")
-
-        binary = self._resolve_path(cfg["binary_path"])
-        model_str = cfg["model_path"]
-
-        # Detect HF model paths BEFORE resolving
-        is_hf = False
-        if (
-            model_str
-            and "/" in model_str
-            and not model_str.startswith("models/")
-            and not Path(model_str).is_absolute()
-        ):
-            is_hf = True
-
-        model = self._resolve_path(model_str) if (model_str and not is_hf) else None
-
-        logger.info(
-            f"[start_embedding] Resolved binary: {binary} (exists={binary.exists()})"
-        )
-
-        if not binary.exists():
-            binary = self._resolve_path(f"llama_bin/{Path(cfg['binary_path']).name}")
-            if not binary.exists():
-                logger.error(f"[start_embedding] ABORT: binary not found at {binary}")
-                return False
-
-        if not is_hf and model and (not model.exists() or not model.is_file()):
-            logger.error(f"[start_embedding] ABORT: model not found at {model}")
+        resolved = self._resolve_binary_and_model(cfg, "start_embedding")
+        if resolved is None:
             return False
-
-        args = [str(binary)]
-        if is_hf:
-            args.extend(["-hf", model_str])
-        else:
-            args.extend(["-m", str(model)])
-
-        threads = int(cfg["threads"])
-        if threads <= 0:
-            threads = max(1, (os.cpu_count() or 8) // 2)
-
-        args.extend(
-            [
-                "--port",
-                str(cfg["port"]),
-                "-t",
-                str(threads),
-                "--embedding",
-                "--ubatch-size",
-                "2048",
-            ]
-        )
-
-        gpu_layers = int(cfg["gpu_layers"])
-        if gpu_layers >= 0:
-            args.extend(["-ngl", str(gpu_layers)])
+        binary, model, is_hf, model_str = resolved
+        args = self._base_args(cfg, binary, model, is_hf, model_str, "start_embedding")
 
         extra = cfg.get("additional_args", "").strip()
         extra_args = extra.split() if extra else []
+        if "--embedding" not in extra_args and "-emb" not in extra_args:
+            extra_args.append("--embedding")
+        if "--ubatch-size" not in extra_args and "-ub" not in extra_args:
+            extra_args.extend(["--ubatch-size", str(EMBEDDING_UBATCH_SIZE)])
         if "--pooling" not in extra_args:
-            extra_args.extend(["--pooling", "cls"])
-        if extra_args:
-            args.extend(extra_args)
+            extra_args.extend(["--pooling", EMBEDDING_POOLING])
+        args.extend(extra_args)
 
-        logger.info(f"[start_embedding] Full command: {' '.join(args)}")
-        try:
-            log_path = self._project_root / "logs"
-            log_path.mkdir(exist_ok=True)
-            emb_log_path = log_path / "llama_embedding.log"
-            self.emb_log_file = open(emb_log_path, "w", encoding="utf-8")
-
-            spawn_env = get_oneapi_env()
-
-            # Add binary parent directory to PATH so Windows finds DLLs like ggml.dll
-            current_path = spawn_env.get("PATH", "")
-            bin_dir = str(binary.parent.absolute())
-            if bin_dir not in current_path:
-                spawn_env["PATH"] = (
-                    f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir
-                )
-
-            spawn_env.setdefault("SYCL_CACHE_PERSISTENT", "1")
-
-            self.embedding_proc = subprocess.Popen(
-                args,
-                stdout=self.emb_log_file,
-                stderr=self.emb_log_file,
-                env=spawn_env,
-                cwd=str(self._project_root),
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            logger.info(
-                f"[start_embedding] Popen succeeded. PID={self.embedding_proc.pid}"
-            )
-
-            # Wait briefly to detect instant crashes
-            time.sleep(0.5)
-            exit_code = self.embedding_proc.poll()
-            if exit_code is not None:
-                self.emb_log_file.flush()
-                self.emb_log_file.close()
-                log_content = emb_log_path.read_text(encoding="utf-8", errors="replace")
-                try:
-                    hex_code = f"0x{int(exit_code) & 0xFFFFFFFF:08X}"
-                except (TypeError, ValueError):
-                    hex_code = str(exit_code)
-                logger.error(
-                    f"[start_embedding] PROCESS CRASHED IMMEDIATELY! exit_code={exit_code} (hex={hex_code})"
-                )
-                logger.error(
-                    f"[start_embedding] Log output: {log_content[:2000] if log_content else '<empty>'}"
-                )
-                self.embedding_proc = None
-                self.emb_log_file = None
-                return False
-
-            logger.info("[start_embedding] ======= SUCCESS =======")
-            return True
-        except OSError as e:
-            logger.exception(f"[start_embedding] OSError spawning process: {e}")
-            self._close_log_file("emb_log_file")
-            return False
-        except Exception as e:
-            logger.exception(f"[start_embedding] Unexpected error: {e}")
-            self._close_log_file("emb_log_file")
-            return False
+        return self._spawn_process(
+            args, "llama_embedding.log", "embedding_proc", "emb_log_file",
+            binary, "start_embedding",
+        )
 
     def _close_log_file(self, attr_name: str):
         f = getattr(self, attr_name, None)

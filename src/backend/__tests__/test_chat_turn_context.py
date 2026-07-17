@@ -224,6 +224,65 @@ def test_regenerate_without_message_persists_interaction_count_and_stat_decay(
     assert len(user_messages) == 1
 
 
+def test_regenerate_does_not_duplicate_user_message_in_prompt(client, db_session):
+    """RP bug: on a regenerate (no message, parent_id -> last user turn), the
+    history walk ends on that user line AND build_prompt re-appends it as the
+    trailing 'User:' turn, so the model saw the user's last line twice. The
+    trailing line must be dropped from the history slice."""
+    char = Character(id=514, name="RegenPromptChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(
+        character_id=514,
+        interaction_count=1,
+        stats={
+            "energy": 100,
+            "hunger": 0,
+            "happiness": 100,
+            "social": 100,
+            "is_sleeping": False,
+            "last_update": datetime.now(timezone.utc).isoformat(),
+            "relationship": {"score": 50},
+        },
+    )
+    db_session.add(state)
+    db_session.commit()
+    user_msg = MessageNode(
+        character_id=514, role="user", content="tell me a secret", is_active=True
+    )
+    db_session.add(user_msg)
+    db_session.commit()
+    state.current_message_id = user_msg.id
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_build_prompt(user_message, character, state_dict, **kwargs):
+        captured["user_message"] = user_message
+        captured["history"] = kwargs.get("history") or []
+        return "PROMPT"
+
+    with patch(
+        "src.backend.api.chat.brain.build_prompt",
+        new=AsyncMock(side_effect=fake_build_prompt),
+    ), patch(
+        "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+    ) as mock_complete:
+        mock_complete.return_value = {"content": "A whispered secret."}
+        resp = client.post("/chat", json={"character_id": 514, "parent_id": user_msg.id})
+
+    assert resp.status_code == 200
+    # build_prompt appends the user line as the trailing turn, so it must NOT
+    # also appear inside the history slice.
+    dupes = [
+        m
+        for m in captured["history"]
+        if m.get("role") == "user" and m.get("content") == "tell me a secret"
+    ]
+    assert dupes == [], "regenerate duplicated the user message into history"
+    assert captured["user_message"] == "tell me a secret"
+
+
 def test_chat_history_walk_stops_at_missing_ancestor(client, db_session):
     char = Character(id=502, name="OrphanChar", description="Desc")
     db_session.add(char)
@@ -590,7 +649,14 @@ def test_clear_chat_history_resets_all_agent_state_defaults(client, db_session):
     assert refreshed.clothes == "Casual"
     assert refreshed.mood == "Neutral"
     assert refreshed.interaction_count == 0
-    assert refreshed.stats == {
+    # last_update is a live timestamp (required so needs can decay after a
+    # reset); assert it exists + is ISO-parseable, then compare the rest.
+    assert "last_update" in refreshed.stats
+    from datetime import datetime as _dt
+
+    _dt.fromisoformat(refreshed.stats["last_update"])
+    stats_no_ts = {k: v for k, v in refreshed.stats.items() if k != "last_update"}
+    assert stats_no_ts == {
         "energy": 100,
         "hunger": 0,
         "happiness": 100,

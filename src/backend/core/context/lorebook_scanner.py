@@ -44,6 +44,11 @@ class LorebookScanner:
             matched = False
             if entry.keys:
                 for key_pattern in entry.keys:
+                    # An empty/blank pattern makes re.search match every message
+                    # (and "" in text is always True), injecting this lore on
+                    # every single turn. Skip it.
+                    if not key_pattern or not str(key_pattern).strip():
+                        continue
                     try:
                         # Case insensitive word boundary match by default if not a complex regex
                         if re.search(key_pattern, recent_text, re.IGNORECASE):

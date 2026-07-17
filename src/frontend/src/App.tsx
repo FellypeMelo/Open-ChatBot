@@ -31,7 +31,12 @@ interface Toast {
   type: 'success' | 'error'
 }
 
-const generateMessageId = () => Math.floor(Math.random() * 1000000) + Date.now();
+// Optimistic client-side message ids: a large random offset plus the epoch ms
+// keeps them unique and above any server id until the real history reloads.
+const TEMP_ID_RANGE = 1000000
+const TOAST_DURATION_MS = 3000
+
+const generateMessageId = () => Math.floor(Math.random() * TEMP_ID_RANGE) + Date.now();
 
 function App() {
   const { config } = useSettings()
@@ -42,6 +47,8 @@ function App() {
   const [characters, setCharacters] = useState<Character[]>([])
   const [tags, setTags] = useState<Tag[]>([])
   const [selectedCharId, setSelectedCharId] = useState<number | null>(null)
+  const [chats, setChats] = useState<api.ChatSession[]>([])
+  const [activeChatId, setActiveChatId] = useState<number | null>(null)
   const [messages, setMessages] = useState<MessageNode[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -52,7 +59,7 @@ function App() {
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
+    setTimeout(() => setToast(null), TOAST_DURATION_MS)
   }
 
   const fetchUser = useCallback(async () => {
@@ -115,9 +122,9 @@ function App() {
     }
   }, [fetchCharacters, fetchUser, fetchTags, fetchActions])
 
-  const fetchHistory = useCallback(async (charId: number) => {
+  const fetchHistory = useCallback(async (charId: number, chatId?: number) => {
     try {
-      const data = await api.fetchHistory(charId)
+      const data = await api.fetchHistory(charId, chatId)
       // Only update if we are not currently loading a new response to avoid race conditions
       setMessages(prev => {
         // Simple heuristic: if we have local unsaved messages, don't overwrite with empty history
@@ -129,14 +136,29 @@ function App() {
     }
   }, [])
 
+  const loadChats = useCallback(async (charId: number): Promise<number | null> => {
+    try {
+      const list = await api.fetchChats(charId)
+      setChats(list)
+      const active = list.find((c) => c.is_active) ?? list[0] ?? null
+      setActiveChatId(active ? active.id : null)
+      return active ? active.id : null
+    } catch (err) {
+      console.error('Failed to fetch chats', err)
+      setChats([])
+      setActiveChatId(null)
+      return null
+    }
+  }, [])
+
   useEffect(() => {
     let active = true
     const init = async () => {
       if (selectedCharId) {
         setMessages([]) // Clear stale messages from previous character to avoid tree mismatch
-        await Promise.resolve()
+        const chatId = await loadChats(selectedCharId)
         if (active) {
-          await fetchHistory(selectedCharId)
+          await fetchHistory(selectedCharId, chatId ?? undefined)
         }
       }
     }
@@ -144,7 +166,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [selectedCharId, fetchHistory]) // Only re-run when character changes or fetchHistory changes
+  }, [selectedCharId, fetchHistory, loadChats]) // Re-run when character changes
 
   const updateUser = async (name: string, gender: string, persona: string, appearance: string) => {
     try {
@@ -205,15 +227,51 @@ function App() {
     }
   }
 
-  const createCharacter = async (
-    name: string,
-    description: string,
+  const createCharacter = async (data: {
+    name: string
+    description: string
+    nickname: string
+    short_description: string
+    persona_prompt: string
+    scenario: string
+    first_mes: string
+    alternate_greetings: string[]
+    mes_example: string
+    content_rating: string
     tagIds: number[]
-  ) => {
+    avatarFile: File | null
+  }) => {
     try {
-      const data = await api.createCharacter({ name, description, tag_ids: tagIds, compress_backstory: false })
-      setCharacters((prev) => [...prev, data])
-      setSelectedCharId(data.id)
+      const characterData = await api.createCharacter({
+        name: data.name,
+        description: data.description,
+        nickname: data.nickname,
+        short_description: data.short_description,
+        persona_prompt: data.persona_prompt,
+        scenario: data.scenario,
+        first_mes: data.first_mes,
+        alternate_greetings: data.alternate_greetings,
+        mes_example: data.mes_example,
+        content_rating: data.content_rating,
+        tag_ids: data.tagIds,
+        compress_backstory: false
+      })
+
+      if (data.avatarFile) {
+        const formData = new FormData()
+        formData.append('file', data.avatarFile)
+        const uploadResponse = await fetch(`/characters/${characterData.id}/avatar`, {
+          method: 'POST',
+          body: formData
+        })
+        if (uploadResponse.ok) {
+          const uploadResult = await uploadResponse.json()
+          characterData.avatar_url = uploadResult.avatar_url
+        }
+      }
+
+      setCharacters((prev) => [...prev, characterData])
+      setSelectedCharId(characterData.id)
       setActiveModal(null)
       showToast('Character initialized.')
     } catch {
@@ -223,13 +281,51 @@ function App() {
 
   const updateCharacter = async (
     id: number,
-    name: string,
-    description: string,
-    tagIds: number[]
+    data: {
+      name: string
+      description: string
+      nickname: string
+      short_description: string
+      persona_prompt: string
+      scenario: string
+      first_mes: string
+      alternate_greetings: string[]
+      mes_example: string
+      content_rating: string
+      tagIds: number[]
+      avatarFile: File | null
+    }
   ) => {
     try {
-      const data = await api.updateCharacter(id, { name, description, tag_ids: tagIds, compress_backstory: false })
-      setCharacters((prev) => prev.map((c) => (c.id === id ? data : c)))
+      const characterData = await api.updateCharacter(id, {
+        name: data.name,
+        description: data.description,
+        nickname: data.nickname,
+        short_description: data.short_description,
+        persona_prompt: data.persona_prompt,
+        scenario: data.scenario,
+        first_mes: data.first_mes,
+        alternate_greetings: data.alternate_greetings,
+        mes_example: data.mes_example,
+        content_rating: data.content_rating,
+        tag_ids: data.tagIds,
+        compress_backstory: false
+      })
+
+      if (data.avatarFile) {
+        const formData = new FormData()
+        formData.append('file', data.avatarFile)
+        const uploadResponse = await fetch(`/characters/${characterData.id}/avatar`, {
+          method: 'POST',
+          body: formData
+        })
+        if (uploadResponse.ok) {
+          const uploadResult = await uploadResponse.json()
+          characterData.avatar_url = uploadResult.avatar_url
+        }
+      }
+
+      setCharacters((prev) => prev.map((c) => (c.id === id ? characterData : c)))
       setActiveModal(null)
       setEditingCharacter(null)
       showToast('Changes saved.')
@@ -238,38 +334,26 @@ function App() {
     }
   }
 
-  const handleSend = async (explicitParentId?: number) => {
-    if (!input.trim() || isLoading || !selectedCharId) return
+  // Parent of the next message: an explicit id (branching) else the newest node.
+  const resolveParentId = (explicitParentId?: number) =>
+    explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
 
-    const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
-
-    // Use a more robust temporary ID to avoid collisions and ensure stability in tests
+  // Optimistically append a user turn + its empty assistant placeholder. The
+  // robust temporary id avoids collisions and keeps test ordering stable.
+  const appendExchange = (content: string, parentId: number | null) => {
     const userMsgId = generateMessageId()
-    const assistantMsgId = userMsgId + 1
-
-    const userMsg: MessageNode = { 
-      id: userMsgId,
-      parent_id: parentId,
-      role: 'user', 
-      content: input, 
-      variant_index: 0 
-    }
-    const assistantMsg: MessageNode = { 
-      id: assistantMsgId,
-      parent_id: userMsgId,
-      role: 'assistant', 
-      content: '', 
-      variant_index: 0 
-    }
-    
+    const assistantMsg: MessageNode = { id: userMsgId + 1, parent_id: userMsgId, role: 'assistant', content: '', variant_index: 0 }
+    const userMsg: MessageNode = { id: userMsgId, parent_id: parentId, role: 'user', content, variant_index: 0 }
     setMessages(prev => [...prev, userMsg, assistantMsg])
-    const currentInput = input
-    setInput('')
-    setIsLoading(true)
+  }
 
+  // Drive one streaming turn: flip the loading flag, stream the response, and
+  // surface a connection-error toast. Shared by send / action / regenerate so
+  // the try/catch/finally lives in exactly one place.
+  const runStream = async (start: () => Promise<Response>) => {
+    setIsLoading(true)
     try {
-      const response = await api.sendMessageStream(currentInput, selectedCharId, parentId, config)
-      await handleStreamResponse(response)
+      await handleStreamResponse(await start())
     } catch {
       showToast('Lost connection to AI.', 'error')
     } finally {
@@ -277,13 +361,25 @@ function App() {
     }
   }
 
+  const refreshHistory = async () => {
+    if (!selectedCharId) return
+    const history = await api.fetchHistory(selectedCharId, activeChatId ?? undefined)
+    setMessages(history)
+  }
+
+  const handleSend = async (explicitParentId?: number) => {
+    if (!input.trim() || isLoading || !selectedCharId) return
+    const parentId = resolveParentId(explicitParentId)
+    appendExchange(input, parentId)
+    const currentInput = input
+    setInput('')
+    await runStream(() => api.sendMessageStream(currentInput, selectedCharId, parentId, config, undefined, activeChatId ?? undefined))
+  }
+
   const handleEditMessage = async (messageId: number, content: string) => {
     try {
       await api.editMessage(messageId, content)
-      if (selectedCharId) {
-        const history = await api.fetchHistory(selectedCharId)
-        setMessages(history)
-      }
+      await refreshHistory()
     } catch {
       showToast('Failed to edit message.', 'error')
     }
@@ -292,10 +388,7 @@ function App() {
   const handleDeleteMessage = async (messageId: number) => {
     try {
       await api.deleteMessage(messageId)
-      if (selectedCharId) {
-        const history = await api.fetchHistory(selectedCharId)
-        setMessages(history)
-      }
+      await refreshHistory()
     } catch {
       showToast('Failed to delete message.', 'error')
     }
@@ -303,64 +396,23 @@ function App() {
 
   const handleSendAction = async (actionId: string, explicitParentId?: number) => {
     if (isLoading || !selectedCharId) return
-
-    const parentId = explicitParentId ?? (messages.length > 0 ? messages[messages.length - 1].id : null)
-
+    const parentId = resolveParentId(explicitParentId)
     const actionMessage = actionsMessages[actionId] || `*Performs action: ${actionId}*`
-    const userMsgId = generateMessageId()
-    const assistantMsgId = userMsgId + 1
-
-    const userMsg: MessageNode = { 
-      id: userMsgId,
-      parent_id: parentId,
-      role: 'user', 
-      content: actionMessage, 
-      variant_index: 0 
-    }
-    const assistantMsg: MessageNode = { 
-      id: assistantMsgId,
-      parent_id: userMsgId,
-      role: 'assistant', 
-      content: '', 
-      variant_index: 0 
-    }
-    
-    setMessages(prev => [...prev, userMsg, assistantMsg])
-    setIsLoading(true)
-
-    try {
-      const response = await api.sendMessageStream(null, selectedCharId, parentId, config, actionId)
-      await handleStreamResponse(response)
-    } catch {
-      showToast('Lost connection to AI.', 'error')
-    } finally {
-      setIsLoading(false)
-    }
+    appendExchange(actionMessage, parentId)
+    await runStream(() => api.sendMessageStream(null, selectedCharId, parentId, config, actionId, activeChatId ?? undefined))
   }
 
   const handleRegenerate = async (parentId: number) => {
     if (isLoading || !selectedCharId) return
-
-    const assistantMsgId = generateMessageId()
-    const assistantMsg: MessageNode = { 
-      id: assistantMsgId,
+    const assistantMsg: MessageNode = {
+      id: generateMessageId(),
       parent_id: parentId,
-      role: 'assistant', 
-      content: '', 
+      role: 'assistant',
+      content: '',
       variant_index: 0 // Will be corrected by fetchHistory
     }
-    
     setMessages(prev => [...prev, assistantMsg])
-    setIsLoading(true)
-
-    try {
-      const response = await api.sendMessageStream(null, selectedCharId, parentId, config)
-      await handleStreamResponse(response)
-    } catch {
-      showToast('Lost connection to AI.', 'error')
-    } finally {
-      setIsLoading(false)
-    }
+    await runStream(() => api.sendMessageStream(null, selectedCharId, parentId, config, undefined, activeChatId ?? undefined))
   }
 
   const handleStreamResponse = async (response: Response) => {
@@ -408,7 +460,7 @@ function App() {
                 return next
               })
             }
-            if (selectedCharId) await fetchHistory(selectedCharId)
+            if (selectedCharId) await fetchHistory(selectedCharId, activeChatId ?? undefined)
           }
         } catch (e) {
           console.error('SSE Error', e)
@@ -438,11 +490,50 @@ function App() {
       try {
         await api.clearChatHistory(selectedCharId)
         setMessages([])
+        await loadChats(selectedCharId)
         fetchCharacters()
         showToast('Conversation cleared.')
       } catch {
         showToast('Failed to clear conversation history.', 'error')
       }
+    }
+  }
+
+  // Non-destructive "New Chat": starts a fresh session and keeps the old ones.
+  // An optional greetingIndex selects which opening greeting seeds the session.
+  const handleNewChat = async (greetingIndex?: number) => {
+    if (!selectedCharId) return
+    try {
+      const res = await api.newChat(selectedCharId, greetingIndex)
+      setMessages([])
+      await loadChats(selectedCharId)
+      if (res?.chat_id != null) setActiveChatId(res.chat_id)
+      fetchCharacters()
+      showToast('Started a new chat.')
+    } catch {
+      showToast('Failed to start a new chat.', 'error')
+    }
+  }
+
+  const handleSelectChat = async (chatId: number) => {
+    if (!selectedCharId || chatId === activeChatId) return
+    setActiveChatId(chatId)
+    setMessages([])
+    await fetchHistory(selectedCharId, chatId)
+  }
+
+  const handleDeleteChat = async (chatId: number) => {
+    if (!selectedCharId) return
+    if (!window.confirm("Delete this chat session permanently? This cannot be undone.")) return
+    try {
+      await api.deleteChat(chatId)
+      setMessages([])
+      const nextActive = await loadChats(selectedCharId)
+      await fetchHistory(selectedCharId, nextActive ?? undefined)
+      fetchCharacters()
+      showToast('Chat deleted.')
+    } catch {
+      showToast('Failed to delete chat.', 'error')
     }
   }
 
@@ -457,7 +548,7 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <div className="flex h-full w-screen bg-background text-on-surface font-body-md overflow-hidden antialiased relative">
+      <div className="flex h-full w-full bg-background text-on-surface font-body-md overflow-hidden antialiased relative">
         {/* Mobile Backdrop Overlay */}
         {isSidebarOpen && (
           <div 
@@ -532,6 +623,12 @@ function App() {
               onSendAction={handleSendAction}
               onEditMessage={handleEditMessage}
               onDeleteMessage={handleDeleteMessage}
+              chats={chats}
+              activeChatId={activeChatId}
+              greetings={[activeChar?.first_mes ?? '', ...(activeChar?.alternate_greetings ?? [])].filter((g) => g.trim())}
+              onNewChat={handleNewChat}
+              onSelectChat={handleSelectChat}
+              onDeleteChat={handleDeleteChat}
             />
           )}
 

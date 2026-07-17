@@ -265,3 +265,45 @@ async def test_active_summary_keeps_newest_lines_when_truncated():
 
     assert "FRESH INSIGHT AT THE END" in prompt
     assert "old fact 0 " not in prompt
+
+
+@pytest.mark.asyncio
+async def test_memory_already_in_history_is_dropped():
+    # RQ-02: a retrieved memory that just replays a turn already visible in the
+    # recent history window must not be injected again into Memories.
+    mock_vs = MagicMock()
+    mock_vs.query_memory = AsyncMock(
+        return_value={"documents": [["User: what's your name?\nAI: I'm Gemi."]]}
+    )
+    mock_vs.query_lore = AsyncMock(return_value={})
+    brain = Brain(vector_store=mock_vs)
+
+    char = Character(name="Gemi", description="d")
+    char.id = 1
+    char.tags = []
+    history = [
+        {"role": "user", "content": "what's your name?"},
+        {"role": "assistant", "content": "I'm Gemi."},
+    ]
+    prompt = await brain.build_prompt("hi again", char, state=None, history=history)
+
+    assert "Memories:\nNone." in prompt, "duplicate-of-history memory was still injected"
+
+
+@pytest.mark.asyncio
+async def test_memory_not_in_history_is_kept():
+    # Regression guard for RQ-02: a genuinely novel memory is still injected.
+    mock_vs = MagicMock()
+    mock_vs.query_memory = AsyncMock(
+        return_value={"documents": [["User: I have a dog named Rex\nAI: Cute!"]]}
+    )
+    mock_vs.query_lore = AsyncMock(return_value={})
+    brain = Brain(vector_store=mock_vs)
+
+    char = Character(name="Gemi", description="d")
+    char.id = 1
+    char.tags = []
+    history = [{"role": "user", "content": "something totally unrelated"}]
+    prompt = await brain.build_prompt("hi", char, state=None, history=history)
+
+    assert "Rex" in prompt, "a novel memory must still reach the prompt"

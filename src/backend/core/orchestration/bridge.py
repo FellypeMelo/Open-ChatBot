@@ -38,6 +38,28 @@ ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
 )
 
 
+def _norm(text: Any) -> str:
+    """Lowercase + collapse whitespace, for cheap text-overlap checks."""
+    return re.sub(r"\s+", " ", str(text).lower()).strip()
+
+
+def _memory_redundant_with_recent(doc: str, recent_blob: str) -> bool:
+    """A stored memory is written as 'User: {msg}\\nAI: {reply}'. If EVERY
+    non-empty half already appears in the recent history/summary the model is
+    about to see, re-injecting the memory only duplicates visible context and
+    over-weights that one moment (RQ-02). Coupled to the storage format on
+    purpose; if that ever changes this degrades to a harmless no-op."""
+    if not doc or not recent_blob:
+        return False
+    parts = re.split(r"\bai\s*:\s*", doc, maxsplit=1, flags=re.IGNORECASE)
+    user_half = re.sub(r"^\s*user\s*:\s*", "", parts[0], flags=re.IGNORECASE)
+    halves = [user_half] + (parts[1:] if len(parts) > 1 else [])
+    normed = [_norm(h) for h in halves if _norm(h)]
+    if not normed:
+        return False
+    return all(h in recent_blob for h in normed)
+
+
 # Role/boundary words that must never be forgeable from injected free text.
 _ROLE_MARKERS = (
     "reply",
@@ -195,7 +217,28 @@ class Brain:
         # so they can't overflow the context window (PZ-05).
         context = "None."
         if memory_docs:
-            sanitized = [self._sanitize(str(d), _names) for d in memory_docs if d]
+            # Drop memories that just replay a turn already visible in the recent
+            # history/summary -- injecting them again duplicates context and
+            # over-weights that moment (RQ-02).
+            recent_blob = _norm(
+                " ".join(
+                    (
+                        m.get("content")
+                        if isinstance(m, dict)
+                        else getattr(m, "content", "")
+                    )
+                    or ""
+                    for m in (history or [])
+                )
+                + " "
+                + (raw_summary or "")
+            )
+            fresh_docs = [
+                d
+                for d in memory_docs
+                if d and not _memory_redundant_with_recent(str(d), recent_blob)
+            ]
+            sanitized = [self._sanitize(str(d), _names) for d in fresh_docs if d]
             joined = " ".join(s for s in sanitized if s)
             if joined:
                 context = self._truncate_tokens(joined, allocations.get("memory", 400))

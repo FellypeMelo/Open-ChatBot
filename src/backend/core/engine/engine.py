@@ -25,6 +25,10 @@ COLD_TAG_THRESHOLD = 30  # score <= this evolves tags back toward distance/guard
 # Rolling active-summary growth cap
 ACTIVE_SUMMARY_MAX_CHARS = 1500
 ACTIVE_SUMMARY_TAIL_CHARS = 1000
+# Rolling digest: keep only the most recent N reflection lines, so an
+# unreinforced (possibly hallucinated) claim ages out instead of persisting
+# forever (RF-01, option B).
+ACTIVE_SUMMARY_MAX_LINES = 8
 
 # Hour-of-day boundaries (deliberately distinct: "night mood" begins an hour
 # before the "should be asleep" window).
@@ -147,17 +151,20 @@ def _merge_reflection_traits(stats: Dict[str, Any], traits: Any) -> None:
 
 
 def _roll_active_summary(existing: Optional[str], summary: str) -> str:
-    """Append the new summary line and keep only the most recent tail so the
-    rolling active summary can't grow without bound. An identical line already
-    present is not re-appended, so a repeated (possibly hallucinated) claim can't
-    compound every reflection cycle (RF-01)."""
-    existing = existing or ""
-    if summary and summary.strip() and summary.strip() in existing:
-        return existing.strip()
-    new_active = f"{existing}\n- {summary}".strip()
-    if len(new_active) > ACTIVE_SUMMARY_MAX_CHARS:
-        new_active = "..." + new_active[-ACTIVE_SUMMARY_TAIL_CHARS:]
-    return new_active
+    """Maintain a rolling digest of the most recent reflection lines (option B).
+    A new line is appended unless already present (dedup, RF-01a); only the last
+    ACTIVE_SUMMARY_MAX_LINES lines are kept, so an unreinforced/hallucinated claim
+    ages out over time instead of being injected into every future prompt forever
+    (RF-01). A char cap remains as a final safety net."""
+    lines = [ln for ln in (existing or "").split("\n") if ln.strip()]
+    entry = f"- {summary.strip()}" if summary and summary.strip() else ""
+    if entry and entry not in lines:
+        lines.append(entry)
+    lines = lines[-ACTIVE_SUMMARY_MAX_LINES:]
+    result = "\n".join(lines)
+    if len(result) > ACTIVE_SUMMARY_MAX_CHARS:
+        result = "..." + result[-ACTIVE_SUMMARY_TAIL_CHARS:]
+    return result
 
 
 def _append_unique_facts(stats: Dict[str, Any], facts: List[Any]) -> None:

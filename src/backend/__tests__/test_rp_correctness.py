@@ -55,6 +55,22 @@ def test_roll_active_summary_dedups_repeated_line():
     assert s2.count("The user loves pirates") == 1
 
 
+def test_active_summary_ages_out_unreinforced_lines():
+    # RF-01 (option B, rolling digest): a one-off (possibly hallucinated) claim
+    # that is never restated must age out of the rolling window over time,
+    # instead of being injected into every future prompt forever.
+    from src.backend.core.engine.engine import (
+        _roll_active_summary,
+        ACTIVE_SUMMARY_MAX_LINES,
+    )
+
+    s = _roll_active_summary("", "The user is my spouse")  # unreinforced claim
+    for i in range(ACTIVE_SUMMARY_MAX_LINES + 3):
+        s = _roll_active_summary(s, f"real observed event {i}")
+
+    assert "The user is my spouse" not in s
+
+
 def test_merge_reflection_traits_protection_is_case_insensitive():
     # RF-07: an aliased core key ('Energy', 'Relationship') must be rejected too,
     # not leak into stats where a case-sensitive reader could later collide.

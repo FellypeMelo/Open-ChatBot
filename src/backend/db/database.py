@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine, text, inspect, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 from src.backend.core.config import settings
@@ -260,6 +262,54 @@ def init_db():
                     ),
                     {"chat": new_chat_id, "cid": cid},
                 )
+
+    # The schema is now fully built (create_all + ALTER compat). Record it as
+    # Alembic head so a future `alembic upgrade head` reconciles instead of
+    # colliding with the existing tables (B1). Never auto-upgrades.
+    stamp_alembic_head_if_untracked()
+
+
+def _alembic_config():
+    """Alembic Config pointing at the repo's alembic.ini (script_location +
+    env.py, which resolves the DB URL from settings.DATABASE_URL)."""
+    from alembic.config import Config
+
+    ini_path = Path(__file__).resolve().parents[3] / "alembic.ini"
+    return Config(str(ini_path))
+
+
+def stamp_alembic_head_if_untracked():
+    """Reconcile the two schema-management systems (B1).
+
+    First-run/carry-forward builds the schema via create_all + the ALTER compat
+    blocks in init_db, so a fresh or pre-Alembic DB ends up at HEAD *schema* but
+    with no `alembic_version` row. A later `alembic upgrade head` (run by the
+    user -- we never auto-upgrade) would then start from the base revision and
+    try to CREATE TABLE on already-existing tables and fail.
+
+    Fix: once the schema is at head, STAMP the DB to head when it isn't tracked
+    yet. Stamping records the version without touching the schema, so it can
+    never skip a real migration -- the ALTER compat has already applied every
+    column head expects. Idempotent: a DB already carrying an alembic_version is
+    left untouched (a real pending migration is then the user's `upgrade head`)."""
+    if settings.TESTING:
+        return
+    from alembic import command
+
+    probe = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
+    try:
+        insp = inspect(probe)
+        if "alembic_version" in insp.get_table_names():
+            with probe.connect() as conn:
+                already = conn.execute(
+                    text("SELECT version_num FROM alembic_version LIMIT 1")
+                ).first()
+            if already:
+                return
+    finally:
+        probe.dispose()
+
+    command.stamp(_alembic_config(), "head")
 
 
 def seed_default_presets():

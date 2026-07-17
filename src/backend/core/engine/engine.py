@@ -304,12 +304,22 @@ def _apply_reflection_to_agent(
 
 
 def evolve_character(
-    db: Session, character_id: int, reflection: dict, _max_retries: int = 2
+    db: Session,
+    character_id: int,
+    reflection: dict,
+    reflected_at_count: Optional[int] = None,
+    active_chat_id: Optional[int] = None,
+    _max_retries: int = 2,
 ) -> None:
     """Apply a reflection to the agent's permanent state. On a StaleDataError
     (a concurrent chat commit advanced AgentState.version) re-query the fresh row
     and retry, so the reflection is not silently lost (RF-02) -- rather than
-    swallowing the whole summary/relationship/facts/journal."""
+    swallowing the whole summary/relationship/facts/journal.
+
+    `reflected_at_count` records the consumed reflection window (RF-04); it is
+    written atomically with the reflection (avoiding a second racy commit) and
+    only when the agent still mirrors `active_chat_id` (so a chat switch during
+    the background reflect() can't stamp it onto a different chat)."""
     for attempt in range(_max_retries + 1):
         agent = (
             db.query(AgentState)
@@ -321,6 +331,10 @@ def evolve_character(
             return
         try:
             _apply_reflection_to_agent(db, agent, character_id, reflection)
+            if reflected_at_count is not None and (
+                active_chat_id is None or agent.active_chat_id == active_chat_id
+            ):
+                agent.last_reflected_at_count = reflected_at_count
             db.commit()
             return
         except StaleDataError:

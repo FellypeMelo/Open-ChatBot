@@ -141,24 +141,27 @@ async def run_consciousness_layer(
                 reflection = await brain.reflect(
                     msg_dicts, window_size=settings.REFLECTION_INTERVAL
                 )
-                evolve_character(db, character_id, reflection)
-
                 # Mark this reflection window as consumed only now that it
                 # succeeded, so a failed boundary turn is retried next time rather
-                # than skipped forever (RF-04). Mirror onto the chat too.
-                if reflected_at_count is not None:
-                    agent = (
-                        db.query(AgentState)
-                        .filter(AgentState.character_id == character_id)
-                        .first()
+                # than skipped forever (RF-04). The AgentState mirror is written
+                # atomically inside evolve_character, guarded so a chat switch
+                # during reflect() can't stamp it onto a different chat.
+                evolve_character(
+                    db,
+                    character_id,
+                    reflection,
+                    reflected_at_count=reflected_at_count,
+                    active_chat_id=chat_id,
+                )
+
+                # The Chat row is the per-chat source of truth for the reflecting
+                # chat: stamp it explicitly (by chat_id), correct regardless of any
+                # concurrent switch to another chat.
+                if reflected_at_count is not None and chat_id is not None:
+                    db.query(Chat).filter(Chat.id == chat_id).update(
+                        {Chat.last_reflected_at_count: reflected_at_count},
+                        synchronize_session=False,
                     )
-                    if agent is not None:
-                        agent.last_reflected_at_count = reflected_at_count
-                    if chat_id is not None:
-                        db.query(Chat).filter(Chat.id == chat_id).update(
-                            {Chat.last_reflected_at_count: reflected_at_count},
-                            synchronize_session=False,
-                        )
                     db.commit()
 
                 logger.info(
@@ -673,6 +676,7 @@ async def new_chat(
         current_message_id=None,
         active_summary="",
         interaction_count=0,
+        last_reflected_at_count=0,
     )
     db.add(fresh)
     db.flush()
@@ -681,6 +685,9 @@ async def new_chat(
     state.current_message_id = None
     state.active_summary = ""
     state.interaction_count = 0
+    # Reset the reflection checkpoint too, or force_reflect goes negative and
+    # suppresses reflection for dozens of turns after a reset (RF-04).
+    state.last_reflected_at_count = 0
 
     # Resolve the opening greeting to seed (explicit text > index > first_mes).
     greetings = _character_greetings(character)
@@ -813,6 +820,7 @@ async def delete_chat(chat_id: int, db: Session = Depends(get_db)):
             state.current_message_id = None
             state.active_summary = ""
             state.interaction_count = 0
+            state.last_reflected_at_count = 0
     db.commit()
 
     removed = await vector_store.clear_chat_memories(chat_id)
@@ -839,6 +847,7 @@ async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
             state.clothes = "Casual"
             state.mood = "Neutral"
             state.interaction_count = 0
+            state.last_reflected_at_count = 0
             # Wipe the running summary too; otherwise summary-based context
             # (including hallucinated content) survives a reset.
             state.active_summary = ""

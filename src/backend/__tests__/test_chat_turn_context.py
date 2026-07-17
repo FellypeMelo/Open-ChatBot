@@ -20,7 +20,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from fastapi.testclient import TestClient
 
 from src.backend.db.database import Base, get_db
-from src.backend.db.models import AgentState, Character, MessageNode, SamplerPreset
+from src.backend.db.models import AgentState, Chat, Character, MessageNode, SamplerPreset
 from src.backend.api import chat as chat_module
 from src.backend.api.chat import LLMConfig
 from src.backend.core.engine.state_transitions import ACTIONS_CONFIG, apply_action_stats
@@ -776,15 +776,22 @@ async def test_reflection_walks_active_branch_excluding_offbranch_variant(
 
 
 @pytest.mark.asyncio
-async def test_run_consciousness_layer_marks_last_reflected_count(
+async def test_run_consciousness_layer_marks_chat_last_reflected_count(
     db_session, monkeypatch
 ):
-    # RF-04: a successful reflection records the interaction count it consumed,
-    # so a failed boundary turn is retried next time instead of skipped forever.
+    # RF-04: a successful reflection records the consumed interaction count on the
+    # reflecting Chat row (the per-chat source of truth), so a failed boundary
+    # turn is retried next time instead of skipped forever.
     char = Character(id=525, name="MarkChar", description="d")
     db_session.add(char)
     db_session.commit()
-    db_session.add(AgentState(character_id=525, interaction_count=20))
+    chat = Chat(character_id=525, title="C")
+    db_session.add(chat)
+    db_session.commit()
+    chat_id = chat.id
+    db_session.add(
+        AgentState(character_id=525, interaction_count=20, active_chat_id=chat_id)
+    )
     db_session.commit()
 
     monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
@@ -799,11 +806,91 @@ async def test_run_consciousness_layer_marks_last_reflected_count(
     ):
         mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
         await chat_module.run_consciousness_layer(
-            525, "u", "a", force_reflect=True, reflected_at_count=20
+            525, "u", "a", force_reflect=True, chat_id=chat_id, reflected_at_count=20
         )
 
-    refreshed = db_session.query(AgentState).filter_by(character_id=525).first()
-    assert refreshed.last_reflected_at_count == 20
+    refreshed_chat = db_session.query(Chat).filter_by(id=chat_id).first()
+    assert refreshed_chat.last_reflected_at_count == 20
+
+
+def test_chat_triggers_reflection_at_interval_via_range_check(client, db_session):
+    # RF-04 (review #5): the range-check trigger in _prepare_chat_turn must fire a
+    # reflection when interaction_count - last_reflected reaches the interval.
+    from src.backend.core.config import settings
+
+    char = Character(id=526, name="IntervalChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(
+        AgentState(
+            character_id=526,
+            interaction_count=settings.REFLECTION_INTERVAL - 1,
+            last_reflected_at_count=0,
+        )
+    )
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "a reply"}
+        resp = client.post("/chat", json={"character_id": 526, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_called_once()
+    assert mock_rcl.call_args.kwargs["force_reflect"] is True
+
+
+@pytest.mark.asyncio
+async def test_reflection_stamps_reflecting_chat_and_respects_active_chat_guard(
+    db_session, monkeypatch
+):
+    # RF-04 (review #1/#2/#6): a reflection for chat A that finishes AFTER the
+    # user switched to chat B must stamp chat A's row (the reflecting chat) but
+    # NOT clobber the shared AgentState mirror (now belonging to chat B).
+    char = Character(id=527, name="SwitchChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    chat_a = Chat(character_id=527, title="A")
+    chat_b = Chat(character_id=527, title="B")
+    db_session.add_all([chat_a, chat_b])
+    db_session.commit()
+    chat_a_id, chat_b_id = chat_a.id, chat_b.id
+    # Active chat is now B; the reflection being finished is for A.
+    db_session.add(
+        AgentState(
+            character_id=527, active_chat_id=chat_b_id, last_reflected_at_count=0
+        )
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            527,
+            "u",
+            "a",
+            force_reflect=True,
+            chat_id=chat_a_id,
+            reflected_at_count=20,
+        )
+
+    agent = db_session.query(AgentState).filter_by(character_id=527).first()
+    reflecting_chat = db_session.query(Chat).filter_by(id=chat_a_id).first()
+    # Chat A (reflecting) is stamped; the AgentState mirror (now chat B) is NOT.
+    assert reflecting_chat.last_reflected_at_count == 20
+    assert agent.last_reflected_at_count == 0
 
 
 @pytest.mark.asyncio

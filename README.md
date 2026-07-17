@@ -107,4 +107,5 @@ venv/Scripts/python.exe -m alembic upgrade head
 *   **[docs/architecture.md](docs/architecture.md)** — fluxos big-picture (turn flow, ciclo de memória, reflexão).
 *   **[docs/data-model-er.md](docs/data-model-er.md)** — modelo Entidade-Relacionamento + decisões de schema.
 *   **[docs/testing.md](docs/testing.md)** — como rodar testes, isolamento, e adicionar features com segurança.
+*   **[docs/card-authoring-epic.md](docs/card-authoring-epic.md)** — como escrever uma card E.P.I.C. (persona, cena, tiques, exemplos) que faz um modelo pequeno brilhar.
 *   **[CLAUDE.md](CLAUDE.md)** — guia de comandos e arquitetura para contribuidores/agentes.

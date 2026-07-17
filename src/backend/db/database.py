@@ -75,6 +75,21 @@ def init_db():
                         "ALTER TABLE agent_states ADD COLUMN version INTEGER DEFAULT 1"
                     )
                 )
+            if "last_reflected_at_count" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE agent_states ADD COLUMN last_reflected_at_count INTEGER DEFAULT 0"
+                    )
+                )
+
+        if "chats" in insp.get_table_names():
+            chat_cols = [col["name"] for col in insp.get_columns("chats")]
+            if "last_reflected_at_count" not in chat_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE chats ADD COLUMN last_reflected_at_count INTEGER DEFAULT 0"
+                    )
+                )
 
         if "users" in insp.get_table_names():
             columns = [col["name"] for col in insp.get_columns("users")]

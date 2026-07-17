@@ -776,6 +776,37 @@ async def test_reflection_walks_active_branch_excluding_offbranch_variant(
 
 
 @pytest.mark.asyncio
+async def test_run_consciousness_layer_marks_last_reflected_count(
+    db_session, monkeypatch
+):
+    # RF-04: a successful reflection records the interaction count it consumed,
+    # so a failed boundary turn is retried next time instead of skipped forever.
+    char = Character(id=525, name="MarkChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=525, interaction_count=20))
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+        patch("src.backend.api.chat.evolve_character"),
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            525, "u", "a", force_reflect=True, reflected_at_count=20
+        )
+
+    refreshed = db_session.query(AgentState).filter_by(character_id=525).first()
+    assert refreshed.last_reflected_at_count == 20
+
+
+@pytest.mark.asyncio
 async def test_run_consciousness_layer_tags_memory_with_message_id(
     db_session, monkeypatch
 ):

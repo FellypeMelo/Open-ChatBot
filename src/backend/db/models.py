@@ -158,6 +158,10 @@ class Chat(Base):
     )
     active_summary = Column(Text, default="")
     interaction_count = Column(Integer, default=0)
+    # interaction_count at the last successful reflection, so a reflection due on
+    # an interval boundary that failed is retried on the next turn instead of
+    # skipped forever (RF-04).
+    last_reflected_at_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
@@ -191,6 +195,8 @@ class AgentState(Base):
         Integer, ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
     )
     interaction_count = Column(Integer, default=0)
+    # Mirrors Chat.last_reflected_at_count for the active chat (RF-04).
+    last_reflected_at_count = Column(Integer, default=0)
     location = Column(String, default="Living Room")
     mood = Column(String, default="Neutral")
     clothes = Column(String, default="Casual")
@@ -222,6 +228,8 @@ class AgentState(Base):
             self.mood = "Neutral"
         if self.interaction_count is None:
             self.interaction_count = 0
+        if self.last_reflected_at_count is None:
+            self.last_reflected_at_count = 0
         if not self.stats:
             self.stats = {
                 "energy": 100,

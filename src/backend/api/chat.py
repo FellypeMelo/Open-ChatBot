@@ -80,6 +80,7 @@ async def run_consciousness_layer(
     chat_id: Optional[int] = None,
     store_memory: bool = True,
     message_id: Optional[int] = None,
+    reflected_at_count: Optional[int] = None,
 ):
     """Background task for memory and evolution."""
     try:
@@ -141,6 +142,25 @@ async def run_consciousness_layer(
                     msg_dicts, window_size=settings.REFLECTION_INTERVAL
                 )
                 evolve_character(db, character_id, reflection)
+
+                # Mark this reflection window as consumed only now that it
+                # succeeded, so a failed boundary turn is retried next time rather
+                # than skipped forever (RF-04). Mirror onto the chat too.
+                if reflected_at_count is not None:
+                    agent = (
+                        db.query(AgentState)
+                        .filter(AgentState.character_id == character_id)
+                        .first()
+                    )
+                    if agent is not None:
+                        agent.last_reflected_at_count = reflected_at_count
+                    if chat_id is not None:
+                        db.query(Chat).filter(Chat.id == chat_id).update(
+                            {Chat.last_reflected_at_count: reflected_at_count},
+                            synchronize_session=False,
+                        )
+                    db.commit()
+
                 logger.info(
                     f"Consciousness Layer: Reflection complete for character {character_id}"
                 )
@@ -241,6 +261,7 @@ def _sync_state_to_chat(db: Session, state: AgentState, chat_id: Optional[int]):
         chat.current_message_id = state.current_message_id
         chat.active_summary = state.active_summary or ""
         chat.interaction_count = state.interaction_count or 0
+        chat.last_reflected_at_count = state.last_reflected_at_count or 0
         chat.updated_at = datetime.now(timezone.utc)
 
 
@@ -249,6 +270,7 @@ def _load_chat_into_state(state: AgentState, chat: Chat):
     state.current_message_id = chat.current_message_id
     state.active_summary = chat.active_summary or ""
     state.interaction_count = chat.interaction_count or 0
+    state.last_reflected_at_count = chat.last_reflected_at_count or 0
     state.active_chat_id = chat.id
 
 
@@ -372,7 +394,13 @@ async def _prepare_chat_turn(
 
     state.stats = update_needs(state.stats, datetime.now(timezone.utc))
     state.interaction_count += 1
-    force_reflect = state.interaction_count % settings.REFLECTION_INTERVAL == 0
+    # Trigger when at least REFLECTION_INTERVAL turns have passed since the last
+    # SUCCESSFUL reflection (not a bare modulo): a reflection due on a boundary
+    # turn that fails is caught on the next turn instead of skipped forever (RF-04).
+    force_reflect = (
+        state.interaction_count - (state.last_reflected_at_count or 0)
+        >= settings.REFLECTION_INTERVAL
+    )
     # Commit the decay/counter bump now, unconditionally -- a message-less
     # "regenerate" call never reaches the request.message commit below, and
     # this session gets closed (without a commit) once the request ends.
@@ -387,7 +415,10 @@ async def _prepare_chat_turn(
         # attached the way it was before the rollback, which isn't guaranteed.
         db.rollback()
         state = db.query(AgentState).filter(AgentState.id == state.id).first()
-        force_reflect = state.interaction_count % settings.REFLECTION_INTERVAL == 0
+        force_reflect = (
+            state.interaction_count - (state.last_reflected_at_count or 0)
+            >= settings.REFLECTION_INTERVAL
+        )
 
     effective_parent_id = (
         request.parent_id if request.parent_id is not None else state.current_message_id
@@ -898,6 +929,7 @@ async def chat(
                 chat_id=ctx.chat_id,
                 store_memory=not ctx.is_action,
                 message_id=ai_msg.id,
+                reflected_at_count=ctx.state.interaction_count,
             )
 
         latency = (
@@ -1002,6 +1034,7 @@ async def chat_stream(
                         chat_id=ctx.chat_id,
                         store_memory=not ctx.is_action,
                         message_id=ai_msg.id,
+                        reflected_at_count=ctx.state.interaction_count,
                     )
                     # Return full state for reactive HUD
                     updated_state = {

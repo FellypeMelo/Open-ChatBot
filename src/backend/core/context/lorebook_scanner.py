@@ -56,6 +56,8 @@ class LorebookScanner:
         recent_text: str,
         character_id: int,
         history: Optional[List[str]] = None,
+        turn_index: Optional[int] = None,
+        cooldowns: Optional[dict] = None,
     ) -> List[str]:
         """Scan recent conversation for regex keys of the character's (and global)
         lore and return the lore texts to inject.
@@ -64,8 +66,16 @@ class LorebookScanner:
         message contents (most-recent-last). Each entry scans the last
         `entry.scan_depth` of those messages (LB-01 scan_depth). Entries with
         `secondary_keys` require both a primary and a secondary match before
-        firing (LB-01 selective logic)."""
+        firing (LB-01 selective logic).
+
+        When `turn_index` and a mutable `cooldowns` map ({entry_id: last_fired
+        turn}) are supplied, a keyed entry that fired within its `cooldown_turns`
+        window is suppressed, and a fresh fire records the turn -- so the same
+        lore isn't re-injected every turn (LB-01 cooldown). The caller owns and
+        persists `cooldowns`; without it the scanner is stateless as before."""
         from src.backend.db.models import LorebookEntry
+
+        cooldown_enabled = turn_index is not None and cooldowns is not None
 
         entries = (
             self.db.query(LorebookEntry)
@@ -103,7 +113,25 @@ class LorebookScanner:
             if matched and entry.secondary_keys:
                 matched = _any_key_matches(entry.secondary_keys, scan_text)
 
-            if matched and random.randint(1, 100) <= entry.probability:
+            if not matched:
+                continue
+
+            # Cooldown: skip an entry that fired within its cooldown_turns window
+            # so the same lore isn't re-injected every turn (LB-01).
+            entry_id = getattr(entry, "id", None)
+            on_cooldown = (
+                cooldown_enabled
+                and entry_id is not None
+                and (entry.cooldown_turns or 0) > 0
+            )
+            if on_cooldown:
+                last = cooldowns.get(str(entry_id))
+                if last is not None and (turn_index - last) < entry.cooldown_turns:
+                    continue
+
+            if random.randint(1, 100) <= entry.probability:
                 active_lore.append(entry.content)
+                if on_cooldown:
+                    cooldowns[str(entry_id)] = turn_index
 
         return active_lore

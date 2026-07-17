@@ -139,6 +139,8 @@ class Brain:
         history: List[Any] = None,
         db: Session = None,
         chat_id: Any = None,
+        interaction_count: int = 0,
+        lore_cooldowns: Dict[str, Any] = None,
     ) -> str:
         """Assembles the ultra-compact 6-layer prompt for models 1-4B using Token Budgeting."""
         budget = await self.budget_calc.get_budget()
@@ -180,7 +182,11 @@ class Brain:
                 for m in (history or [])
             ]
             active_lore = scanner.scan_and_extract(
-                user_message, character.id, history=hist_texts
+                user_message,
+                character.id,
+                history=hist_texts,
+                turn_index=interaction_count,
+                cooldowns=lore_cooldowns,
             )
             if active_lore:
                 lore_text = "\n".join([f"- {self._sanitize(d)}" for d in active_lore])

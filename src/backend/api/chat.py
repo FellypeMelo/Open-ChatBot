@@ -578,6 +578,10 @@ async def _prepare_chat_turn(
         if last.get("role") == "user" and last.get("content") == user_message_content:
             prompt_history = history[:-1]
 
+    # Per-chat lore cooldown map (B8: lives in this chat's stats). The scanner
+    # reads it to suppress recently-fired lore and records fresh fires into it.
+    lore_cooldowns = dict((state.stats or {}).get("lore_cooldowns") or {})
+
     prompt = await brain.build_prompt(
         user_message_content or "",
         character,
@@ -591,7 +595,14 @@ async def _prepare_chat_turn(
         history=prompt_history,
         db=db,
         chat_id=chat.id,
+        interaction_count=state.interaction_count or 0,
+        lore_cooldowns=lore_cooldowns,
     )
+
+    # Persist cooldown updates recorded during the scan (reassign so the JSON
+    # column change is tracked); saved with this chat's stats on reply-persist.
+    if lore_cooldowns != ((state.stats or {}).get("lore_cooldowns") or {}):
+        state.stats = {**(state.stats or {}), "lore_cooldowns": lore_cooldowns}
 
     config = request.config or LLMConfig()
 

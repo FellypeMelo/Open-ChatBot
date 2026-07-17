@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -73,6 +74,34 @@ def _active_branch_messages(
     return chain
 
 
+# Movement / scene-transition cues. The per-turn scene extractor is an LLM call,
+# but most RP turns are pure dialogue/emotion and don't move the character, so
+# gate the inference behind this cheap regex: location only changes on movement,
+# so skipping the extractor on no-movement turns costs nothing (mood still
+# refreshes on movement turns and on each reflection). Cuts the large majority of
+# the extra per-turn inferences.
+_SCENE_MOVE_RE = re.compile(
+    r"\b(?:go|goes|going|went|head(?:s|ed|ing)?|enter(?:s|ed|ing)?|"
+    r"walk(?:s|ed|ing)?|arriv(?:e|es|ed|ing)|step(?:s|ped|ping)?|"
+    r"exit(?:s|ed|ing)?|leav(?:e|es|ing)|left|mov(?:e|es|ed|ing)|"
+    r"run(?:s|ning)?|ran|rush(?:es|ed|ing)?|climb(?:s|ed|ing)?|"
+    r"descend(?:s|ed|ing)?|ascend(?:s|ed|ing)?|return(?:s|ed|ing)?|"
+    r"wander(?:s|ed|ing)?|stroll(?:s|ed|ing)?|cross(?:es|ed|ing)?|"
+    r"approach(?:es|ed|ing)?|retreat(?:s|ed|ing)?|depart(?:s|ed|ing)?|"
+    r"doorway|hallway|corridor|stair(?:s|way|case)?|elevator|threshold|lobby|"
+    r"makes? (?:his|her|their|its) way)\b",
+    re.IGNORECASE,
+)
+
+
+def _reply_suggests_scene_change(text: str) -> bool:
+    """Cheap gate before the per-turn scene-extractor LLM call: only worth
+    extracting when the narration carries movement/transition language, since a
+    character's location changes only on movement. Skips the inference on the
+    majority of turns that are pure dialogue/emotion."""
+    return bool(text) and bool(_SCENE_MOVE_RE.search(text))
+
+
 async def run_consciousness_layer(
     character_id: int,
     user_message: str,
@@ -136,7 +165,13 @@ async def run_consciousness_layer(
             # pytest (like the llama boot in the lifespan) so the unit suite never
             # makes a real inference call here; the logic is covered directly by
             # test_scene_extractor.
-            if store_memory and ai_response and ai_response.strip() and not settings.TESTING:
+            if (
+                store_memory
+                and ai_response
+                and ai_response.strip()
+                and not settings.TESTING
+                and _reply_suggests_scene_change(ai_response)
+            ):
                 try:
                     # Read the current-scene hint from the SAME source
                     # apply_scene_update will write to (mirror-aware): the live

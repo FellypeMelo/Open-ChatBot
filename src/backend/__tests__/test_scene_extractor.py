@@ -12,6 +12,20 @@ from src.backend.core.engine.engine import apply_scene_update
 from src.backend.db.models import Character, AgentState, Chat
 
 
+def test_scene_gate_runs_only_on_movement():
+    from src.backend.api.chat import _reply_suggests_scene_change
+
+    # movement / transition language -> worth an extraction
+    assert _reply_suggests_scene_change("She walks into the kitchen.")
+    assert _reply_suggests_scene_change("He heads down the corridor toward the exit.")
+    assert _reply_suggests_scene_change("The elevator doors open and she steps out.")
+    assert _reply_suggests_scene_change("She leaves the office, making her way home.")
+    # pure dialogue / emotion -> skip the LLM call (location can't have changed)
+    assert not _reply_suggests_scene_change('"You look tired," she says, smiling softly.')
+    assert not _reply_suggests_scene_change("Elara rubs her temple and lets out a dry laugh.")
+    assert not _reply_suggests_scene_change("")
+
+
 def _brain_with_llm(content):
     llm = MagicMock()
     llm.url = "http://127.0.0.1:8080"

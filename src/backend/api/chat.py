@@ -283,34 +283,51 @@ def _persist_assistant_reply(
     ctx: "ChatTurnContext",
     reply: str,
     request_id: str,
+    _max_retries: int = 2,
 ) -> MessageNode:
     """Persist an assistant reply as the next variant under the turn's parent,
     advance the conversation pointer, and commit. Shared by /chat and /chat/stream
     so the two paths can never diverge. `state` may be None (a stream re-query
     that failed): the message is still saved, only the pointer update is skipped.
-    Callers apply parse_actions_to_state before calling."""
-    variant_count = (
-        db.query(MessageNode)
-        .filter(MessageNode.parent_id == ctx.effective_parent_id)
-        .count()
-    )
-    ai_msg = MessageNode(
-        character_id=ctx.character.id,
-        chat_id=ctx.chat_id,
-        user_id=ctx.user.id,
-        role="assistant",
-        content=reply,
-        parent_id=ctx.effective_parent_id,
-        variant_index=variant_count,
-        request_id=request_id,
-    )
-    db.add(ai_msg)
-    db.flush()
-    if state is not None:
-        state.current_message_id = ai_msg.id
-        _sync_state_to_chat(db, state, ctx.chat_id)
-    db.commit()
-    return ai_msg
+    Callers apply parse_actions_to_state before calling.
+
+    On a StaleDataError -- a concurrent stat PUT or turn advanced this
+    AgentState's version between our read and commit -- re-query fresh state and
+    retry, so a fully generated (already streamed) reply is never silently
+    dropped over routine same-user contention (TF-03)."""
+    state_id = state.id if state is not None else None
+    for attempt in range(_max_retries + 1):
+        variant_count = (
+            db.query(MessageNode)
+            .filter(MessageNode.parent_id == ctx.effective_parent_id)
+            .count()
+        )
+        ai_msg = MessageNode(
+            character_id=ctx.character.id,
+            chat_id=ctx.chat_id,
+            user_id=ctx.user.id,
+            role="assistant",
+            content=reply,
+            parent_id=ctx.effective_parent_id,
+            variant_index=variant_count,
+            request_id=request_id,
+        )
+        db.add(ai_msg)
+        db.flush()
+        if state is not None:
+            state.current_message_id = ai_msg.id
+            _sync_state_to_chat(db, state, ctx.chat_id)
+        try:
+            db.commit()
+            return ai_msg
+        except StaleDataError:
+            db.rollback()  # discards the just-flushed ai_msg INSERT too
+            if attempt >= _max_retries:
+                raise
+            if state_id is not None:
+                state = (
+                    db.query(AgentState).filter(AgentState.id == state_id).first()
+                )
 
 
 def _resolve_active_chat(
@@ -436,14 +453,28 @@ async def _prepare_chat_turn(
             .filter(MessageNode.id == effective_parent_id)
             .first()
         )
-        if parent_node is not None and (
-            parent_node.character_id != character.id
+        # Reject a parent_id that is missing, deactivated (a deleted/superseded
+        # node -- grafting onto it would splice the turn onto a dead branch,
+        # TF-05), or belongs to another character/chat (cross-thread grafting
+        # that would splice a foreign conversation into this prompt). Fall back
+        # to this chat's own current pointer.
+        invalid = (
+            parent_node is None
+            or not parent_node.is_active
+            or parent_node.character_id != character.id
             or (parent_node.chat_id is not None and parent_node.chat_id != chat.id)
-        ):
+        )
+        if invalid:
+            reason = (
+                "missing"
+                if parent_node is None
+                else "inactive"
+                if not parent_node.is_active
+                else f"char {parent_node.character_id}/chat {parent_node.chat_id}"
+            )
             logger.warning(
-                f"[{request_id}] Rejected cross-thread parent_id={effective_parent_id} "
-                f"(char {parent_node.character_id}/chat {parent_node.chat_id}) for "
-                f"char {character.id}/chat {chat.id}; falling back to chat pointer."
+                f"[{request_id}] Rejected parent_id={effective_parent_id} ({reason}) "
+                f"for char {character.id}/chat {chat.id}; falling back to chat pointer."
             )
             effective_parent_id = (
                 state.current_message_id

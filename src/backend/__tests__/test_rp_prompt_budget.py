@@ -17,13 +17,14 @@ from src.backend.core.context.budget import ContextBudgetCalculator
 
 _ALLOCATIONS = {
     "system_prompt": 200,
-    "character_def": 300,
+    "character_def": 1600,
     "user_persona": 100,
     "lorebook_cap": 500,
     "chat_summary": 200,
     "dynamic_state": 60,
+    "anchor": 250,
     "memory": 400,
-    "mes_example": 300,
+    "mes_example": 1000,
 }
 
 
@@ -106,15 +107,21 @@ def test_newest_turn_force_kept_when_over_budget():
     assert "AAAA" in prompt, "newest turn was dropped entirely under a tiny budget"
 
 
-# --- TS-PA-04: mes_example is capped, not injected verbatim -------------------
+# --- TS-PA-04: mes_example is capped at the safety ceiling, not verbatim ------
 
 def test_mes_example_is_capped():
+    # The tight 300-tok cap is gone (few-shot examples are the strongest voice
+    # lever), but a pathological example dialog is still bounded by the per-field
+    # safety ceiling (settings.CARD_MAX_TOKENS) so it can't blow past context.
+    from src.backend.core.config import settings
+
     brain = _brain(history_budget=2048)
-    char = _char(mes_example="X" * 8000)
+    huge = 40000  # well past CARD_MAX_TOKENS*4 chars
+    char = _char(mes_example="X" * huge)
     prompt = _build(brain, character=char)
     xrun = prompt.count("X")
-    assert xrun < 8000, "mes_example injected uncapped (all 8000 chars present)"
-    assert xrun <= 1300, "mes_example not bounded to its allocation"
+    assert xrun < huge, "mes_example injected uncapped (all chars present)"
+    assert xrun <= settings.CARD_MAX_TOKENS * 4 + 100, "not bounded to CARD_MAX ceiling"
 
 
 # --- TS-PA-05: persona free-text cannot forge a second Reply: boundary --------
@@ -150,18 +157,44 @@ def test_budget_picks_up_context_size_and_reserves_history():
 
 
 def test_oversized_card_fields_are_capped():
-    # PB-01: a pathologically long persona/scenario/description must be
-    # length-capped so it can't push the master prompt / history off the top.
+    # PB-01 safety kept: a pathologically long persona/scenario/description must
+    # still be bounded (at the generous CARD_MAX ceiling now, not 300) so it
+    # can't push the master prompt / history off the top.
+    from src.backend.core.config import settings
+
     brain = _brain(2048)
+    huge = 40000  # past CARD_MAX_TOKENS*4 chars
     char = _char(
-        persona_prompt="P" * 8000,
-        scenario="S" * 8000,
-        short_description="D" * 8000,
+        persona_prompt="P" * huge,
+        scenario="S" * huge,
+        short_description="D" * huge,
     )
     prompt = _build(brain, character=char)
 
-    # character_def cap is 300 tokens (~1200 chars); the full 8000-char blobs
-    # must not survive at length.
-    assert "P" * 2000 not in prompt
-    assert "S" * 2000 not in prompt
-    assert "D" * 2000 not in prompt
+    ceiling = settings.CARD_MAX_TOKENS * 4 + 100
+    assert prompt.count("P") < huge and prompt.count("P") <= ceiling
+    assert prompt.count("S") < huge and prompt.count("S") <= ceiling
+    assert prompt.count("D") < huge and prompt.count("D") <= ceiling
+
+
+def test_normal_card_survives_whole_not_truncated_at_300():
+    # A rich but normal-sized persona (~1400 tok) must reach the prompt intact --
+    # the old 300-tok cap chopped it to ~225 words and was a top cause of
+    # "the character reads generic".
+    brain = _brain(history_budget=8000)
+    persona = "Elara is a sardonic archivist who hoards secrets. " * 100  # ~1250 tok
+    char = _char(persona_prompt=persona, short_description="", description="")
+    prompt = _build(brain, character=char)
+    assert persona.strip() in prompt
+    assert "[…]" not in prompt  # nothing was truncated
+
+
+def test_card_truncation_cuts_at_sentence_boundary():
+    # When the safety ceiling IS hit, the cut lands on a sentence boundary, not
+    # mid-word, so a truncated persona ends on a complete thought.
+    brain = _brain(history_budget=2048)
+    persona = "This is one sentence of the persona. " * 5000  # far past CARD_MAX
+    char = _char(persona_prompt=persona, short_description="", description="")
+    prompt = _build(brain, character=char)
+    assert "[…]" in prompt
+    assert ". […]" in prompt  # ended on a full sentence, not a chopped word

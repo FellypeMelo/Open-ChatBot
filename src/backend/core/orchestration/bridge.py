@@ -9,6 +9,7 @@ from src.backend.db.models import Tag
 from langchain_core.prompts import PromptTemplate
 from src.backend.core.context.compressor import COMPRESSED_MASTER_PROMPT, compress_state
 from src.backend.core.context.budget import ContextBudgetCalculator
+from src.backend.core.config import settings
 from src.backend.core.context.macros import render_macros
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,33 @@ class Brain:
         if from_end:
             return "[…] " + text[-max_chars:].lstrip()
         return text[:max_chars].rstrip() + " […]"
+
+    @staticmethod
+    def _truncate_at_sentence(text: Any, max_tokens: int) -> str:
+        """Cap a free-text card field to ~max_tokens, but cut at the last
+        sentence boundary inside the window instead of mid-word, so a truncated
+        persona still ends on a complete thought. Falls back to a hard char cut
+        only when no sentence break sits in the back half of the window. Used for
+        the card layers (persona/scenario/description/examples), whose HARD
+        ceiling is settings.CARD_MAX_TOKENS -- generous, so a normal card is
+        never touched; the cut only fires on a pathologically long field."""
+        if not text:
+            return ""
+        text = str(text)
+        max_chars = max(0, int(max_tokens) * 4)
+        if len(text) <= max_chars:
+            return text
+        window = text[:max_chars]
+        cut = max(
+            window.rfind(". "),
+            window.rfind("! "),
+            window.rfind("? "),
+            window.rfind(".\n"),
+            window.rfind("\n"),
+        )
+        if cut > max_chars // 2:
+            return window[: cut + 1].rstrip() + " […]"
+        return window.rstrip() + " […]"
 
     async def build_prompt(
         self,
@@ -290,12 +318,14 @@ class Brain:
             )
             if clean_summary:
                 summary_context = f"\nSummary:\n{clean_summary}\n"
-        # Cap each free-text card field so one pathologically long field can't
-        # blow past context_size and push history/master prompt off the top
-        # (PB-01). Each is bounded by the character_def allocation.
-        _card_cap = allocations.get("character_def", 300)
+        # Cap each free-text card field only at the generous per-field safety
+        # ceiling (settings.CARD_MAX_TOKENS) so a normal rich card survives whole
+        # -- the old 300-token guillotine chopped real personas to ~225 words and
+        # was a top cause of "the character reads generic". Cut at a sentence
+        # boundary, not mid-word, if the ceiling is ever hit (PB-01 safety kept).
+        _card_cap = settings.CARD_MAX_TOKENS
         short_desc = getattr(character, "short_description", None) or getattr(character, "description", None) or ""
-        short_desc = self._truncate_tokens(
+        short_desc = self._truncate_at_sentence(
             self._sanitize(render_macros(short_desc, char_name, user_name), _names),
             _card_cap,
         )
@@ -307,7 +337,7 @@ class Brain:
 
         persona_str = ""
         if character and getattr(character, "persona_prompt", None):
-            persona = self._truncate_tokens(
+            persona = self._truncate_at_sentence(
                 self._sanitize(render_macros(character.persona_prompt, char_name, user_name), _names),
                 _card_cap,
             )
@@ -315,7 +345,7 @@ class Brain:
 
         scenario_str = ""
         if character and getattr(character, "scenario", None):
-            scenario = self._truncate_tokens(
+            scenario = self._truncate_at_sentence(
                 self._sanitize(render_macros(character.scenario, char_name, user_name), _names),
                 _card_cap,
             )
@@ -327,9 +357,9 @@ class Brain:
             # "{{user}}:") are the intended format, and it's authored at the same
             # trust level as the rest of the card -- so resolve macros and cap
             # its length, but do NOT sanitize role markers out of it.
-            example = self._truncate_tokens(
+            example = self._truncate_at_sentence(
                 render_macros(character.mes_example, char_name, user_name),
-                allocations.get("mes_example", 300),
+                settings.CARD_MAX_TOKENS,
             )
             example_dialogs_str = f"Example Dialogs:\n{example}\n\n"
 

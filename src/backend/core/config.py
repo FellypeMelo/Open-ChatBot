@@ -72,6 +72,24 @@ class Settings(BaseSettings):
     RESPONSE_SLOT: int = 1024
     TOKEN_PADDING: int = 128
 
+    # Card sizing. Free-text card fields (persona/scenario/description/examples)
+    # are NOT hard-capped at a tiny 300 tokens anymore -- a rich persona is the
+    # single biggest lever for a small model's characterization, and starving it
+    # to ~225 words is why a detailed card read generic. CARD_MAX_TOKENS is a
+    # per-field safety ceiling so a pathological card still can't push the master
+    # prompt off the top; RECOMMENDED_CARD_TOKENS is a soft UI hint only (the
+    # user is free to exceed it).
+    CARD_MAX_TOKENS: int = 8000
+    RECOMMENDED_CARD_TOKENS: int = 4096
+    # Recency anchor (persona voice + current scene, re-injected right before the
+    # reply so a small model never loses who it is) token reserve.
+    ANCHOR_TOKENS: int = 250
+    # Effective raw-history window, kept deliberately small even on a large
+    # context: a 4B attends poorly to the middle of a huge window, so persona +
+    # anchor must stay salient. Turns older than this are folded into the rolling
+    # summary (Phase 4 compaction) rather than dumped raw.
+    HISTORY_WINDOW_TOKENS: int = 10000
+
     # How often (in turns) the background consciousness layer reflects+evolves.
     # Single source for what used to be a bare `20` at ~5 sites.
     REFLECTION_INTERVAL: int = 20

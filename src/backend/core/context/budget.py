@@ -48,19 +48,29 @@ class ContextBudgetCalculator:
         # (PB-04).
         self.allocations = {
             "system_prompt": 200,
-            "character_def": 300,
+            # Realistic reserve for the card block (identity + persona + scenario)
+            # of a typical filled card. The per-field HARD ceiling is
+            # settings.CARD_MAX_TOKENS (enforced in build_prompt); this value is
+            # only the budget-accounting reserve. A card larger than this eats
+            # into history_budget rather than overflowing the window -- fine on a
+            # large context, and honest instead of the old 300 that under-counted
+            # a real card by ~600-1200 tok.
+            "character_def": 1600,
             "user_persona": 100,
             "lorebook_cap": 500,
             "chat_summary": 200,
             "dynamic_state": 60,
+            # Recency anchor (persona voice + current scene) reserved so
+            # fixed_cost reflects the layer build_prompt actually emits.
+            "anchor": settings.ANCHOR_TOKENS,
             # RAG memory layer: build_prompt caps it at allocations["memory"],
             # but it was missing here, so fixed_cost under-counted by ~400 tok and
             # history_budget was over-allocated -> risk of overflowing context.
             "memory": 400,
-            # mes_example was previously unbudgeted -> a large example-dialog card
-            # blew past context_size and llama truncated the master prompt off the
-            # top. Give it an explicit cap so build_prompt can enforce it.
-            "mes_example": 300,
+            # Few-shot example dialogue is the strongest voice lever on a small
+            # model; reserve a realistic slice (the hard per-field ceiling is
+            # still settings.CARD_MAX_TOKENS in build_prompt).
+            "mes_example": 1000,
         }
 
     async def count_tokens(self, text: str) -> int:

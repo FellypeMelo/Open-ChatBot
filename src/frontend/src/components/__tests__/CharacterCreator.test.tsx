@@ -69,6 +69,21 @@ describe('CharacterCreator', () => {
     });
   });
 
+  it('re-enables the submit button when onCreate rejects', async () => {
+    const failingCreate = vi.fn().mockRejectedValue(new Error('save failed'));
+    render(<CharacterCreator {...defaultProps} onCreate={failingCreate} />);
+
+    fireEvent.change(screen.getByLabelText('Title / Name *'), { target: { value: 'Elara' } });
+    fireEvent.change(screen.getByLabelText('Bio *'), { target: { value: 'A brave scholar' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Initialize' }));
+
+    await waitFor(() => expect(failingCreate).toHaveBeenCalled());
+    // The button must return to its idle label, not stay stuck on "Saving...".
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Initialize' })).not.toBeDisabled()
+    );
+  });
+
   it('should toggle tags correctly when clicked multiple times', async () => {
     render(<CharacterCreator {...defaultProps} />);
 

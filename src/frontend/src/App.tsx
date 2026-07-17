@@ -11,7 +11,7 @@ import TagCreator from './components/TagCreator'
 import ErrorBoundary from './components/ErrorBoundary'
 import * as api from './services/api'
 import type { MessageNode } from './hooks/useMessageTree'
-import type { Character, CharacterInput, Tag, User } from './services/api'
+import type { Character, CharacterInput, CharacterState, Tag, User } from './services/api'
 import type { CharacterFormData } from './components/CharacterCreator'
 import { useSettings } from './hooks/useSettings'
 
@@ -369,51 +369,71 @@ function App() {
 
     if (!reader) throw new Error('Reader unavailable')
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    // Apply one parsed SSE payload. Kept local so it closes over fullContent.
+    const applyEvent = async (data: {
+      token?: string
+      done?: boolean
+      state?: CharacterState
+      request_id?: string
+    }) => {
+      if (data.token) {
+        fullContent += data.token
+        setMessages(prev => {
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last && last.role === 'assistant') {
+            last.content = fullContent
+          }
+          return next
+        })
+      }
+      if (data.done) {
+        if (data.state) {
+          setCharacters(prev => prev.map(c =>
+            c.id === selectedCharId ? { ...c, state: data.state as CharacterState } : c
+          ))
+        }
+        if (data.request_id) {
+          setMessages(prev => {
+            const next = [...prev]
+            const last = next[next.length - 1]
+            if (last && last.role === 'assistant') {
+              last.request_id = data.request_id
+            }
+            return next
+          })
+        }
+        if (selectedCharId) await fetchHistory(selectedCharId, activeChatId ?? undefined)
+      }
+    }
 
-      const chunk = decoder.decode(value, { stream: true })
-      const lines = chunk.split('\n')
-
-      for (const line of lines) {
+    // Parse whole `data: ...` lines out of `buffer`, leaving any partial trailing
+    // line in place so a frame split across reads is reassembled, not dropped.
+    const drainBuffer = async (buffer: string): Promise<string> => {
+      let newlineIndex: number
+      while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newlineIndex)
+        buffer = buffer.slice(newlineIndex + 1)
         if (!line.startsWith('data: ')) continue
         try {
-          const data = JSON.parse(line.slice(6))
-          if (data.token) {
-            fullContent += data.token
-            setMessages(prev => {
-              const next = [...prev]
-              const last = next[next.length - 1]
-              if (last && last.role === 'assistant') {
-                last.content = fullContent
-              }
-              return next
-            })
-          }
-          if (data.done) {
-            if (data.state) {
-              setCharacters(prev => prev.map(c => 
-                c.id === selectedCharId ? { ...c, state: data.state } : c
-              ))
-            }
-            if (data.request_id) {
-              setMessages(prev => {
-                const next = [...prev]
-                const last = next[next.length - 1]
-                if (last && last.role === 'assistant') {
-                  last.request_id = data.request_id
-                }
-                return next
-              })
-            }
-            if (selectedCharId) await fetchHistory(selectedCharId, activeChatId ?? undefined)
-          }
+          await applyEvent(JSON.parse(line.slice(6)))
         } catch (e) {
           console.error('SSE Error', e)
         }
       }
+      return buffer
     }
+
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      buffer = await drainBuffer(buffer)
+    }
+    // Flush a trailing frame that arrived without a closing newline.
+    await drainBuffer(buffer + '\n')
+
     fetchCharacters() // Refresh stats
   }
 

@@ -714,6 +714,37 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByTitle('Copy Request ID')).toBeInTheDocument())
   })
 
+  it('reassembles a data frame split across two stream chunks', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // The token frame is deliberately split mid-JSON across two reads.
+        return streamResponse([
+          'data: {"token": "Split ',
+          'works"}\n\n',
+          'data: {"done": true}\n\n'
+        ])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    await waitFor(() => expect(screen.queryByText(/Split works/)).not.toBeNull())
+  })
+
   it('regenerates an assistant response', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)

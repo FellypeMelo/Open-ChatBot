@@ -983,6 +983,42 @@ def test_clear_chat_history_resets_all_agent_state_defaults(client, db_session):
     }
 
 
+def test_clear_chat_history_reseeds_opening_greeting(client, db_session):
+    """Clearing a character (the 'nuke everything' path) must leave it showing
+    its opening greeting again, not a blank session. The lazy-create path only
+    ADOPTS existing history and never seeds a greeting, so without a re-seed a
+    clear strands the character with no first message."""
+    char = Character(
+        id=515,
+        name="GreetChar",
+        description="Desc",
+        first_mes="Hello there, fellow traveler.",
+    )
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=515)
+    db_session.add(state)
+    db_session.commit()
+
+    resp = client.post(f"/chat/clear/{char.id}")
+    assert resp.status_code == 200
+
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 515).first()
+    )
+    assert refreshed.current_message_id is not None, "clear left no opening message"
+    assert refreshed.active_chat_id is not None, "clear left no active chat"
+    greeting = (
+        db_session.query(MessageNode)
+        .filter(MessageNode.id == refreshed.current_message_id)
+        .first()
+    )
+    assert greeting is not None
+    assert greeting.role == "assistant"
+    assert "Hello there, fellow traveler." in greeting.content
+    assert greeting.chat_id == refreshed.active_chat_id
+
+
 # ---------------------------------------------------------------------------
 # PUT/DELETE /chat/message/{id}
 # ---------------------------------------------------------------------------

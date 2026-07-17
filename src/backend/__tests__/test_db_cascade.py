@@ -158,14 +158,20 @@ def test_clear_chat_history_path_is_fk_safe(fk_session):
     fake_vs = MagicMock()
     fake_vs.clear_character_memories = AsyncMock(return_value=0)
     with patch.object(chatmod, "vector_store", fake_vs):
+        # Must complete without an IntegrityError under FK enforcement, both for
+        # the bulk delete AND the subsequent greeting re-seed.
         asyncio.run(chatmod.clear_chat_history(char.id, db=db))
 
+    # The old scenario's messages/journals are gone; this character has no
+    # first_mes, so the re-seed creates a fresh chat but no greeting message.
     assert db.query(m.MessageNode).filter(m.MessageNode.character_id == char.id).count() == 0
-    assert db.query(m.Chat).filter(m.Chat.character_id == char.id).count() == 0
     assert db.query(m.JournalEntry).filter(m.JournalEntry.character_id == char.id).count() == 0
+    # Clear now re-seeds one fresh chat and points the live state at it (a
+    # cleared character is never left session-less).
+    assert db.query(m.Chat).filter(m.Chat.character_id == char.id).count() == 1
     db.refresh(state)
-    assert state.current_message_id is None
-    assert state.active_chat_id is None
+    assert state.current_message_id is None  # no first_mes -> no greeting node
+    assert state.active_chat_id is not None
 
 
 def test_delete_character_path_is_fk_safe(fk_session):

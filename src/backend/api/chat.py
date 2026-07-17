@@ -1008,6 +1008,19 @@ async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
         # future prompts (context poisoning).
         await vector_store.clear_character_memories(character_id)
 
+        # Re-seed a fresh first chat with the opening greeting, so a cleared
+        # character shows its intro again instead of a blank session. The
+        # lazy-create path (_resolve_active_chat) only ADOPTS existing history
+        # and never seeds a greeting, so without this a clear strands the
+        # character with no first message.
+        character = (
+            db.query(Character).filter(Character.id == character_id).first()
+        )
+        if character and state:
+            user = User.get_or_create_active(db)
+            seed_initial_chat(db, character, user, state)
+            db.commit()
+
         return {"status": "success", "message": "Chat history cleared successfully."}
     except Exception as e:
         db.rollback()

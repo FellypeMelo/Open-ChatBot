@@ -155,7 +155,13 @@ def test_clear_chat_history_keeps_stats_able_to_decay():
 
 def _lore_entry(**kw):
     base = dict(
-        is_constant=False, keys=[], keyword="", probability=100, content="LORE"
+        is_constant=False,
+        keys=[],
+        secondary_keys=[],
+        keyword="",
+        probability=100,
+        scan_depth=5,
+        content="LORE",
     )
     base.update(kw)
     return types.SimpleNamespace(**base)
@@ -196,3 +202,34 @@ def test_lorebook_explicit_regex_key_is_honored_as_authored():
     # pattern and must be used verbatim (no word-boundary wrapping).
     scanner = _scanner_with([_lore_entry(keys=["drag.n"], content="DRAGON")])
     assert scanner.scan_and_extract("i saw a dragon", 1) == ["DRAGON"]
+
+
+def test_lorebook_scan_depth_scans_recent_history():
+    # LB-01 scan_depth: an entry with depth 3 fires on a key that appeared two
+    # turns ago (within the window), not only in the current message.
+    scanner = _scanner_with([_lore_entry(keys=["castle"], scan_depth=3, content="CASTLE")])
+    # Window = last 3 of [history..., current]: castle sits inside it.
+    history = ["long ago", "we rode to the castle", "then it rained"]
+    out = scanner.scan_and_extract("good night", 1, history=history)
+    assert out == ["CASTLE"]
+
+
+def test_lorebook_scan_depth_excludes_older_messages():
+    # A key older than the scan_depth window must NOT fire.
+    scanner = _scanner_with([_lore_entry(keys=["castle"], scan_depth=2, content="CASTLE")])
+    history = ["we rode to the castle", "then it rained", "we made camp"]
+    # Window = last 2 of [history..., current] -> "we made camp","good night".
+    out = scanner.scan_and_extract("good night", 1, history=history)
+    assert out == []
+
+
+def test_lorebook_secondary_keys_require_both_to_match():
+    # LB-01 selective logic: entry fires only when a primary AND a secondary key
+    # both match the scan window.
+    scanner = _scanner_with(
+        [_lore_entry(keys=["king"], secondary_keys=["betrayal"], content="PLOT")]
+    )
+    # Primary only -> no fire.
+    assert scanner.scan_and_extract("long live the king", 1) == []
+    # Primary + secondary -> fire.
+    assert scanner.scan_and_extract("the king spoke of betrayal", 1) == ["PLOT"]

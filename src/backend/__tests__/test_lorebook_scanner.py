@@ -239,14 +239,9 @@ def test_multiple_keys_matches_on_later_key(db_session):
     assert result == [entry.content]
 
 
-def test_secondary_keys_currently_have_no_effect(db_session):
-    """Documents current (likely unintended) behavior: LorebookEntry.secondary_keys
-    is defined on the model but scan_and_extract() never reads it anywhere. An
-    entry configured with a secondary key that is absent from the scanned text
-    still fires purely off the primary `keys` match. If AND-gating on
-    secondary keys is ever implemented, this test should be updated to assert
-    the new (gated) behavior.
-    """
+def test_secondary_keys_and_gate_the_entry(db_session):
+    """LB-01 selective logic: when an entry has secondary_keys, it fires only if
+    a primary AND a secondary key both match the scanned text."""
     entry = _make_entry(
         db_session,
         keys=["potion"],
@@ -256,10 +251,13 @@ def test_secondary_keys_currently_have_no_effect(db_session):
     )
     scanner = LorebookScanner(db_session)
 
-    # "healing" (the secondary key) is intentionally absent from the text.
-    result = scanner.scan_and_extract("I drink a potion.", character_id=1)
+    # Primary only ("healing" secondary absent) -> gated out.
+    assert scanner.scan_and_extract("I drink a potion.", character_id=1) == []
 
-    assert result == [entry.content]
+    # Primary + secondary both present -> fires.
+    assert scanner.scan_and_extract(
+        "I drink a healing potion.", character_id=1
+    ) == [entry.content]
 
 
 def test_cooldown_turns_currently_have_no_effect(db_session):

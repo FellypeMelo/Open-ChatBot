@@ -170,7 +170,18 @@ class Brain:
             from src.backend.core.context.lorebook_scanner import LorebookScanner
 
             scanner = LorebookScanner(db)
-            active_lore = scanner.scan_and_extract(user_message, character.id)
+            hist_texts = [
+                (
+                    m.get("content")
+                    if isinstance(m, dict)
+                    else getattr(m, "content", "")
+                )
+                or ""
+                for m in (history or [])
+            ]
+            active_lore = scanner.scan_and_extract(
+                user_message, character.id, history=hist_texts
+            )
             if active_lore:
                 lore_text = "\n".join([f"- {self._sanitize(d)}" for d in active_lore])
                 lore_text = self._truncate_tokens(

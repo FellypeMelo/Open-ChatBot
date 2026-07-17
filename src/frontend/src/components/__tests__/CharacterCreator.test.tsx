@@ -97,6 +97,28 @@ describe('CharacterCreator', () => {
     expect(screen.getByRole('checkbox')).not.toBeChecked();
   });
 
+  it('edits Definition-tab fields and switches to the Preview tab', () => {
+    render(<CharacterCreator {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Definition' }));
+
+    fireEvent.change(screen.getByLabelText('Personality *'), { target: { value: 'A sly rogue.' } });
+    fireEvent.change(screen.getByLabelText('Scenario'), { target: { value: 'A dark tavern.' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(screen.getAllByText('Personality').length).toBeGreaterThan(0);
+  });
+
+  it('warns when the permanent card exceeds the recommended token ceiling', () => {
+    render(<CharacterCreator {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Definition' }));
+
+    // ~5000 words -> well past the 4096-token soft ceiling (offline estimate).
+    fireEvent.change(screen.getByLabelText('Personality *'), {
+      target: { value: 'word '.repeat(5000) },
+    });
+    expect(screen.getByText(/above the recommended/i)).toBeInTheDocument();
+  });
+
   it('re-enables the submit button when onCreate rejects', async () => {
     const failingCreate = vi.fn().mockRejectedValue(new Error('save failed'));
     render(<CharacterCreator {...defaultProps} onCreate={failingCreate} />);

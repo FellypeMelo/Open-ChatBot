@@ -1090,6 +1090,29 @@ def deactivate_subtree(node_id: int, db: Session) -> List[int]:
     return deactivated
 
 
+def _set_branch_pointer(
+    db: Session,
+    state: Optional[AgentState],
+    target_chat_id: Optional[int],
+    new_pointer: Optional[int],
+):
+    """Repoint the resume pointer of the chat that OWNS the edited/deleted node.
+
+    If that chat is the live/active one (or the node is a legacy NULL-chat node
+    adopted into it), update the AgentState mirror. Otherwise update the owning
+    Chat row directly -- writing the live AgentState for a node in a background
+    chat would silently move the foreground chat's resume pointer to another
+    chat's message (TF-02)."""
+    if state is not None and (
+        target_chat_id is None or state.active_chat_id == target_chat_id
+    ):
+        state.current_message_id = new_pointer
+    elif target_chat_id is not None:
+        db.query(Chat).filter(Chat.id == target_chat_id).update(
+            {Chat.current_message_id: new_pointer}, synchronize_session=False
+        )
+
+
 @router.put("/chat/message/{message_id}")
 async def edit_message(
     message_id: int, req: MessageEditRequest, db: Session = Depends(get_db)
@@ -1118,14 +1141,15 @@ async def edit_message(
         )
         purge_ids = deactivate_subtree(msg.id, db)
 
-        # Update current_message_id to the edited message so tree can resume from here
+        # Resume the OWNING chat from the edited message. Target that chat
+        # specifically so an edit in a background chat never repoints the
+        # active chat's live pointer (TF-02).
         state = (
             db.query(AgentState)
             .filter(AgentState.character_id == msg.character_id)
             .first()
         )
-        if state:
-            state.current_message_id = msg.id
+        _set_branch_pointer(db, state, msg.chat_id, msg.id)
     elif msg.role == "assistant":
         # The edited reply's stored memory holds the OLD AI text; drop it so the
         # pre-edit content can't resurface via RAG (its metadata is keyed on this
@@ -1152,12 +1176,22 @@ async def delete_message(message_id: int, db: Session = Depends(get_db)):
     msg.is_active = False
     deactivated = [msg.id] + deactivate_subtree(msg.id, db)
 
-    # Update current_message_id to parent if this was the current message
+    # If the deleted node was the resume pointer of its OWNING chat, move that
+    # pointer to the parent. Target the right chat: a delete in a background chat
+    # must repoint THAT chat (not the live AgentState, which mirrors the active
+    # chat) so neither is left dangling at a deactivated node (TF-02).
     state = (
         db.query(AgentState).filter(AgentState.character_id == msg.character_id).first()
     )
-    if state and state.current_message_id == msg.id:
-        state.current_message_id = msg.parent_id
+    if state is not None and (
+        msg.chat_id is None or state.active_chat_id == msg.chat_id
+    ):
+        if state.current_message_id == msg.id:
+            state.current_message_id = msg.parent_id
+    elif msg.chat_id is not None:
+        owning = db.query(Chat).filter(Chat.id == msg.chat_id).first()
+        if owning and owning.current_message_id == msg.id:
+            owning.current_message_id = msg.parent_id
 
     db.commit()
     # Purge the deleted turn's (and its subtree's) vector memories (PZ-01).

@@ -121,6 +121,14 @@ class ContextBudgetCalculator:
             history_budget = min_history
         history_budget = max(0, min(history_budget, self.usable_budget))
 
+        # Cap the effective raw-history window even when the context is huge: a
+        # 4B attends poorly to the middle of a giant window, so feeding it ~40k of
+        # raw turns buries the persona/anchor. Bound it; turns older than the
+        # window are carried by the rolling summary + RAG, not dumped raw (EPIC
+        # Phase 4). On a small context this is a no-op (history is already below
+        # the window).
+        history_budget = min(history_budget, settings.HISTORY_WINDOW_TOKENS)
+
         return {
             "total_context": self.context_size,
             "response_slot": self.response_slot,

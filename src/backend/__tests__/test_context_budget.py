@@ -69,6 +69,15 @@ async def test_get_budget_shape_and_history_budget():
     assert budget["history_budget"] == max(0, calc.usable_budget - fixed_cost)
 
 
+@pytest.mark.asyncio
+async def test_history_budget_capped_at_window_on_large_context():
+    # EPIC Phase 4: with ~40k of room at 48k context, raw history is bounded to
+    # the effective window so a 4B doesn't drown in the middle.
+    calc = ContextBudgetCalculator(context_size=49152)
+    budget = await calc.get_budget()
+    assert budget["history_budget"] == settings.HISTORY_WINDOW_TOKENS
+
+
 def test_allocations_reserve_anchor_and_realistic_card():
     """Phase 0: the card reserve is no longer the tiny 300 (which under-counted a
     real card), and the recency anchor is reserved so fixed_cost matches what

@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 from src.backend.core.deps import llama_client as llama, vector_store, brain
 from src.backend.core.orchestration.validator import validate_narrative_formatting
 from src.backend.core.context.macros import render_macros
-from src.backend.core.engine.engine import update_needs, evolve_character
+from src.backend.core.engine.engine import update_needs, evolve_character, apply_scene_update
 from src.backend.core.engine.state_transitions import (
     ACTIONS_CONFIG,
     apply_action_stats,
@@ -126,6 +126,29 @@ async def run_consciousness_layer(
                     f"User: {user_message}\nAI: {ai_response}",
                     metadata=memory_meta,
                 )
+
+            # 1.5 Per-turn scene tracking (EPIC Phase 2): read the latest
+            # narration and update the character's CURRENT location/mood, so the
+            # HUD + recency anchor follow the scene continuously instead of only
+            # on the 20-turn reflection (why a move like 'takes the elevator
+            # down' never updated the location before). Cheap + decoupled;
+            # failures are non-fatal (the turn already succeeded). Skipped under
+            # pytest (like the llama boot in the lifespan) so the unit suite never
+            # makes a real inference call here; the logic is covered directly by
+            # test_scene_extractor.
+            if store_memory and ai_response and ai_response.strip() and not settings.TESTING:
+                try:
+                    _agent = (
+                        db.query(AgentState)
+                        .filter(AgentState.character_id == character_id)
+                        .first()
+                    )
+                    cur_loc = (_agent.location if _agent else None) or "Unknown"
+                    cur_mood = (_agent.mood if _agent else None) or "Neutral"
+                    scene = await brain.extract_scene(ai_response, cur_loc, cur_mood)
+                    apply_scene_update(db, character_id, scene, active_chat_id=chat_id)
+                except Exception as e:
+                    logger.warning(f"Scene extraction skipped: {e}")
 
             # 2. Reflect & Evolve (only on interval or force). Reflect over the
             # ACTIVE branch from the selected leaf so discarded edit/delete

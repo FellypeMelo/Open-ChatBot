@@ -471,6 +471,57 @@ def evolve_character(
             return
 
 
+def apply_scene_update(
+    db: Session,
+    character_id: int,
+    scene: dict,
+    active_chat_id: Optional[int] = None,
+    _max_retries: int = 2,
+) -> None:
+    """Apply a per-turn scene extraction (location/mood only) to the character's
+    state, mirror-aware exactly like evolve_character: to the live agent while it
+    still mirrors the reflecting chat, else to the background chat's own snapshot
+    (so a chat switch during the background task never bleeds a scene across
+    storylines). Far lighter than a full reflection -- it runs every turn so the
+    HUD and recency anchor track the scene continuously (EPIC Phase 2)."""
+    if not isinstance(scene, dict) or not (scene.get("location") or scene.get("mood")):
+        return
+    for attempt in range(_max_retries + 1):
+        agent = (
+            db.query(AgentState)
+            .filter(AgentState.character_id == character_id)
+            .with_for_update()
+            .first()
+        )
+        if not agent:
+            return
+        try:
+            on_active = (
+                active_chat_id is None or agent.active_chat_id == active_chat_id
+            )
+            if on_active:
+                _apply_reflection_scene(agent, scene)
+                db.add(agent)
+            else:
+                chat = db.query(Chat).filter(Chat.id == active_chat_id).first()
+                if chat is not None:
+                    _apply_reflection_scene(chat, scene)
+            db.commit()
+            return
+        except StaleDataError:
+            db.rollback()
+            if attempt >= _max_retries:
+                logger.error(
+                    f"Scene update failed after {_max_retries} retries for "
+                    f"character {character_id}"
+                )
+                return
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Scene update failed: {e}")
+            return
+
+
 def should_be_sleeping(stats: Dict[str, Any], current_time: datetime) -> bool:
     """Returns True if energy < 20 OR it's between 11 PM and 6 AM."""
     energy = stats.get("energy", 100)

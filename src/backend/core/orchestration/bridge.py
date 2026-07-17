@@ -22,6 +22,14 @@ number ::= "-"? [0-9]+
 space ::= [ \t\n\r]*
 """
 
+# Tiny grammar for the cheap per-turn scene tracker (EPIC Phase 2): just the
+# current location + mood, so it stays far lighter than a full reflection.
+SCENE_GRAMMAR = r"""
+root ::= "{" space "\"location\"" ":" space string "," space "\"mood\"" ":" space string space "}"
+string ::= "\"" ([^"\\] | "\\" ["\\/bfnrt] | "\\u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])* "\""
+space ::= [ \t\n\r]*
+"""
+
 # The ultra-compact Prompt Template (Plain Text, no redundant markdown headers)
 ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
     "{master_prompt}\n\n"
@@ -471,6 +479,31 @@ class Brain:
 
         result = await self.llm.complete(prompt, grammar=REFLECTION_GRAMMAR)
         return self._safe_json_parse(result.get("content", "{}"))
+
+    async def extract_scene(
+        self,
+        reply_text: str,
+        current_location: str = "Unknown",
+        current_mood: str = "Neutral",
+    ) -> Dict:
+        """Cheap per-turn scene tracker (EPIC Phase 2): read the latest narration
+        and report the character's CURRENT location + mood at the end of it, so
+        the HUD and recency anchor follow the scene EVERY turn instead of only on
+        the 20-turn reflection (the reason a move like 'takes the elevator down'
+        never updated the location). Short prompt (just the reply), grammar-
+        constrained, decoupled from reflect()."""
+        if not reply_text or not str(reply_text).strip():
+            return {}
+        prompt = (
+            "From this narration, output the character's CURRENT location (a short "
+            "place name, e.g. 'Kitchen', 'Elevator', 'Lobby') and current mood "
+            "(one or two words) as they are at the END of it. If the scene did not "
+            f"move, repeat the current values. Current location: {current_location}. "
+            f"Current mood: {current_mood}. JSON ONLY.\n\nNarration:\n{reply_text}\n\nJSON:"
+        )
+        result = await self.llm.complete(prompt, grammar=SCENE_GRAMMAR)
+        data = self._safe_json_parse(result.get("content", "{}"))
+        return data if isinstance(data, dict) else {}
 
     async def suggest_tags(self, description: str, db: Session) -> List[int]:
         """Suggests appropriate personality tag IDs based on description."""

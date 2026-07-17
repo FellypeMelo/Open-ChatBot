@@ -8,6 +8,20 @@ from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
 
+# Deterministic chunks streamed back in E2E mode (no model server running).
+_E2E_STREAM_CHUNKS = [
+    "Mock ",
+    "E2E ",
+    "stream response ",
+    "**enters the Ballroom** ",
+    "**changes into a Tuxedo**",
+]
+
+
+def _pick(preset: dict, key: str, default):
+    """Read a sampler value from the preset, falling back to the default."""
+    return preset.get(key, default) if preset else default
+
 
 class LlamaClient:
     def __init__(self):
@@ -19,21 +33,17 @@ class LlamaClient:
     def _build_extra_body(preset: dict = None, grammar: str = None) -> dict:
         """llama.cpp-specific sampler params, from the preset (if any) else
         settings defaults. Shared by complete() and complete_stream()."""
-
-        def p(key, default):
-            return preset.get(key, default) if preset else default
-
         extra_body = {
-            "repeat_penalty": p("repeat_penalty", settings.REPEAT_PENALTY),
+            "repeat_penalty": _pick(preset, "repeat_penalty", settings.REPEAT_PENALTY),
             "repeat_last_n": settings.REPEAT_LAST_N,
-            "min_p": p("min_p", settings.MIN_P),
-            "top_k": p("top_k", settings.TOP_K),
+            "min_p": _pick(preset, "min_p", settings.MIN_P),
+            "top_k": _pick(preset, "top_k", settings.TOP_K),
             "smoothing_factor": settings.SMOOTHING_FACTOR,
-            "dry_multiplier": p("dry_multiplier", settings.DRY_MULTIPLIER),
-            "dry_base": p("dry_base", settings.DRY_BASE),
-            "dry_range": p("dry_range", settings.DRY_RANGE),
-            "xtc_threshold": p("xtc_threshold", settings.XTC_THRESHOLD),
-            "xtc_probability": p("xtc_probability", settings.XTC_PROBABILITY),
+            "dry_multiplier": _pick(preset, "dry_multiplier", settings.DRY_MULTIPLIER),
+            "dry_base": _pick(preset, "dry_base", settings.DRY_BASE),
+            "dry_range": _pick(preset, "dry_range", settings.DRY_RANGE),
+            "xtc_threshold": _pick(preset, "xtc_threshold", settings.XTC_THRESHOLD),
+            "xtc_probability": _pick(preset, "xtc_probability", settings.XTC_PROBABILITY),
         }
         if grammar:
             extra_body["grammar"] = grammar
@@ -49,16 +59,12 @@ class LlamaClient:
     ) -> ChatOpenAI:
         """Construct the ChatOpenAI client shared by complete()/complete_stream()
         (they differed only in the request timeout)."""
-
-        def p(key, default):
-            return preset.get(key, default) if preset else default
-
         return ChatOpenAI(
             base_url=base_url,
             openai_api_key="sk-anything",
             model_name=model_name,
-            temperature=p("temperature", settings.TEMPERATURE),
-            top_p=p("top_p", settings.TOP_P),
+            temperature=_pick(preset, "temperature", settings.TEMPERATURE),
+            top_p=_pick(preset, "top_p", settings.TOP_P),
             max_tokens=settings.N_PREDICT,
             extra_body=self._build_extra_body(preset, grammar),
             timeout=timeout if timeout is not None else settings.LLM_TIMEOUT,
@@ -134,11 +140,8 @@ class LlamaClient:
     ):
         """Async generator that yields tokens from llama.cpp via LangChain ChatOpenAI."""
         if settings.E2E_TESTING:
-            yield "Mock "
-            yield "E2E "
-            yield "stream response "
-            yield "**enters the Ballroom** "
-            yield "**changes into a Tuxedo**"
+            for chunk in _E2E_STREAM_CHUNKS:
+                yield chunk
             return
 
         base_url = (url or self.url) + "/v1"
@@ -152,7 +155,7 @@ class LlamaClient:
             async for chunk in llm.astream([message]):
                 yield chunk.content
         except Exception as e:
-            logger.error(f"Error during LangChain streaming completion: {e}")
+            logger.exception(f"Error during LangChain streaming completion: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def embed(self, text: str, url: str = None, model: str = None):
@@ -179,7 +182,7 @@ class LlamaClient:
             logger.info(f"Embedding success (LangChain): dur={dur:.3f}s")
             return emb
         except Exception as e:
-            logger.error(f"Non-critical embedding error via LangChain: {e}")
+            logger.exception(f"Non-critical embedding error via LangChain: {e}")
             return None
 
     async def health_check(self):

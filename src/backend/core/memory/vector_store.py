@@ -10,6 +10,22 @@ from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# turbovec quantization width for the stores.
+_QUANT_BIT_WIDTH = 4
+
+
+def _parse_embedding_response(data: Any):
+    """Pull the embedding vector out of llama-server's /embedding response, which
+    may be a list of objects, a bare dict, or something unexpected."""
+    if isinstance(data, list) and len(data) > 0:
+        emb = data[0].get("embedding") if isinstance(data[0], dict) else None
+        if isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list):
+            return emb[0]
+        return emb
+    if isinstance(data, dict):
+        return data.get("embedding")
+    return []
+
 
 class LlamaCppEmbeddings(Embeddings):
     def __init__(self, llm_client: Any):
@@ -39,24 +55,7 @@ class LlamaCppEmbeddings(Embeddings):
                         f"{target_url}/embedding", json={"content": text}, timeout=60.0
                     )
                     if resp.status_code == 200:
-                        data = resp.json()
-                        if isinstance(data, list) and len(data) > 0:
-                            emb = (
-                                data[0].get("embedding")
-                                if isinstance(data[0], dict)
-                                else None
-                            )
-                            results.append(
-                                emb[0]
-                                if isinstance(emb, list)
-                                and len(emb) > 0
-                                and isinstance(emb[0], list)
-                                else emb
-                            )
-                        elif isinstance(data, dict):
-                            results.append(data.get("embedding"))
-                        else:
-                            results.append([])
+                        results.append(_parse_embedding_response(resp.json()))
                     else:
                         results.append([])
                 except Exception as e:
@@ -94,39 +93,24 @@ class VectorStore:
 
         self.embeddings = LlamaCppEmbeddings(llm_client)
 
-        # Load or initialize memories_store
-        if self.memories_path.exists() and (self.memories_path / "index.tvim").exists():
-            try:
-                self.memories_store = TurboQuantVectorStore.load(
-                    str(self.memories_path), self.embeddings
-                )
-                logger.info("Loaded memories_store from disk.")
-            except Exception as e:
-                logger.error(f"Failed to load memories_store: {e}. Creating new one.")
-                self.memories_store = TurboQuantVectorStore(
-                    embedding=self.embeddings, bit_width=4
-                )
-        else:
-            self.memories_store = TurboQuantVectorStore(
-                embedding=self.embeddings, bit_width=4
-            )
+        self.memories_store = self._load_or_init_store(
+            self.memories_path, "memories_store"
+        )
+        self.lore_store = self._load_or_init_store(self.lore_path, "lore_store")
 
-        # Load or initialize lore_store
-        if self.lore_path.exists() and (self.lore_path / "index.tvim").exists():
+    def _load_or_init_store(self, path: Path, label: str) -> TurboQuantVectorStore:
+        """Load a persisted turbovec store from disk, or create a fresh one if it
+        is absent or fails to load."""
+        if path.exists() and (path / "index.tvim").exists():
             try:
-                self.lore_store = TurboQuantVectorStore.load(
-                    str(self.lore_path), self.embeddings
-                )
-                logger.info("Loaded lore_store from disk.")
+                store = TurboQuantVectorStore.load(str(path), self.embeddings)
+                logger.info(f"Loaded {label} from disk.")
+                return store
             except Exception as e:
-                logger.error(f"Failed to load lore_store: {e}. Creating new one.")
-                self.lore_store = TurboQuantVectorStore(
-                    embedding=self.embeddings, bit_width=4
-                )
-        else:
-            self.lore_store = TurboQuantVectorStore(
-                embedding=self.embeddings, bit_width=4
-            )
+                logger.error(f"Failed to load {label}: {e}. Creating new one.")
+        return TurboQuantVectorStore(
+            embedding=self.embeddings, bit_width=_QUANT_BIT_WIDTH
+        )
 
     async def add_lore(
         self, keyword: str, content: str, metadata: Optional[Dict[str, Any]] = None
@@ -183,53 +167,38 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error adding to vector store: {e}")
 
-    async def clear_character_memories(self, character_id: int) -> int:
-        """Delete every stored memory belonging to a character and persist the
-        result. Called by 'clear chat' so a reset conversation cannot resurface
-        old or hallucinated memories via RAG. Returns the number removed.
+    def _clear_by_metadata(self, key: str, value: Any, label: str) -> int:
+        """Delete every stored memory whose metadata[key] == value and persist.
 
         turbovec has no delete-by-metadata, so we resolve the ids from the
-        side-car doc metadata and delete by id (O(1) each)."""
+        side-car doc metadata and delete by id (O(1) each). Returns the count."""
         try:
             ids = [
                 sid
                 for sid, (_text, meta) in self.memories_store._docs.items()
-                if meta.get("character_id") == character_id
+                if meta.get(key) == value
             ]
             if ids:
                 self.memories_store.delete(ids)
                 self.memories_path.mkdir(parents=True, exist_ok=True)
                 self.memories_store.dump(str(self.memories_path))
-                logger.info(
-                    f"Cleared {len(ids)} memories for character {character_id}."
-                )
+                logger.info(f"Cleared {len(ids)} memories for {label}.")
             return len(ids)
         except Exception as e:
-            logger.error(
-                f"Error clearing memories for character {character_id}: {e}"
-            )
+            logger.error(f"Error clearing memories for {label}: {e}")
             return 0
 
+    async def clear_character_memories(self, character_id: int) -> int:
+        """Delete every stored memory belonging to a character so a reset
+        conversation cannot resurface old or hallucinated memories via RAG."""
+        return self._clear_by_metadata(
+            "character_id", character_id, f"character {character_id}"
+        )
+
     async def clear_chat_memories(self, chat_id: int) -> int:
-        """Delete every stored memory belonging to a single chat/session and
-        persist the result. Used when a chat is deleted so its memories never
-        leak into a sibling chat of the same character. Returns the number
-        removed. Mirrors clear_character_memories but keys on chat_id."""
-        try:
-            ids = [
-                sid
-                for sid, (_text, meta) in self.memories_store._docs.items()
-                if meta.get("chat_id") == chat_id
-            ]
-            if ids:
-                self.memories_store.delete(ids)
-                self.memories_path.mkdir(parents=True, exist_ok=True)
-                self.memories_store.dump(str(self.memories_path))
-                logger.info(f"Cleared {len(ids)} memories for chat {chat_id}.")
-            return len(ids)
-        except Exception as e:
-            logger.error(f"Error clearing memories for chat {chat_id}: {e}")
-            return 0
+        """Delete every stored memory belonging to a single chat/session so its
+        memories never leak into a sibling chat of the same character."""
+        return self._clear_by_metadata("chat_id", chat_id, f"chat {chat_id}")
 
     async def query_memory(
         self,

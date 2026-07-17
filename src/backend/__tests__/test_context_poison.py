@@ -126,6 +126,25 @@ def test_query_memory_prefers_recent_on_similar_scores(tmp_path):
     assert "OLD memory" in docs
 
 
+def test_query_memory_drops_near_duplicate_results(tmp_path):
+    # RQ-03: near-identical memories (e.g. repeated paraphrases of one moment)
+    # must not fill the top-k; only one representative is kept.
+    vs = _make_vs(tmp_path)
+    dup_a = (Document(id="a", page_content="We danced at the ballroom tonight", metadata={"message_id": 5}), 0.9)
+    dup_b = (Document(id="b", page_content="We danced at the ballroom tonight.", metadata={"message_id": 6}), 0.89)
+    other = (Document(id="c", page_content="You told me about your dog", metadata={"message_id": 7}), 0.7)
+    vs.memories_store.asimilarity_search_with_score = AsyncMock(
+        return_value=[dup_a, dup_b, other]
+    )
+
+    out = asyncio.run(vs.query_memory("q", n_results=5, min_relevance=0.5))
+    docs = out["documents"][0]
+
+    ballroom = [d for d in docs if "ballroom" in d]
+    assert len(ballroom) == 1
+    assert any("dog" in d for d in docs)
+
+
 def test_clear_chat_history_purges_vector_memory():
     """The clear-chat endpoint must purge the character's vector memories,
     otherwise 'New Chat' still resurfaces old/hallucinated content via RAG."""

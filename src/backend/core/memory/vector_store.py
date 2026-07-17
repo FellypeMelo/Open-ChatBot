@@ -1,6 +1,7 @@
 import uuid
 import logging
 import asyncio
+from difflib import SequenceMatcher
 import numpy as np
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -12,6 +13,17 @@ logger = logging.getLogger(__name__)
 
 # turbovec quantization width for the stores.
 _QUANT_BIT_WIDTH = 4
+
+# Two retrieved memories whose texts match above this ratio are treated as
+# near-duplicates; only the higher-ranked one is kept (RQ-03). The store is a
+# quantized index (no full vectors), so MMR is unavailable -- dedup in text space.
+_MEMORY_DEDUP_RATIO = 0.9
+
+
+def _is_near_duplicate(text: str, seen: List[str]) -> bool:
+    return any(
+        SequenceMatcher(None, text, s).ratio() >= _MEMORY_DEDUP_RATIO for s in seen
+    )
 
 
 def _parse_embedding_response(data: Any):
@@ -248,7 +260,16 @@ class VectorStore:
                     * ((ds[0].metadata.get("message_id") or 0) / max_mid),
                     reverse=True,
                 )
-            documents = [doc.page_content for doc, _ in kept[:n_results]]
+            # Greedily drop near-duplicates so the top-k isn't N paraphrases of
+            # one moment (RQ-03).
+            documents: List[str] = []
+            for doc, _ in kept:
+                text = doc.page_content
+                if _is_near_duplicate(text, documents):
+                    continue
+                documents.append(text)
+                if len(documents) >= n_results:
+                    break
             return {"documents": [documents]}
         except Exception as e:
             logger.error(f"Vector store query error: {e}")

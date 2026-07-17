@@ -307,3 +307,26 @@ async def test_memory_not_in_history_is_kept():
     prompt = await brain.build_prompt("hi", char, state=None, history=history)
 
     assert "Rex" in prompt, "a novel memory must still reach the prompt"
+
+
+@pytest.mark.asyncio
+async def test_distinct_memory_not_dropped_for_substring_overlap():
+    # RQ-02 regression: a distinct earlier memory must NOT be dropped merely
+    # because its short halves are substrings of an unrelated later history line.
+    mock_vs = MagicMock()
+    mock_vs.query_memory = AsyncMock(
+        return_value={"documents": [["User: I love you\nAI: I love you too"]]}
+    )
+    mock_vs.query_lore = AsyncMock(return_value={})
+    brain = Brain(vector_store=mock_vs)
+
+    char = Character(name="Gemi", description="d")
+    char.id = 1
+    char.tags = []
+    # A later, DIFFERENT line that merely contains the memory's text as a substring.
+    history = [{"role": "assistant", "content": "I love you too, always and forever"}]
+    prompt = await brain.build_prompt("hi", char, state=None, history=history)
+
+    assert "love you" in prompt.split("History:")[0], (
+        "a distinct memory was wrongly dropped as redundant over substring overlap"
+    )

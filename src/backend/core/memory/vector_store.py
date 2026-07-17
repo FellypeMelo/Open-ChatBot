@@ -113,13 +113,19 @@ class VectorStore:
         self.lore_store = self._load_or_init_store(self.lore_path, "lore_store")
 
     def _atomic_dump(self, store: TurboQuantVectorStore, path: Path) -> None:
-        """Persist `store` to `path` without risking a torn/corrupt on-disk store.
+        """Persist `store` to `path` with far less corruption risk than a direct
+        dump (PF-02).
 
         turbovec.dump writes multiple files (index + docstore) directly into the
-        target dir, so a crash or partial write mid-dump would corrupt the only
-        persisted copy. Dump into a sibling temp dir first, then atomically
-        replace each file into place (same-filesystem os.replace). A crash can
-        leave the temp dir behind, but never a half-written store (PF-02)."""
+        target dir, so a crash mid-dump could leave a half-written (torn) file --
+        the only persisted copy. Dump into a sibling temp dir first, then promote
+        each file with an atomic same-filesystem os.replace. This fully
+        eliminates torn/partial-file writes. It is NOT a single atomic
+        transaction across the whole multi-file store: a crash in the sub-
+        millisecond window between the per-file renames could leave a new index
+        beside an old docstore. That residual window is tiny and strictly smaller
+        than the pre-fix behavior; a crash can also leave the temp dir behind
+        (cleaned on the next dump)."""
         path.mkdir(parents=True, exist_ok=True)
         tmp = path.parent / f"{path.name}.tmp"
         if tmp.exists():

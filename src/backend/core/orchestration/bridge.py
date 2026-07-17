@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from src.backend.core.memory.vector_store import VectorStore
@@ -38,26 +39,44 @@ ENTITY_PROMPT_TEMPLATE = PromptTemplate.from_template(
 )
 
 
+_MEMORY_REDUNDANT_RATIO = 0.9
+
+
 def _norm(text: Any) -> str:
     """Lowercase + collapse whitespace, for cheap text-overlap checks."""
     return re.sub(r"\s+", " ", str(text).lower()).strip()
 
 
-def _memory_redundant_with_recent(doc: str, recent_blob: str) -> bool:
-    """A stored memory is written as 'User: {msg}\\nAI: {reply}'. If EVERY
-    non-empty half already appears in the recent history/summary the model is
-    about to see, re-injecting the memory only duplicates visible context and
-    over-weights that one moment (RQ-02). Coupled to the storage format on
-    purpose; if that ever changes this degrades to a harmless no-op."""
-    if not doc or not recent_blob:
+def _memory_redundant_with_recent(doc: str, recent_lines: List[str]) -> bool:
+    """A stored memory is written as 'User: {msg}\\nAI: {reply}'. It is redundant
+    only if EACH of its halves near-matches (>= _MEMORY_REDUNDANT_RATIO) some
+    single recent history/summary line -- i.e. that exact turn is already visible
+    and re-injecting it just duplicates context (RQ-02).
+
+    Matching against discrete lines (not a substring of the concatenated blob)
+    is deliberate: a short/common half like 'ok', or a distinct earlier turn
+    whose text happens to be a substring of some unrelated later line, must NOT
+    be dropped. Coupled to the storage format on purpose; if that changes this
+    degrades to a harmless no-op. `recent_lines` are already _norm'd."""
+    if not doc or not recent_lines:
         return False
+    # maxsplit=1 on the first 'ai:' can mis-split a memory whose USER half itself
+    # contains 'ai:'; that only ever weakens a half's match (-> memory kept), so
+    # it can cause a missed drop but never a wrong drop.
     parts = re.split(r"\bai\s*:\s*", doc, maxsplit=1, flags=re.IGNORECASE)
     user_half = re.sub(r"^\s*user\s*:\s*", "", parts[0], flags=re.IGNORECASE)
     halves = [user_half] + (parts[1:] if len(parts) > 1 else [])
     normed = [_norm(h) for h in halves if _norm(h)]
     if not normed:
         return False
-    return all(h in recent_blob for h in normed)
+
+    def _present(half: str) -> bool:
+        return any(
+            SequenceMatcher(None, half, line).ratio() >= _MEMORY_REDUNDANT_RATIO
+            for line in recent_lines
+        )
+
+    return all(_present(h) for h in normed)
 
 
 # Role/boundary words that must never be forgeable from injected free text.
@@ -219,24 +238,26 @@ class Brain:
         if memory_docs:
             # Drop memories that just replay a turn already visible in the recent
             # history/summary -- injecting them again duplicates context and
-            # over-weights that moment (RQ-02).
-            recent_blob = _norm(
-                " ".join(
+            # over-weights that moment (RQ-02). Compare against discrete lines so
+            # a distinct memory isn't dropped for coincidentally overlapping
+            # unrelated text.
+            recent_lines = [
+                _norm(
                     (
                         m.get("content")
                         if isinstance(m, dict)
                         else getattr(m, "content", "")
                     )
                     or ""
-                    for m in (history or [])
                 )
-                + " "
-                + (raw_summary or "")
-            )
+                for m in (history or [])
+            ]
+            recent_lines += [_norm(ln) for ln in (raw_summary or "").splitlines()]
+            recent_lines = [ln for ln in recent_lines if ln]
             fresh_docs = [
                 d
                 for d in memory_docs
-                if d and not _memory_redundant_with_recent(str(d), recent_blob)
+                if d and not _memory_redundant_with_recent(str(d), recent_lines)
             ]
             sanitized = [self._sanitize(str(d), _names) for d in fresh_docs if d]
             joined = " ".join(s for s in sanitized if s)

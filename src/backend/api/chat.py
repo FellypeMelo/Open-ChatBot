@@ -31,6 +31,17 @@ from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+_LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
+
+
+def _normalize_state_label(raw: str) -> str:
+    """Clean a location/outfit label parsed from narration: trim, drop a leading
+    article, and capitalize the first letter WITHOUT lowercasing the rest -- so a
+    multi-word name like 'Grand Ballroom' is preserved, not mangled by
+    str.capitalize() into 'Grand ballroom'."""
+    label = _LEADING_ARTICLE.sub("", raw.strip().strip("."))
+    return label[:1].upper() + label[1:]
+
 
 def parse_actions_to_state(ai_response: str, state: AgentState):
     """Parses AI response for narrative actions like **enters [location]** and updates state."""
@@ -41,10 +52,7 @@ def parse_actions_to_state(ai_response: str, state: AgentState):
         re.IGNORECASE,
     )
     if loc_match:
-        new_loc = loc_match.group(1).strip().strip(".")
-        # Strip articles
-        new_loc = re.sub(r"^(?:The|A|An)\s+", "", new_loc, flags=re.IGNORECASE)
-        new_loc = new_loc.capitalize()
+        new_loc = _normalize_state_label(loc_match.group(1))
         if new_loc != state.location:
             logger.info(f"State Update: Location -> {new_loc}")
             state.location = new_loc
@@ -56,10 +64,7 @@ def parse_actions_to_state(ai_response: str, state: AgentState):
         re.IGNORECASE,
     )
     if outfit_match:
-        new_outfit = outfit_match.group(1).strip().strip(".")
-        # Strip articles
-        new_outfit = re.sub(r"^(?:The|A|An)\s+", "", new_outfit, flags=re.IGNORECASE)
-        new_outfit = new_outfit.capitalize()
+        new_outfit = _normalize_state_label(outfit_match.group(1))
         if new_outfit != state.clothes:
             logger.info(f"State Update: Clothes -> {new_outfit}")
             state.clothes = new_outfit

@@ -146,6 +146,14 @@ async def stop_embedding_server():
 async def restart_all_servers():
     inf_success = await asyncio.to_thread(runner.start_inference)
     emb_success = await asyncio.to_thread(runner.start_embedding)
+    if not (inf_success and emb_success):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Failed to restart servers "
+                f"(inference={inf_success}, embedding={emb_success}). Check logs."
+            ),
+        )
     return {
         "status": "success",
         "message": "Servers restarted.",

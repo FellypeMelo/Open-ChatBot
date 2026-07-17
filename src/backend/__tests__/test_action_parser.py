@@ -9,6 +9,15 @@ def test_parse_location():
     assert state.location == "Kitchen"
 
 
+def test_parse_location_preserves_multiword_casing():
+    # .capitalize() would mangle this to "Grand ballroom"; the label's own
+    # casing must be preserved.
+    state = AgentState(character_id=1, location="Lobby")
+    ai_response = "She smiles and **enters the Grand Ballroom** with grace."
+    parse_actions_to_state(ai_response, state)
+    assert state.location == "Grand Ballroom"
+
+
 def test_parse_clothes():
     state = AgentState(character_id=1, clothes="Casual")
     ai_response = 'Wait a second. *She disappears for a moment and* **changes into a red dress**. "How do I look?"'

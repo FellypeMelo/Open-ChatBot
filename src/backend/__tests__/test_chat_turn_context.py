@@ -1264,6 +1264,21 @@ def test_chat_empty_reply_stores_no_memory(client, db_session):
     )
     assert assistant_nodes == []
 
+    # TF-01 (decision: keep on failure): the user's message survives and the
+    # pointer rests on it, so the turn is cleanly retryable/regenerable.
+    user_node = (
+        db_session.query(MessageNode)
+        .filter(MessageNode.character_id == 523, MessageNode.role == "user")
+        .one()
+    )
+    assert user_node.content == "hi"
+    state = (
+        db_session.query(AgentState)
+        .filter(AgentState.character_id == 523)
+        .first()
+    )
+    assert state.current_message_id == user_node.id
+
 
 def test_delete_message_not_found_returns_404(client, db_session):
     resp = client.delete("/chat/message/999999")

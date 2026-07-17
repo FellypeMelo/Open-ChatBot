@@ -43,7 +43,9 @@ class LlamaClient:
             "dry_base": _pick(preset, "dry_base", settings.DRY_BASE),
             "dry_range": _pick(preset, "dry_range", settings.DRY_RANGE),
             "xtc_threshold": _pick(preset, "xtc_threshold", settings.XTC_THRESHOLD),
-            "xtc_probability": _pick(preset, "xtc_probability", settings.XTC_PROBABILITY),
+            "xtc_probability": _pick(
+                preset, "xtc_probability", settings.XTC_PROBABILITY
+            ),
         }
         if grammar:
             extra_body["grammar"] = grammar

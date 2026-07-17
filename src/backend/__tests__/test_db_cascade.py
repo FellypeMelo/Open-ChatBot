@@ -97,6 +97,7 @@ def test_deleting_pointed_at_message_nulls_agent_pointer_not_the_agent(fk_sessio
 # PRAGMA foreign_keys=ON. The rest of the suite runs with FK OFF, so this order
 # was validated only in production. These tests run the real paths under FK ON.
 
+
 def _seed_full_scenario(db):
     """A character with a chat, a 2-node message chain, a journal, and an agent
     state whose pointers reference the chat + a message (all FK-valid, inserted
@@ -144,7 +145,9 @@ def test_delete_chat_path_is_fk_safe(fk_session):
 
     assert db.query(m.Chat).filter(m.Chat.id == chat.id).first() is None
     assert db.query(m.MessageNode).filter(m.MessageNode.chat_id == chat.id).count() == 0
-    assert db.query(m.JournalEntry).filter(m.JournalEntry.chat_id == chat.id).count() == 0
+    assert (
+        db.query(m.JournalEntry).filter(m.JournalEntry.chat_id == chat.id).count() == 0
+    )
     # The agent state survives; pointers into the deleted chat are cleared.
     db.refresh(state)
     assert state.current_message_id is None
@@ -164,8 +167,14 @@ def test_clear_chat_history_path_is_fk_safe(fk_session):
 
     # The old scenario's messages/journals are gone; this character has no
     # first_mes, so the re-seed creates a fresh chat but no greeting message.
-    assert db.query(m.MessageNode).filter(m.MessageNode.character_id == char.id).count() == 0
-    assert db.query(m.JournalEntry).filter(m.JournalEntry.character_id == char.id).count() == 0
+    assert (
+        db.query(m.MessageNode).filter(m.MessageNode.character_id == char.id).count()
+        == 0
+    )
+    assert (
+        db.query(m.JournalEntry).filter(m.JournalEntry.character_id == char.id).count()
+        == 0
+    )
     # Clear now re-seeds one fresh chat and points the live state at it (a
     # cleared character is never left session-less).
     assert db.query(m.Chat).filter(m.Chat.character_id == char.id).count() == 1
@@ -186,8 +195,22 @@ def test_delete_character_path_is_fk_safe(fk_session):
         asyncio.run(charmod.delete_character(char.id, db=db))
 
     assert db.query(m.Character).filter(m.Character.id == char.id).first() is None
-    assert db.query(m.AgentState).filter(m.AgentState.character_id == char.id).first() is None
-    assert db.query(m.MessageNode).filter(m.MessageNode.character_id == char.id).count() == 0
-    assert db.query(m.JournalEntry).filter(m.JournalEntry.character_id == char.id).count() == 0
-    assert db.query(m.LorebookEntry).filter(m.LorebookEntry.character_id == char.id).count() == 0
+    assert (
+        db.query(m.AgentState).filter(m.AgentState.character_id == char.id).first()
+        is None
+    )
+    assert (
+        db.query(m.MessageNode).filter(m.MessageNode.character_id == char.id).count()
+        == 0
+    )
+    assert (
+        db.query(m.JournalEntry).filter(m.JournalEntry.character_id == char.id).count()
+        == 0
+    )
+    assert (
+        db.query(m.LorebookEntry)
+        .filter(m.LorebookEntry.character_id == char.id)
+        .count()
+        == 0
+    )
     fake_vs.clear_character_memories.assert_awaited_once_with(char.id)

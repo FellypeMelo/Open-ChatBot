@@ -24,7 +24,10 @@ def test_embedding_url_default_is_consolidated_port():
 
 
 def test_reflection_interval_is_config_driven():
-    assert isinstance(settings.REFLECTION_INTERVAL, int) and settings.REFLECTION_INTERVAL > 0
+    assert (
+        isinstance(settings.REFLECTION_INTERVAL, int)
+        and settings.REFLECTION_INTERVAL > 0
+    )
 
 
 def test_testing_flag_is_single_source_of_truth():

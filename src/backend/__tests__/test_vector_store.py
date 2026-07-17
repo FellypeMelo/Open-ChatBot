@@ -259,9 +259,9 @@ def test_atomic_dump_failure_does_not_corrupt_persisted_store(tmp_path):
     reloaded = VectorStore(llm_client=_FakeLLM(), path=path)
     texts = [t for t, _m in reloaded.memories_store._docs.values()]
     assert any("first memory" in t for t in texts), "prior store lost after failed dump"
-    assert all(
-        "second memory" not in t for t in texts
-    ), "half-written store persisted the failed add"
+    assert all("second memory" not in t for t in texts), (
+        "half-written store persisted the failed add"
+    )
 
 
 def test_atomic_dump_persists_and_reloads(tmp_path):
@@ -343,11 +343,13 @@ def test_consolidation_is_scoped_and_spares_other_chats(tmp_path, monkeypatch):
     async def run():
         for i in range(6):
             await vs.add_memory(
-                f"chat10 msg {i}", {"character_id": 1, "chat_id": 10, "message_id": i + 1}
+                f"chat10 msg {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
             )
         for i in range(2):
             await vs.add_memory(
-                f"chat20 msg {i}", {"character_id": 1, "chat_id": 20, "message_id": i + 1}
+                f"chat20 msg {i}",
+                {"character_id": 1, "chat_id": 20, "message_id": i + 1},
             )
 
     asyncio.run(run())

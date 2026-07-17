@@ -255,27 +255,39 @@ def test_secondary_keys_and_gate_the_entry(db_session):
     assert scanner.scan_and_extract("I drink a potion.", character_id=1) == []
 
     # Primary + secondary both present -> fires.
-    assert scanner.scan_and_extract(
-        "I drink a healing potion.", character_id=1
-    ) == [entry.content]
+    assert scanner.scan_and_extract("I drink a healing potion.", character_id=1) == [
+        entry.content
+    ]
 
 
 def test_cooldown_is_a_noop_without_turn_state(db_session):
     # Backward-compat: called without turn_index/cooldowns the scanner is
     # stateless and fires every time, regardless of cooldown_turns.
     entry = _make_entry(
-        db_session, keys=["torch"], content="Torch lore.", is_global=True, cooldown_turns=5
+        db_session,
+        keys=["torch"],
+        content="Torch lore.",
+        is_global=True,
+        cooldown_turns=5,
     )
     scanner = LorebookScanner(db_session)
-    assert scanner.scan_and_extract("I light a torch.", character_id=1) == [entry.content]
-    assert scanner.scan_and_extract("I light a torch.", character_id=1) == [entry.content]
+    assert scanner.scan_and_extract("I light a torch.", character_id=1) == [
+        entry.content
+    ]
+    assert scanner.scan_and_extract("I light a torch.", character_id=1) == [
+        entry.content
+    ]
 
 
 def test_cooldown_suppresses_refire_within_window(db_session):
     # LB-01: with a turn index and a cooldown map, an entry that fired is
     # suppressed until cooldown_turns have elapsed, then fires again.
     entry = _make_entry(
-        db_session, keys=["torch"], content="Torch lore.", is_global=True, cooldown_turns=3
+        db_session,
+        keys=["torch"],
+        content="Torch lore.",
+        is_global=True,
+        cooldown_turns=3,
     )
     scanner = LorebookScanner(db_session)
     cds: dict = {}
@@ -287,9 +299,10 @@ def test_cooldown_suppresses_refire_within_window(db_session):
     assert str(entry.id) in cds
 
     # Turn 2 (within the 3-turn cooldown): suppressed.
-    assert scanner.scan_and_extract(
-        "a torch", character_id=1, turn_index=2, cooldowns=cds
-    ) == []
+    assert (
+        scanner.scan_and_extract("a torch", character_id=1, turn_index=2, cooldowns=cds)
+        == []
+    )
 
     # Turn 4 (>= 1 + 3): cooldown elapsed, fires again.
     assert scanner.scan_and_extract(

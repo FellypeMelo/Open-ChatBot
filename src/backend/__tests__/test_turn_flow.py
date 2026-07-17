@@ -43,6 +43,7 @@ def _char_with_two_chats(db):
 
 # --- TF-02: edit/delete must not corrupt a non-active chat's pointer ----------
 
+
 def test_edit_in_background_chat_does_not_corrupt_active_pointer(db_session):
     # TF-02 (P1): editing a user message in a background chat set the LIVE
     # AgentState.current_message_id to that message, silently moving the
@@ -71,12 +72,12 @@ def test_edit_in_background_chat_does_not_corrupt_active_pointer(db_session):
 
     db_session.refresh(state)
     db_session.refresh(chat_b)
-    assert (
-        state.current_message_id == node_a.id
-    ), "active chat A pointer corrupted by an edit made in background chat B"
-    assert (
-        chat_b.current_message_id == user_b.id
-    ), "background chat B should resume at its own edited message"
+    assert state.current_message_id == node_a.id, (
+        "active chat A pointer corrupted by an edit made in background chat B"
+    )
+    assert chat_b.current_message_id == user_b.id, (
+        "background chat B should resume at its own edited message"
+    )
 
 
 def test_edit_in_active_chat_still_repoints_live_state(db_session):
@@ -136,15 +137,16 @@ def test_delete_current_message_in_background_chat_repoints_that_chat(db_session
 
     db_session.refresh(state)
     db_session.refresh(chat_b)
-    assert (
-        state.current_message_id == node_a.id
-    ), "active chat A pointer corrupted by a delete in background chat B"
-    assert (
-        chat_b.current_message_id == parent_b.id
-    ), "background chat B should repoint to the deleted node's parent"
+    assert state.current_message_id == node_a.id, (
+        "active chat A pointer corrupted by a delete in background chat B"
+    )
+    assert chat_b.current_message_id == parent_b.id, (
+        "background chat B should repoint to the deleted node's parent"
+    )
 
 
 # --- TF-05: a deactivated / nonexistent parent_id must not be grafted onto ----
+
 
 def test_parent_id_pointing_at_deactivated_node_falls_back(client, db_session):
     # TF-05: a client-supplied parent_id for a deleted (deactivated) node must
@@ -179,12 +181,15 @@ def test_parent_id_pointing_at_deactivated_node_falls_back(client, db_session):
     async def fake_build_prompt(user_message, character, state_dict, **kwargs):
         return "PROMPT"
 
-    with patch(
-        "src.backend.api.chat.brain.build_prompt",
-        new=AsyncMock(side_effect=fake_build_prompt),
-    ), patch(
-        "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
-    ) as mock_complete:
+    with (
+        patch(
+            "src.backend.api.chat.brain.build_prompt",
+            new=AsyncMock(side_effect=fake_build_prompt),
+        ),
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+    ):
         mock_complete.return_value = {"content": "ok."}
         resp = client.post(
             "/chat",
@@ -202,13 +207,14 @@ def test_parent_id_pointing_at_deactivated_node_falls_back(client, db_session):
         .first()
     )
     assert new_user is not None
-    assert (
-        new_user.parent_id != dead_node.id
-    ), "new turn was grafted onto a deactivated (deleted) node"
+    assert new_user.parent_id != dead_node.id, (
+        "new turn was grafted onto a deactivated (deleted) node"
+    )
     assert new_user.parent_id == active_node.id, "should fall back to the live pointer"
 
 
 # --- TF-03: streamed reply must survive a StaleDataError on persist -----------
+
 
 def test_persist_assistant_reply_retries_on_stale_data():
     # TF-03: a concurrent stat PUT advances AgentState.version, so the stream's
@@ -267,7 +273,9 @@ def test_persist_assistant_reply_retries_on_stale_data():
         fresh = db.query(AgentState).filter(AgentState.id == state.id).first()
         assert fresh.current_message_id == msg.id
         assert (
-            db.query(MessageNode).filter(MessageNode.content == "streamed reply").count()
+            db.query(MessageNode)
+            .filter(MessageNode.content == "streamed reply")
+            .count()
             == 1
         ), "reply must be persisted exactly once (not lost, not duplicated)"
     finally:

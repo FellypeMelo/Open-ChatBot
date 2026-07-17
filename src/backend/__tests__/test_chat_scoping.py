@@ -12,6 +12,7 @@ from src.backend.db.models import AgentState, Character, MessageNode, Chat, Jour
 
 # --- T1: per-chat memory isolation via the chat_id metadata filter -----------
 
+
 class _FakeLLM:
     """Deterministic embeddings so a real turbovec store can be exercised
     without a llama-server: the vector only depends on the text."""
@@ -49,6 +50,7 @@ def test_query_memory_is_isolated_by_chat_id(tmp_path):
 
 # --- T4: delete a chat removes only its own memories -------------------------
 
+
 class _FakeStore:
     def __init__(self, docs=None):
         self._docs = dict(docs or {})
@@ -82,6 +84,7 @@ def test_clear_chat_memories_removes_only_that_chat(tmp_path):
 
 # --- T2: 'New Chat' creates a session instead of deleting history ------------
 
+
 def test_new_chat_preserves_history_and_switches_active(client, db_session):
     char = Character(id=701, name="SessChar", description="Desc")
     db_session.add(char)
@@ -112,7 +115,9 @@ def test_new_chat_preserves_history_and_switches_active(client, db_session):
 
     # The original 3 messages must still exist -- new chat is non-destructive.
     assert (
-        db_session.query(MessageNode).filter(MessageNode.chat_id == first_chat.id).count()
+        db_session.query(MessageNode)
+        .filter(MessageNode.chat_id == first_chat.id)
+        .count()
         == 3
     )
     # There are now two chats and the new one is active.
@@ -125,6 +130,7 @@ def test_new_chat_preserves_history_and_switches_active(client, db_session):
 
 
 # --- T3: delete_character purges messages/journals/memories ------------------
+
 
 def test_delete_character_purges_all_data_and_memories(client, db_session):
     char = Character(id=702, name="DoomedChar", description="Desc")
@@ -139,7 +145,9 @@ def test_delete_character_purges_all_data_and_memories(client, db_session):
     db_session.add_all(
         [
             MessageNode(character_id=702, chat_id=chat.id, role="user", content="a"),
-            MessageNode(character_id=702, chat_id=chat.id, role="assistant", content="b"),
+            MessageNode(
+                character_id=702, chat_id=chat.id, role="assistant", content="b"
+            ),
             JournalEntry(character_id=702, chat_id=chat.id, content="diary"),
         ]
     )
@@ -151,14 +159,24 @@ def test_delete_character_purges_all_data_and_memories(client, db_session):
         resp = client.delete("/characters/702")
     assert resp.status_code == 200
 
-    assert db_session.query(MessageNode).filter(MessageNode.character_id == 702).count() == 0
-    assert db_session.query(JournalEntry).filter(JournalEntry.character_id == 702).count() == 0
+    assert (
+        db_session.query(MessageNode).filter(MessageNode.character_id == 702).count()
+        == 0
+    )
+    assert (
+        db_session.query(JournalEntry).filter(JournalEntry.character_id == 702).count()
+        == 0
+    )
     assert db_session.query(Chat).filter(Chat.character_id == 702).count() == 0
-    assert db_session.query(AgentState).filter(AgentState.character_id == 702).first() is None
+    assert (
+        db_session.query(AgentState).filter(AgentState.character_id == 702).first()
+        is None
+    )
     fake_vs.clear_character_memories.assert_awaited_once_with(702)
 
 
 # --- T5: parent_id from another character/chat is rejected -------------------
+
 
 def test_parent_id_from_other_character_is_rejected(client, db_session):
     # Character 1 / chat 10 with its own message; Character 2 / chat 20 with a
@@ -190,16 +208,24 @@ def test_parent_id_from_other_character_is_rejected(client, db_session):
         captured["history"] = kwargs.get("history") or []
         return "PROMPT"
 
-    with patch(
-        "src.backend.api.chat.brain.build_prompt",
-        new=AsyncMock(side_effect=fake_build_prompt),
-    ), patch(
-        "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
-    ) as mock_complete:
+    with (
+        patch(
+            "src.backend.api.chat.brain.build_prompt",
+            new=AsyncMock(side_effect=fake_build_prompt),
+        ),
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+    ):
         mock_complete.return_value = {"content": "ok."}
         resp = client.post(
             "/chat",
-            json={"character_id": 703, "chat_id": chat1.id, "message": "hi", "parent_id": foreign.id},
+            json={
+                "character_id": 703,
+                "chat_id": chat1.id,
+                "message": "hi",
+                "parent_id": foreign.id,
+            },
         )
     assert resp.status_code == 200
     # The foreign character's line must never enter character 1's prompt history.
@@ -209,6 +235,7 @@ def test_parent_id_from_other_character_is_rejected(client, db_session):
 
 
 # --- B8: per-chat persona (independent storylines) ---------------------------
+
 
 def test_persona_is_per_chat_independent(db_session):
     # B8: mood/location/relationship belong to the chat, not globally to the

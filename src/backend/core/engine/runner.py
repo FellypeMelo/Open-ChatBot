@@ -399,7 +399,9 @@ class LlamaServerRunner:
                 setattr(self, log_attr, None)
                 return False
 
-            logger.info(f"[{label}] Running after {CRASH_DETECT_SECONDS}s. Log: {out_log_path}")
+            logger.info(
+                f"[{label}] Running after {CRASH_DETECT_SECONDS}s. Log: {out_log_path}"
+            )
             return True
         except OSError as e:
             logger.exception(f"[{label}] OSError spawning process: {e}")
@@ -434,8 +436,12 @@ class LlamaServerRunner:
 
         args.extend(extra_args)
         return self._spawn_process(
-            args, "llama_inference.log", "inference_proc", "inf_log_file",
-            binary, "start_inference",
+            args,
+            "llama_inference.log",
+            "inference_proc",
+            "inf_log_file",
+            binary,
+            "start_inference",
         )
 
     def start_embedding(self) -> bool:
@@ -447,9 +453,7 @@ class LlamaServerRunner:
                 "[start_embedding] Consolidated server mode: using inference server for embeddings."
             )
             return (
-                True
-                if self._is_alive(self.inference_proc)
-                else self.start_inference()
+                True if self._is_alive(self.inference_proc) else self.start_inference()
             )
 
         self.stop_embedding()
@@ -467,8 +471,12 @@ class LlamaServerRunner:
         args.extend(extra_args)
 
         return self._spawn_process(
-            args, "llama_embedding.log", "embedding_proc", "emb_log_file",
-            binary, "start_embedding",
+            args,
+            "llama_embedding.log",
+            "embedding_proc",
+            "emb_log_file",
+            binary,
+            "start_embedding",
         )
 
     def _close_log_file(self, attr_name: str):

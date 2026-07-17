@@ -37,7 +37,10 @@ target_metadata = Base.metadata
 
 def _database_url() -> str:
     """CLI `-x db_url=...` wins, else the app's configured DATABASE_URL."""
-    return context.get_x_argument(as_dictionary=True).get("db_url") or settings.DATABASE_URL
+    return (
+        context.get_x_argument(as_dictionary=True).get("db_url")
+        or settings.DATABASE_URL
+    )
 
 
 def run_migrations_offline() -> None:

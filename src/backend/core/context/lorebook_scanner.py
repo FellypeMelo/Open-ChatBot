@@ -98,7 +98,9 @@ class LorebookScanner:
                     active_lore.append(entry.content)
                 continue
 
-            depth = entry.scan_depth if (entry.scan_depth or 0) > 0 else _DEFAULT_SCAN_DEPTH
+            depth = (
+                entry.scan_depth if (entry.scan_depth or 0) > 0 else _DEFAULT_SCAN_DEPTH
+            )
             scan_text = "\n".join(m for m in messages[-depth:] if m)
 
             # Primary match: any key (or the keyword fallback when no keys).

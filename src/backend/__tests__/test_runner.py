@@ -176,9 +176,7 @@ def test_runner_preserves_explicit_cache_type():
 
     with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
         with patch("builtins.open", mock_open(read_data=json.dumps(cfg))):
-            with patch(
-                "src.backend.core.engine.runner.LlamaServerRunner.save_config"
-            ):
+            with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
                 runner = LlamaServerRunner()
                 inf_args = runner.config["inference"]["additional_args"]
                 assert "--cache-type-k q8_0" in inf_args

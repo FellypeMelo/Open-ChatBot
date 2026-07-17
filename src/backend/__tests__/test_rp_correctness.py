@@ -16,6 +16,7 @@ from src.backend.db.models import AgentState
 
 # --- Reflection / evolution -------------------------------------------------
 
+
 def test_evolve_character_traits_do_not_overwrite_core_stats():
     """A reflection whose 'traits' happen to contain a core stat key (energy,
     relationship, ...) must not clobber real state."""
@@ -27,7 +28,9 @@ def test_evolve_character_traits_do_not_overwrite_core_stats():
     def query_side_effect(model):
         q = MagicMock()
         if model is AgentState:
-            q.filter.return_value.with_for_update.return_value.first.return_value = agent
+            q.filter.return_value.with_for_update.return_value.first.return_value = (
+                agent
+            )
         else:  # Character (tag evolution) -> skip
             q.filter.return_value.first.return_value = None
         return q
@@ -40,7 +43,9 @@ def test_evolve_character_traits_do_not_overwrite_core_stats():
     )
 
     assert agent.stats["energy"] == 100, "core stat 'energy' was overwritten by a trait"
-    assert isinstance(agent.stats["relationship"], dict), "relationship dict was clobbered"
+    assert isinstance(agent.stats["relationship"], dict), (
+        "relationship dict was clobbered"
+    )
     assert agent.stats.get("mischief") == "high", "non-core trait should still merge"
 
 
@@ -90,6 +95,7 @@ def test_merge_reflection_traits_protection_is_case_insensitive():
 
 # --- State compression ------------------------------------------------------
 
+
 def test_compress_state_handles_none_stats():
     # Must not raise AttributeError on None.get(...). With no usable stats but a
     # known location/mood, keep grounding the model in those instead of dropping
@@ -102,7 +108,11 @@ def test_compress_state_handles_none_stats():
 
 def test_compress_state_handles_nondict_relationship():
     out = compress_state(
-        {"stats": {"energy": 50, "hunger": 0, "relationship": "not-a-dict"}, "location": "Office", "mood": "Calm"}
+        {
+            "stats": {"energy": 50, "hunger": 0, "relationship": "not-a-dict"},
+            "location": "Office",
+            "mood": "Calm",
+        }
     )
     assert isinstance(out, str) and "Office" in out
 
@@ -132,8 +142,11 @@ def test_compress_state_high_energy_reads_as_alert():
     # Bidirectional physicality: energy 97% must surface as ENERGIZED, not leave
     # the model to write the character frail (which contradicted the HUD).
     out = compress_state(
-        {"location": "X", "mood": "Y",
-         "stats": {"energy": 97, "hunger": 0, "relationship": {"score": 50}}},
+        {
+            "location": "X",
+            "mood": "Y",
+            "stats": {"energy": 97, "hunger": 0, "relationship": {"score": 50}},
+        },
         "User",
     )
     assert "ENERGIZED" in out
@@ -143,8 +156,11 @@ def test_compress_state_warmth_modulates_without_overriding_voice():
     # The warmth band is a dial expressed in the character's own voice, not the
     # old generic "Polite but reserved" that homogenized every character.
     out = compress_state(
-        {"location": "X", "mood": "Y",
-         "stats": {"energy": 50, "hunger": 0, "relationship": {"score": 40}}},
+        {
+            "location": "X",
+            "mood": "Y",
+            "stats": {"energy": 50, "hunger": 0, "relationship": {"score": 40}},
+        },
         "Bob",
     )
     assert "in your own voice" in out
@@ -153,6 +169,7 @@ def test_compress_state_warmth_modulates_without_overriding_voice():
 
 
 # --- Time-decay after clear -------------------------------------------------
+
 
 def test_clear_chat_history_keeps_stats_able_to_decay():
     """clear_chat_history reset stats must include 'last_update', otherwise
@@ -169,13 +186,18 @@ def test_clear_chat_history_keeps_stats_able_to_decay():
     with patch.object(chatmod, "vector_store", fake_vs):
         asyncio.run(chatmod.clear_chat_history(1, db=db))
 
-    assert "last_update" in state.stats, "reset stats missing last_update -> decay disabled"
+    assert "last_update" in state.stats, (
+        "reset stats missing last_update -> decay disabled"
+    )
     later = datetime.fromisoformat(state.stats["last_update"]) + timedelta(hours=3)
     decayed = update_needs(state.stats, later)
-    assert decayed["hunger"] > state.stats["hunger"], "hunger should rise over 3h; decay is dead"
+    assert decayed["hunger"] > state.stats["hunger"], (
+        "hunger should rise over 3h; decay is dead"
+    )
 
 
 # --- Lorebook scanner -------------------------------------------------------
+
 
 def _lore_entry(**kw):
     base = dict(
@@ -193,7 +215,9 @@ def _lore_entry(**kw):
 
 def _scanner_with(entries):
     db = MagicMock()
-    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = entries
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+        entries
+    )
     return LorebookScanner(db)
 
 
@@ -206,7 +230,9 @@ def test_lorebook_empty_key_does_not_match_everything():
 
 
 def test_lorebook_real_key_still_matches():
-    scanner = _scanner_with([_lore_entry(keys=["dragon"], content="Dragons breathe fire")])
+    scanner = _scanner_with(
+        [_lore_entry(keys=["dragon"], content="Dragons breathe fire")]
+    )
     out = scanner.scan_and_extract("I saw a dragon today", 1)
     assert out == ["Dragons breathe fire"]
 
@@ -231,7 +257,9 @@ def test_lorebook_explicit_regex_key_is_honored_as_authored():
 def test_lorebook_scan_depth_scans_recent_history():
     # LB-01 scan_depth: an entry with depth 3 fires on a key that appeared two
     # turns ago (within the window), not only in the current message.
-    scanner = _scanner_with([_lore_entry(keys=["castle"], scan_depth=3, content="CASTLE")])
+    scanner = _scanner_with(
+        [_lore_entry(keys=["castle"], scan_depth=3, content="CASTLE")]
+    )
     # Window = last 3 of [history..., current]: castle sits inside it.
     history = ["long ago", "we rode to the castle", "then it rained"]
     out = scanner.scan_and_extract("good night", 1, history=history)
@@ -240,7 +268,9 @@ def test_lorebook_scan_depth_scans_recent_history():
 
 def test_lorebook_scan_depth_excludes_older_messages():
     # A key older than the scan_depth window must NOT fire.
-    scanner = _scanner_with([_lore_entry(keys=["castle"], scan_depth=2, content="CASTLE")])
+    scanner = _scanner_with(
+        [_lore_entry(keys=["castle"], scan_depth=2, content="CASTLE")]
+    )
     history = ["we rode to the castle", "then it rained", "we made camp"]
     # Window = last 2 of [history..., current] -> "we made camp","good night".
     out = scanner.scan_and_extract("good night", 1, history=history)

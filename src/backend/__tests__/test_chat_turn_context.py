@@ -20,7 +20,13 @@ from sqlalchemy.orm.exc import StaleDataError
 from fastapi.testclient import TestClient
 
 from src.backend.db.database import Base, get_db
-from src.backend.db.models import AgentState, Chat, Character, MessageNode, SamplerPreset
+from src.backend.db.models import (
+    AgentState,
+    Chat,
+    Character,
+    MessageNode,
+    SamplerPreset,
+)
 from src.backend.api import chat as chat_module
 from src.backend.api.chat import LLMConfig
 from src.backend.core.engine.state_transitions import ACTIONS_CONFIG, apply_action_stats
@@ -263,14 +269,19 @@ def test_regenerate_does_not_duplicate_user_message_in_prompt(client, db_session
         captured["history"] = kwargs.get("history") or []
         return "PROMPT"
 
-    with patch(
-        "src.backend.api.chat.brain.build_prompt",
-        new=AsyncMock(side_effect=fake_build_prompt),
-    ), patch(
-        "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
-    ) as mock_complete:
+    with (
+        patch(
+            "src.backend.api.chat.brain.build_prompt",
+            new=AsyncMock(side_effect=fake_build_prompt),
+        ),
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+    ):
         mock_complete.return_value = {"content": "A whispered secret."}
-        resp = client.post("/chat", json={"character_id": 514, "parent_id": user_msg.id})
+        resp = client.post(
+            "/chat", json={"character_id": 514, "parent_id": user_msg.id}
+        )
 
     assert resp.status_code == 200
     # build_prompt appends the user line as the trailing turn, so it must NOT
@@ -703,10 +714,18 @@ async def test_run_consciousness_layer_purges_superseded_variant_memories(
     db_session.add(parent)
     db_session.commit()
     v1 = MessageNode(
-        character_id=521, role="assistant", content="v1", parent_id=parent.id, is_active=True
+        character_id=521,
+        role="assistant",
+        content="v1",
+        parent_id=parent.id,
+        is_active=True,
     )
     v2 = MessageNode(
-        character_id=521, role="assistant", content="v2", parent_id=parent.id, is_active=True
+        character_id=521,
+        role="assistant",
+        content="v2",
+        parent_id=parent.id,
+        is_active=True,
     )
     db_session.add_all([v1, v2])
     db_session.commit()
@@ -747,10 +766,18 @@ async def test_reflection_walks_active_branch_excluding_offbranch_variant(
     db_session.add(u)
     db_session.commit()
     chosen = MessageNode(
-        character_id=522, role="assistant", content="CHOSEN", parent_id=u.id, is_active=True
+        character_id=522,
+        role="assistant",
+        content="CHOSEN",
+        parent_id=u.id,
+        is_active=True,
     )
     offbranch = MessageNode(
-        character_id=522, role="assistant", content="OFFBRANCH", parent_id=u.id, is_active=True
+        character_id=522,
+        role="assistant",
+        content="OFFBRANCH",
+        parent_id=u.id,
+        is_active=True,
     )
     db_session.add_all([chosen, offbranch])
     db_session.commit()
@@ -881,21 +908,35 @@ def test_toggle_static_to_dynamic_reseeds_decay_clock(client, db_session):
     # EPIC Phase 3 (review finding): re-enabling a static->dynamic persona must
     # reset the decay clock so the frozen interval isn't dumped as one-shot decay.
     old = (datetime.now(timezone.utc) - timedelta(hours=200)).isoformat()
-    char = Character(id=730, name="ToggleReseed", description="d", dynamic_persona=False)
+    char = Character(
+        id=730, name="ToggleReseed", description="d", dynamic_persona=False
+    )
     db_session.add(char)
     db_session.commit()
     state = AgentState(character_id=730)
-    state.stats = {"energy": 100, "hunger": 0, "relationship": {"score": 50}, "last_update": old}
+    state.stats = {
+        "energy": 100,
+        "hunger": 0,
+        "relationship": {"score": 50},
+        "last_update": old,
+    }
     db_session.add(state)
     db_session.commit()
 
     resp = client.put(
         "/characters/730",
-        json={"name": "ToggleReseed", "description": "d", "dynamic_persona": True, "tag_ids": []},
+        json={
+            "name": "ToggleReseed",
+            "description": "d",
+            "dynamic_persona": True,
+            "tag_ids": [],
+        },
     )
     assert resp.status_code == 200
 
-    refreshed = db_session.query(AgentState).filter(AgentState.character_id == 730).first()
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 730).first()
+    )
     lu = datetime.fromisoformat(refreshed.stats["last_update"])
     if lu.tzinfo is None:
         lu = lu.replace(tzinfo=timezone.utc)
@@ -1078,11 +1119,14 @@ def test_clear_chat_history_reseeds_opening_greeting(client, db_session):
 
 
 def _mock_chat_turn(client, char_id, message="hi"):
-    with patch(
-        "src.backend.api.chat.brain.build_prompt", new=AsyncMock(return_value="P")
-    ), patch(
-        "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
-    ) as mc:
+    with (
+        patch(
+            "src.backend.api.chat.brain.build_prompt", new=AsyncMock(return_value="P")
+        ),
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mc,
+    ):
         mc.return_value = {"content": "a reply"}
         return client.post("/chat", json={"character_id": char_id, "message": message})
 
@@ -1094,13 +1138,20 @@ def test_static_persona_freezes_needs(client, db_session):
     db_session.add(char)
     db_session.commit()
     state = AgentState(character_id=710)
-    state.stats = {"energy": 100, "hunger": 0, "relationship": {"score": 50}, "last_update": old}
+    state.stats = {
+        "energy": 100,
+        "hunger": 0,
+        "relationship": {"score": 50},
+        "last_update": old,
+    }
     db_session.add(state)
     db_session.commit()
 
     assert _mock_chat_turn(client, 710).status_code == 200
 
-    refreshed = db_session.query(AgentState).filter(AgentState.character_id == 710).first()
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 710).first()
+    )
     assert refreshed.stats["energy"] == 100  # frozen: no decay applied
     assert refreshed.stats["hunger"] == 0
 
@@ -1111,13 +1162,20 @@ def test_dynamic_persona_decays_needs(client, db_session):
     db_session.add(char)
     db_session.commit()
     state = AgentState(character_id=711)
-    state.stats = {"energy": 100, "hunger": 0, "relationship": {"score": 50}, "last_update": old}
+    state.stats = {
+        "energy": 100,
+        "hunger": 0,
+        "relationship": {"score": 50},
+        "last_update": old,
+    }
     db_session.add(state)
     db_session.commit()
 
     assert _mock_chat_turn(client, 711).status_code == 200
 
-    refreshed = db_session.query(AgentState).filter(AgentState.character_id == 711).first()
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 711).first()
+    )
     assert refreshed.stats["energy"] < 100  # dynamic: decayed over the 8h gap
 
 
@@ -1126,7 +1184,12 @@ def test_dynamic_persona_flag_round_trips_via_api(client, db_session):
     # the Phase 5 UI can toggle it; omitting it defaults to dynamic.
     resp = client.post(
         "/characters/",
-        json={"name": "ToggleChar", "description": "d", "dynamic_persona": False, "tag_ids": []},
+        json={
+            "name": "ToggleChar",
+            "description": "d",
+            "dynamic_persona": False,
+            "tag_ids": [],
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["dynamic_persona"] is False
@@ -1432,11 +1495,7 @@ def test_chat_empty_reply_stores_no_memory(client, db_session):
         .one()
     )
     assert user_node.content == "hi"
-    state = (
-        db_session.query(AgentState)
-        .filter(AgentState.character_id == 523)
-        .first()
-    )
+    state = db_session.query(AgentState).filter(AgentState.character_id == 523).first()
     assert state.current_message_id == user_node.id
 
 

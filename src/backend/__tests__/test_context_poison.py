@@ -46,7 +46,10 @@ def test_clear_character_memories_removes_only_that_character(tmp_path):
     vs = _make_vs(tmp_path)
     vs.memories_store = _FakeStore(
         {
-            "m1": ("User: hi\nAI: We danced at the Baile ballroom", {"character_id": 1}),
+            "m1": (
+                "User: hi\nAI: We danced at the Baile ballroom",
+                {"character_id": 1},
+            ),
             "m2": ("User: hi\nAI: tuxedo again", {"character_id": 1}),
             "m3": ("memory belonging to a different character", {"character_id": 2}),
         }
@@ -54,7 +57,11 @@ def test_clear_character_memories_removes_only_that_character(tmp_path):
     removed = asyncio.run(vs.clear_character_memories(1))
 
     assert removed == 2
-    remaining = {cid for _t, meta in vs.memories_store._docs.values() for cid in [meta.get("character_id")]}
+    remaining = {
+        cid
+        for _t, meta in vs.memories_store._docs.values()
+        for cid in [meta.get("character_id")]
+    }
     assert 1 not in remaining
     assert 2 in remaining
     assert vs.memories_store.dumped is True
@@ -92,7 +99,9 @@ def test_delete_by_message_ids_removes_only_matching(tmp_path):
     removed = asyncio.run(vs.delete_by_message_ids([10]))
 
     assert removed == 1
-    remaining = [meta.get("message_id") for _t, meta in vs.memories_store._docs.values()]
+    remaining = [
+        meta.get("message_id") for _t, meta in vs.memories_store._docs.values()
+    ]
     assert 10 not in remaining
     assert 11 in remaining
     assert vs.memories_store.dumped is True
@@ -100,23 +109,36 @@ def test_delete_by_message_ids_removes_only_matching(tmp_path):
 
 def test_query_memory_drops_results_below_relevance_threshold(tmp_path):
     vs = _make_vs(tmp_path)
-    high = (Document(id="a", page_content="genuinely relevant memory", metadata={}), 0.82)
+    high = (
+        Document(id="a", page_content="genuinely relevant memory", metadata={}),
+        0.82,
+    )
     low = (Document(id="b", page_content="Baile ballroom poison", metadata={}), 0.06)
-    vs.memories_store.asimilarity_search_with_score = AsyncMock(return_value=[high, low])
+    vs.memories_store.asimilarity_search_with_score = AsyncMock(
+        return_value=[high, low]
+    )
 
     out = asyncio.run(vs.query_memory("hello", min_relevance=0.5))
     docs = out["documents"][0]
 
     assert "genuinely relevant memory" in docs
-    assert all("poison" not in d for d in docs), "irrelevant memory leaked past the threshold"
+    assert all("poison" not in d for d in docs), (
+        "irrelevant memory leaked past the threshold"
+    )
 
 
 def test_query_memory_prefers_recent_on_similar_scores(tmp_path):
     # RQ-01: with near-equal relevance, the more recent memory (higher
     # message_id) should rank first, so the character doesn't forget 'now'.
     vs = _make_vs(tmp_path)
-    old = (Document(id="o", page_content="OLD memory", metadata={"message_id": 1}), 0.80)
-    new = (Document(id="n", page_content="NEW memory", metadata={"message_id": 500}), 0.80)
+    old = (
+        Document(id="o", page_content="OLD memory", metadata={"message_id": 1}),
+        0.80,
+    )
+    new = (
+        Document(id="n", page_content="NEW memory", metadata={"message_id": 500}),
+        0.80,
+    )
     vs.memories_store.asimilarity_search_with_score = AsyncMock(return_value=[old, new])
 
     out = asyncio.run(vs.query_memory("q", n_results=2, min_relevance=0.5))
@@ -130,9 +152,30 @@ def test_query_memory_drops_near_duplicate_results(tmp_path):
     # RQ-03: near-identical memories (e.g. repeated paraphrases of one moment)
     # must not fill the top-k; only one representative is kept.
     vs = _make_vs(tmp_path)
-    dup_a = (Document(id="a", page_content="We danced at the ballroom tonight", metadata={"message_id": 5}), 0.9)
-    dup_b = (Document(id="b", page_content="We danced at the ballroom tonight.", metadata={"message_id": 6}), 0.89)
-    other = (Document(id="c", page_content="You told me about your dog", metadata={"message_id": 7}), 0.7)
+    dup_a = (
+        Document(
+            id="a",
+            page_content="We danced at the ballroom tonight",
+            metadata={"message_id": 5},
+        ),
+        0.9,
+    )
+    dup_b = (
+        Document(
+            id="b",
+            page_content="We danced at the ballroom tonight.",
+            metadata={"message_id": 6},
+        ),
+        0.89,
+    )
+    other = (
+        Document(
+            id="c",
+            page_content="You told me about your dog",
+            metadata={"message_id": 7},
+        ),
+        0.7,
+    )
     vs.memories_store.asimilarity_search_with_score = AsyncMock(
         return_value=[dup_a, dup_b, other]
     )

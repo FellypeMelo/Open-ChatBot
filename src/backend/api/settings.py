@@ -34,6 +34,7 @@ def _handle_errors(action: str):
 
     return decorator
 
+
 # Reject shell/control metacharacters in additional_args. args.split() already
 # passes tokens straight into Popen's argv (never through a shell), so this
 # isn't closing a shell-injection hole -- it's a defensive floor in case that

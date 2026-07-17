@@ -9,7 +9,9 @@ from src.backend.core.orchestration.bridge import Brain
 
 
 def test_render_macros_basic():
-    out = render_macros("Hi {{user}}, I am {{char}}.", char_name="Aria", user_name="Sam")
+    out = render_macros(
+        "Hi {{user}}, I am {{char}}.", char_name="Aria", user_name="Sam"
+    )
     assert out == "Hi Sam, I am Aria."
 
 
@@ -48,7 +50,12 @@ def test_build_prompt_resolves_macros_in_persona():
     user = types.SimpleNamespace(
         name="Sam", gender="Unknown", appearance=None, persona_description=None
     )
-    state = {"location": "x", "mood": "y", "stats": {"energy": 100, "hunger": 0, "relationship": {"score": 50}}, "active_summary": ""}
+    state = {
+        "location": "x",
+        "mood": "y",
+        "stats": {"energy": 100, "hunger": 0, "relationship": {"score": 50}},
+        "active_summary": "",
+    }
 
     prompt = asyncio.run(brain.build_prompt("hi", char, state, user=user))
     assert "Aria always remembers Sam." in prompt

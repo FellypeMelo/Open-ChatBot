@@ -146,7 +146,13 @@ class Brain:
             return "[…] " + text[-max_chars:].lstrip()
         return text[:max_chars].rstrip() + " […]"
 
-    def _build_anchor(self, character: Any, state: Dict[str, Any], user_name: str, char_display_name: str) -> str:
+    def _build_anchor(
+        self,
+        character: Any,
+        state: Dict[str, Any],
+        user_name: str,
+        char_display_name: str,
+    ) -> str:
         """Recency anchor (E.P.I.C. Phase 1): a compact persona-voice + current-
         scene reminder re-injected right before 'Reply:', so a small model reads
         WHO it is and WHERE it is as the very last thing before generating.
@@ -178,7 +184,9 @@ class Brain:
         parts = [f"[Stay in character] You are {name}."]
         if essence:
             essence = essence.rstrip()
-            parts.append(essence if essence.endswith((".", "!", "?", "…")) else essence + ".")
+            parts.append(
+                essence if essence.endswith((".", "!", "?", "…")) else essence + "."
+            )
         parts.append(f"Right now: {loc}; mood {mood}.")
         parts.append(
             f"Reply in-voice as {name}: react to what {user_name} just said, drive the tension, end with a hook."
@@ -255,11 +263,7 @@ class Brain:
 
             scanner = LorebookScanner(db)
             hist_texts = [
-                (
-                    m.get("content")
-                    if isinstance(m, dict)
-                    else getattr(m, "content", "")
-                )
+                (m.get("content") if isinstance(m, dict) else getattr(m, "content", ""))
                 or ""
                 for m in (history or [])
             ]
@@ -355,7 +359,11 @@ class Brain:
         # Layer 3: Identity & Tags & Persona.
         # All free-text card/persona fields are sanitized so a crafted value
         # cannot forge role markers ("User:", "Reply:", char/user name + ":").
-        char_display_name = character.nickname if (character and getattr(character, "nickname", None)) else (character.name if character else "You")
+        char_display_name = (
+            character.nickname
+            if (character and getattr(character, "nickname", None))
+            else (character.name if character else "You")
+        )
         _names = (user_name, char_name, char_display_name)
 
         # Layer 1 (assembled now that _names is known): retrieved memories are
@@ -407,21 +415,26 @@ class Brain:
         # was a top cause of "the character reads generic". Cut at a sentence
         # boundary, not mid-word, if the ceiling is ever hit (PB-01 safety kept).
         _card_cap = settings.CARD_MAX_TOKENS
-        short_desc = getattr(character, "short_description", None) or getattr(character, "description", None) or ""
+        short_desc = (
+            getattr(character, "short_description", None)
+            or getattr(character, "description", None)
+            or ""
+        )
         short_desc = self._truncate_at_sentence(
             self._sanitize(render_macros(short_desc, char_name, user_name), _names),
             _card_cap,
         )
         identity = (
-            f"{char_display_name}. {short_desc}"
-            if character
-            else "You are unique."
+            f"{char_display_name}. {short_desc}" if character else "You are unique."
         )
 
         persona_str = ""
         if character and getattr(character, "persona_prompt", None):
             persona = self._truncate_at_sentence(
-                self._sanitize(render_macros(character.persona_prompt, char_name, user_name), _names),
+                self._sanitize(
+                    render_macros(character.persona_prompt, char_name, user_name),
+                    _names,
+                ),
                 _card_cap,
             )
             persona_str = f"Personality: {persona}\n"
@@ -429,7 +442,9 @@ class Brain:
         scenario_str = ""
         if character and getattr(character, "scenario", None):
             scenario = self._truncate_at_sentence(
-                self._sanitize(render_macros(character.scenario, char_name, user_name), _names),
+                self._sanitize(
+                    render_macros(character.scenario, char_name, user_name), _names
+                ),
                 _card_cap,
             )
             scenario_str = f"Scenario: {scenario}\n"
@@ -459,9 +474,13 @@ class Brain:
             if user.gender and user.gender != "Unknown":
                 persona_parts.append(f"Gender: {self._sanitize(user.gender, _names)}")
             if getattr(user, "appearance", None):
-                persona_parts.append(f"Appearance: {self._sanitize(user.appearance, _names)}")
+                persona_parts.append(
+                    f"Appearance: {self._sanitize(user.appearance, _names)}"
+                )
             if getattr(user, "persona_description", None):
-                persona_parts.append(f"Persona: {self._sanitize(user.persona_description, _names)}")
+                persona_parts.append(
+                    f"Persona: {self._sanitize(user.persona_description, _names)}"
+                )
             if persona_parts:
                 user_persona = self._truncate_tokens(
                     f"User ({user_name}): " + " | ".join(persona_parts),

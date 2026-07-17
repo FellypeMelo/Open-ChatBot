@@ -5,6 +5,7 @@ Revises: f6926d3f5da7
 Create Date: 2026-07-17
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -29,9 +30,7 @@ def upgrade() -> None:
     if "dynamic_persona" not in existing:
         op.add_column(
             "characters",
-            sa.Column(
-                "dynamic_persona", sa.Boolean(), server_default=sa.text("1")
-            ),
+            sa.Column("dynamic_persona", sa.Boolean(), server_default=sa.text("1")),
         )
 
 

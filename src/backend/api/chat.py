@@ -15,7 +15,11 @@ from typing import List, Dict, Any, Optional
 from src.backend.core.deps import llama_client as llama, vector_store, brain
 from src.backend.core.orchestration.validator import validate_narrative_formatting
 from src.backend.core.context.macros import render_macros
-from src.backend.core.engine.engine import update_needs, evolve_character, apply_scene_update
+from src.backend.core.engine.engine import (
+    update_needs,
+    evolve_character,
+    apply_scene_update,
+)
 from src.backend.core.engine.state_transitions import (
     ACTIONS_CONFIG,
     apply_action_stats,
@@ -184,7 +188,9 @@ async def run_consciousness_layer(
                         .filter(AgentState.character_id == character_id)
                         .first()
                     )
-                    if _agent is not None and (chat_id is None or _agent.active_chat_id == chat_id):
+                    if _agent is not None and (
+                        chat_id is None or _agent.active_chat_id == chat_id
+                    ):
                         cur_loc = _agent.location or "Unknown"
                         cur_mood = _agent.mood or "Neutral"
                     else:
@@ -204,9 +210,7 @@ async def run_consciousness_layer(
                 messages = _active_branch_messages(
                     db, character_id, chat_id, message_id, settings.REFLECTION_INTERVAL
                 )
-                msg_dicts = [
-                    {"role": m.role, "content": m.content} for m in messages
-                ]
+                msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
 
                 reflection = await brain.reflect(
                     msg_dicts, window_size=settings.REFLECTION_INTERVAL
@@ -415,9 +419,7 @@ def _persist_assistant_reply(
             if attempt >= _max_retries:
                 raise
             if state_id is not None:
-                state = (
-                    db.query(AgentState).filter(AgentState.id == state_id).first()
-                )
+                state = db.query(AgentState).filter(AgentState.id == state_id).first()
 
 
 def _resolve_active_chat(
@@ -550,9 +552,7 @@ async def _prepare_chat_turn(
     # to this chat's own current pointer.
     if effective_parent_id is not None:
         parent_node = (
-            db.query(MessageNode)
-            .filter(MessageNode.id == effective_parent_id)
-            .first()
+            db.query(MessageNode).filter(MessageNode.id == effective_parent_id).first()
         )
         # Reject a parent_id that is missing, deactivated (a deleted/superseded
         # node -- grafting onto it would splice the turn onto a dead branch,
@@ -688,7 +688,6 @@ async def _prepare_chat_turn(
 
     config = request.config or LLMConfig()
 
-
     if config.preset_id:
         preset_obj = (
             db.query(SamplerPreset).filter(SamplerPreset.id == config.preset_id).first()
@@ -742,15 +741,11 @@ async def get_chat_history(
     )
     if chat_id is None:
         state = (
-            db.query(AgentState)
-            .filter(AgentState.character_id == character_id)
-            .first()
+            db.query(AgentState).filter(AgentState.character_id == character_id).first()
         )
         chat_id = state.active_chat_id if state else None
     if chat_id is not None:
-        q = q.filter(
-            or_(MessageNode.chat_id == chat_id, MessageNode.chat_id.is_(None))
-        )
+        q = q.filter(or_(MessageNode.chat_id == chat_id, MessageNode.chat_id.is_(None)))
     messages = q.order_by(MessageNode.timestamp.desc()).limit(100).all()
     return [
         {
@@ -986,9 +981,7 @@ async def delete_chat(chat_id: int, db: Session = Depends(get_db)):
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
     character_id = chat.character_id
-    state = (
-        db.query(AgentState).filter(AgentState.character_id == character_id).first()
-    )
+    state = db.query(AgentState).filter(AgentState.character_id == character_id).first()
     was_active = bool(state and state.active_chat_id == chat_id)
 
     # Null pointers that reference rows we are about to delete (FK-safe order).
@@ -1040,7 +1033,6 @@ async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
     'nuke everything' path -- use POST /chat/new for a non-destructive fresh
     session that keeps prior chats."""
     try:
-
         # Reset AgentState first and null its pointers into rows we will delete
         # (FK-safe once PRAGMA foreign_keys=ON is in effect).
         state = (
@@ -1070,9 +1062,9 @@ async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
         db.query(MessageNode).filter(MessageNode.character_id == character_id).delete(
             synchronize_session=False
         )
-        db.query(JournalEntry).filter(
-            JournalEntry.character_id == character_id
-        ).delete(synchronize_session=False)
+        db.query(JournalEntry).filter(JournalEntry.character_id == character_id).delete(
+            synchronize_session=False
+        )
         db.query(Chat).filter(Chat.character_id == character_id).delete(
             synchronize_session=False
         )
@@ -1088,9 +1080,7 @@ async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
         # lazy-create path (_resolve_active_chat) only ADOPTS existing history
         # and never seeds a greeting, so without this a clear strands the
         # character with no first message.
-        character = (
-            db.query(Character).filter(Character.id == character_id).first()
-        )
+        character = db.query(Character).filter(Character.id == character_id).first()
         if character and state:
             user = User.get_or_create_active(db)
             seed_initial_chat(db, character, user, state)
@@ -1288,9 +1278,7 @@ def deactivate_subtree(node_id: int, db: Session) -> List[int]:
     frontier = [node_id]
     while frontier:
         children = (
-            db.query(MessageNode)
-            .filter(MessageNode.parent_id.in_(frontier))
-            .all()
+            db.query(MessageNode).filter(MessageNode.parent_id.in_(frontier)).all()
         )
         if not children:
             break

@@ -5,6 +5,7 @@ Revises: 4856088c4fcd
 Create Date: 2026-07-17 12:00:23.450644
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -12,8 +13,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f6926d3f5da7'
-down_revision: Union[str, Sequence[str], None] = '4856088c4fcd'
+revision: str = "f6926d3f5da7"
+down_revision: Union[str, Sequence[str], None] = "4856088c4fcd"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -33,9 +34,7 @@ def upgrade() -> None:
             "chats", sa.Column("location", sa.String(), server_default="Living Room")
         )
     if "mood" not in existing:
-        op.add_column(
-            "chats", sa.Column("mood", sa.String(), server_default="Neutral")
-        )
+        op.add_column("chats", sa.Column("mood", sa.String(), server_default="Neutral"))
     if "clothes" not in existing:
         op.add_column(
             "chats", sa.Column("clothes", sa.String(), server_default="Casual")

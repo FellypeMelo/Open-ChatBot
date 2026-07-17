@@ -22,6 +22,7 @@ def _head_revision() -> str:
 def _build_schema(url: str) -> None:
     eng = create_engine(url)
     import src.backend.db.models  # noqa: F401 -- register tables on Base.metadata
+
     Base.metadata.create_all(eng)
     eng.dispose()
 

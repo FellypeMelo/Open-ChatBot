@@ -36,6 +36,7 @@ def default_stats() -> dict:
         },
     }
 
+
 # Junction table for Character <-> Tag (Many-to-Many)
 character_tags = Table(
     "character_tags",
@@ -159,9 +160,7 @@ class Chat(Base):
         index=True,
         nullable=False,
     )
-    user_id = Column(
-        Integer, ForeignKey("users.id"), index=True, nullable=True
-    )
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
     title = Column(String, default="New Chat")
     is_archived = Column(Boolean, default=False)
     # Per-chat snapshot of the conversation-local pointer/summary/counter. While

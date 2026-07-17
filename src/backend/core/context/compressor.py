@@ -67,13 +67,21 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
     # The old "Polite but reserved" label replaced every character's voice with
     # the same words, homogenizing a bubbly and a sombre character into one tone.
     if score <= 20:
-        parts.append(f"Warmth to {user_name}: cold ({score}%) -- guard up, make them earn it, in your own voice.")
+        parts.append(
+            f"Warmth to {user_name}: cold ({score}%) -- guard up, make them earn it, in your own voice."
+        )
     elif score <= 50:
-        parts.append(f"Warmth to {user_name}: reserved ({score}%) -- cordial but holding back, open slowly, in your own voice.")
+        parts.append(
+            f"Warmth to {user_name}: reserved ({score}%) -- cordial but holding back, open slowly, in your own voice."
+        )
     elif score <= 80:
-        parts.append(f"Warmth to {user_name}: warm ({score}%) -- open and at ease, let it show, in your own voice.")
+        parts.append(
+            f"Warmth to {user_name}: warm ({score}%) -- open and at ease, let it show, in your own voice."
+        )
     else:
-        parts.append(f"Warmth to {user_name}: close ({score}%) -- trusting and unguarded, in your own voice.")
+        parts.append(
+            f"Warmth to {user_name}: close ({score}%) -- trusting and unguarded, in your own voice."
+        )
 
     # Reflection-learned memory: surface a bounded, most-recent slice so the
     # character actually uses what it 'learned' about the user (RF-03).

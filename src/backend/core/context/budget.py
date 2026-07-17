@@ -106,7 +106,9 @@ class ContextBudgetCalculator:
         # Reserve a minimum share of the usable budget for conversation history.
         # Otherwise, on a small/quantized context (usable < fixed_cost) history
         # silently floors to 0 and the character loses all turn-to-turn recall.
-        min_history = max(0, int(self.usable_budget * settings.MIN_HISTORY_BUDGET_RATIO))
+        min_history = max(
+            0, int(self.usable_budget * settings.MIN_HISTORY_BUDGET_RATIO)
+        )
         history_budget = self.usable_budget - fixed_cost
         if history_budget < min_history:
             logger.warning(

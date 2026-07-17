@@ -316,7 +316,9 @@ def _apply_reflection_scene(target: Any, reflection: dict) -> None:
         target.mood = mood.strip()[:60]
 
 
-def _fold_reflection_into_stats(stats: Dict[str, Any], reflection: dict) -> Optional[str]:
+def _fold_reflection_into_stats(
+    stats: Dict[str, Any], reflection: dict
+) -> Optional[str]:
     """Apply the persona parts of a reflection (traits, facts, relationship delta,
     summary marker) into a stats dict IN PLACE. Returns the summary string, if
     any, so the caller can roll it into the right active_summary. Shared by the
@@ -496,9 +498,7 @@ def apply_scene_update(
         if not agent:
             return
         try:
-            on_active = (
-                active_chat_id is None or agent.active_chat_id == active_chat_id
-            )
+            on_active = active_chat_id is None or agent.active_chat_id == active_chat_id
             if on_active:
                 _apply_reflection_scene(agent, scene)
                 db.add(agent)

@@ -69,8 +69,7 @@ def test_migration_adds_parent_indexes_and_character_id_notnull():
         conn = sqlite3.connect(path)
         try:
             index_names = {
-                row[1]
-                for row in conn.execute("PRAGMA index_list('message_nodes')")
+                row[1] for row in conn.execute("PRAGMA index_list('message_nodes')")
             }
             assert "ix_message_nodes_parent_id" in index_names
             assert "ix_message_nodes_parent_active" in index_names

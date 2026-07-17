@@ -111,7 +111,9 @@ def init_db():
             # B8 (independent storylines): per-chat persona snapshot columns.
             if "location" not in chat_cols:
                 conn.execute(
-                    text("ALTER TABLE chats ADD COLUMN location TEXT DEFAULT 'Living Room'")
+                    text(
+                        "ALTER TABLE chats ADD COLUMN location TEXT DEFAULT 'Living Room'"
+                    )
                 )
             if "mood" not in chat_cols:
                 conn.execute(
@@ -169,21 +171,15 @@ def init_db():
                 )
             if "nickname" not in columns:
                 conn.execute(
-                    text(
-                        "ALTER TABLE characters ADD COLUMN nickname TEXT DEFAULT ''"
-                    )
+                    text("ALTER TABLE characters ADD COLUMN nickname TEXT DEFAULT ''")
                 )
             if "scenario" not in columns:
                 conn.execute(
-                    text(
-                        "ALTER TABLE characters ADD COLUMN scenario TEXT DEFAULT ''"
-                    )
+                    text("ALTER TABLE characters ADD COLUMN scenario TEXT DEFAULT ''")
                 )
             if "first_mes" not in columns:
                 conn.execute(
-                    text(
-                        "ALTER TABLE characters ADD COLUMN first_mes TEXT DEFAULT ''"
-                    )
+                    text("ALTER TABLE characters ADD COLUMN first_mes TEXT DEFAULT ''")
                 )
             if "mes_example" not in columns:
                 conn.execute(
@@ -345,7 +341,9 @@ def stamp_alembic_head_if_untracked():
         return
     from alembic import command
 
-    probe = create_engine(settings.DATABASE_URL, connect_args={"check_same_thread": False})
+    probe = create_engine(
+        settings.DATABASE_URL, connect_args={"check_same_thread": False}
+    )
     try:
         insp = inspect(probe)
         if "alembic_version" in insp.get_table_names():

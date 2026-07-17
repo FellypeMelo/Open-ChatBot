@@ -241,8 +241,12 @@ def test_reflection_on_background_chat_targets_that_chat_not_live_state(db_sessi
 
     db.refresh(chat_a)
     db.refresh(state)
-    assert chat_a.stats["relationship"]["score"] == 60, "not applied to reflecting chat A"
-    assert state.stats["relationship"]["score"] == 30, "corrupted the live (chat B) state"
+    assert chat_a.stats["relationship"]["score"] == 60, (
+        "not applied to reflecting chat A"
+    )
+    assert state.stats["relationship"]["score"] == 30, (
+        "corrupted the live (chat B) state"
+    )
 
     # The diary entry is scoped to chat A, not leaked globally.
     from src.backend.db.models import JournalEntry

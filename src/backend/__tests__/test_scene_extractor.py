@@ -21,8 +21,12 @@ def test_scene_gate_runs_only_on_movement():
     assert _reply_suggests_scene_change("The elevator doors open and she steps out.")
     assert _reply_suggests_scene_change("She leaves the office, making her way home.")
     # pure dialogue / emotion -> skip the LLM call (location can't have changed)
-    assert not _reply_suggests_scene_change('"You look tired," she says, smiling softly.')
-    assert not _reply_suggests_scene_change("Elara rubs her temple and lets out a dry laugh.")
+    assert not _reply_suggests_scene_change(
+        '"You look tired," she says, smiling softly.'
+    )
+    assert not _reply_suggests_scene_change(
+        "Elara rubs her temple and lets out a dry laugh."
+    )
     assert not _reply_suggests_scene_change("")
 
 

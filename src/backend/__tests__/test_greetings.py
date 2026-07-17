@@ -1,7 +1,6 @@
 """Alternate greetings: storage on the character card + seeding the opening
 message when a new chat starts (with {{char}}/{{user}} macros resolved)."""
 
-
 from src.backend.db.models import AgentState, MessageNode
 
 
@@ -10,7 +9,10 @@ def _make_char(client, **overrides):
         "name": "Aria",
         "description": "A calm librarian.",
         "first_mes": "Hello there, welcome.",
-        "alternate_greetings": ["*The door creaks* Oh, {{user}}. It's you.", "A third opening."],
+        "alternate_greetings": [
+            "*The door creaks* Oh, {{user}}. It's you.",
+            "A third opening.",
+        ],
     }
     payload.update(overrides)
     resp = client.post("/characters/", json=payload)
@@ -51,11 +53,7 @@ def test_new_chat_seeds_default_first_greeting(client, db_session):
     assert resp.status_code == 200
     chat_id = resp.json()["chat_id"]
 
-    msgs = (
-        db_session.query(MessageNode)
-        .filter(MessageNode.chat_id == chat_id)
-        .all()
-    )
+    msgs = db_session.query(MessageNode).filter(MessageNode.chat_id == chat_id).all()
     assert len(msgs) == 1
     assert msgs[0].role == "assistant"
     assert msgs[0].content == "Hello there, welcome."  # first_mes by default
@@ -74,11 +72,7 @@ def test_new_chat_seeds_chosen_greeting_with_macros_resolved(client, db_session)
     assert resp.status_code == 200
     chat_id = resp.json()["chat_id"]
 
-    msg = (
-        db_session.query(MessageNode)
-        .filter(MessageNode.chat_id == chat_id)
-        .first()
-    )
+    msg = db_session.query(MessageNode).filter(MessageNode.chat_id == chat_id).first()
     assert msg is not None
     assert "{{user}}" not in msg.content
     assert "Oh, User. It's you." in msg.content
@@ -87,7 +81,12 @@ def test_new_chat_seeds_chosen_greeting_with_macros_resolved(client, db_session)
 def test_new_chat_without_greetings_seeds_nothing(client, db_session):
     resp = client.post(
         "/characters/",
-        json={"name": "Blank", "description": "d", "first_mes": "", "alternate_greetings": []},
+        json={
+            "name": "Blank",
+            "description": "d",
+            "first_mes": "",
+            "alternate_greetings": [],
+        },
     )
     cid = resp.json()["id"]
     chat_id = client.post(f"/chat/new/{cid}").json()["chat_id"]

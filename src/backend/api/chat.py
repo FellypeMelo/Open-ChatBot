@@ -45,6 +45,7 @@ async def run_consciousness_layer(
     force_reflect: bool = False,
     chat_id: Optional[int] = None,
     store_memory: bool = True,
+    message_id: Optional[int] = None,
 ):
     """Background task for memory and evolution."""
     try:
@@ -53,11 +54,15 @@ async def run_consciousness_layer(
             # 1. Store memory, scoped to (character, chat) so this turn can only
             # ever be recalled inside its own chat/session. Skipped for synthetic
             # (quick-action) turns whose canned first-person text would otherwise
-            # accumulate and self-retrieve on every repeat (PZ-04).
+            # accumulate and self-retrieve on every repeat (PZ-04). Tagged with the
+            # assistant message id so it can be purged when that node is
+            # edited/deleted/regenerated away (PZ-01).
             if store_memory:
                 memory_meta = {"character_id": character_id}
                 if chat_id is not None:
                     memory_meta["chat_id"] = chat_id
+                if message_id is not None:
+                    memory_meta["message_id"] = message_id
                 await vector_store.add_memory(
                     f"User: {user_message}\nAI: {ai_response}",
                     metadata=memory_meta,
@@ -830,7 +835,7 @@ async def chat(
             # but could append a correction instruction to the next prompt.
 
         parse_actions_to_state(reply, ctx.state)
-        _persist_assistant_reply(db, ctx.state, ctx, reply, request_id)
+        ai_msg = _persist_assistant_reply(db, ctx.state, ctx, reply, request_id)
 
         background_tasks.add_task(
             run_consciousness_layer,
@@ -840,6 +845,7 @@ async def chat(
             force_reflect=ctx.force_reflect,
             chat_id=ctx.chat_id,
             store_memory=not ctx.is_action,
+            message_id=ai_msg.id,
         )
 
         latency = (
@@ -943,6 +949,7 @@ async def chat_stream(
                         force_reflect=ctx.force_reflect,
                         chat_id=ctx.chat_id,
                         store_memory=not ctx.is_action,
+                        message_id=ai_msg.id,
                     )
                     # Return full state for reactive HUD
                     updated_state = {
@@ -967,10 +974,12 @@ async def chat_stream(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-def deactivate_subtree(node_id: int, db: Session):
-    """Mark every descendant of node_id inactive (the node itself is untouched).
-    Iterative, level-batched walk -- avoids per-node queries and unbounded
-    recursion on a long linear message chain."""
+def deactivate_subtree(node_id: int, db: Session) -> List[int]:
+    """Mark every descendant of node_id inactive (the node itself is untouched)
+    and return the ids of the nodes deactivated, so callers can purge those
+    turns' vector memories (PZ-01). Iterative, level-batched walk -- avoids
+    per-node queries and unbounded recursion on a long linear message chain."""
+    deactivated: List[int] = []
     frontier = [node_id]
     while frontier:
         children = (
@@ -983,6 +992,8 @@ def deactivate_subtree(node_id: int, db: Session):
         for child in children:
             child.is_active = False
         frontier = [child.id for child in children]
+        deactivated.extend(frontier)
+    return deactivated
 
 
 @router.put("/chat/message/{message_id}")
@@ -1004,11 +1015,12 @@ async def edit_message(
     msg.content = req.content
 
     # If a user message is edited, invalidate all subsequent assistant responses (and their subtrees)
+    deactivated: List[int] = []
     if msg.role == "user":
         logger.info(
             f"Backend edit_message: deactivating subtree for user message {message_id}"
         )
-        deactivate_subtree(msg.id, db)
+        deactivated = deactivate_subtree(msg.id, db)
 
         # Update current_message_id to the edited message so tree can resume from here
         state = (
@@ -1020,6 +1032,10 @@ async def edit_message(
             state.current_message_id = msg.id
 
     db.commit()
+    # Purge the vector memories of the now-inactive turns so edited-away content
+    # can't resurface via RAG (PZ-01).
+    if deactivated:
+        await vector_store.delete_by_message_ids(deactivated)
     logger.info(f"Backend edit_message: committed successfully for {message_id}")
     return {"status": "success", "message": "Message edited successfully"}
 
@@ -1035,7 +1051,7 @@ async def delete_message(message_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Message not found or inactive")
 
     msg.is_active = False
-    deactivate_subtree(msg.id, db)
+    deactivated = [msg.id] + deactivate_subtree(msg.id, db)
 
     # Update current_message_id to parent if this was the current message
     state = (
@@ -1045,4 +1061,6 @@ async def delete_message(message_id: int, db: Session = Depends(get_db)):
         state.current_message_id = msg.parent_id
 
     db.commit()
+    # Purge the deleted turn's (and its subtree's) vector memories (PZ-01).
+    await vector_store.delete_by_message_ids(deactivated)
     return {"status": "success", "message": "Message deleted successfully"}

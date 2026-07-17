@@ -76,6 +76,28 @@ def test_clear_by_metadata_surfaces_persist_failure(tmp_path):
         asyncio.run(vs.clear_chat_memories(9))
 
 
+def test_delete_by_message_ids_removes_only_matching(tmp_path):
+    """Memories tied to edited/deleted/regenerated-away message nodes must be
+    removable by their assistant message id, so discarded content stops being
+    retrievable via RAG (PZ-01)."""
+    vs = _make_vs(tmp_path)
+    vs.memories_store = _FakeStore(
+        {
+            "d1": ("turn A", {"character_id": 1, "message_id": 10}),
+            "d2": ("turn B", {"character_id": 1, "message_id": 11}),
+            "d3": ("legacy, no id", {"character_id": 1}),
+        }
+    )
+
+    removed = asyncio.run(vs.delete_by_message_ids([10]))
+
+    assert removed == 1
+    remaining = [meta.get("message_id") for _t, meta in vs.memories_store._docs.values()]
+    assert 10 not in remaining
+    assert 11 in remaining
+    assert vs.memories_store.dumped is True
+
+
 def test_query_memory_drops_results_below_relevance_threshold(tmp_path):
     vs = _make_vs(tmp_path)
     high = (Document(id="a", page_content="genuinely relevant memory", metadata={}), 0.82)

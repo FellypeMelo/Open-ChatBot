@@ -688,6 +688,32 @@ async def test_run_consciousness_layer_skips_memory_when_store_memory_false(
     mock_add.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_tags_memory_with_message_id(
+    db_session, monkeypatch
+):
+    # The memory carries the assistant message id so it can be purged when that
+    # node is edited/deleted/regenerated away (PZ-01).
+    char = Character(id=515, name="TagChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=515))
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with patch.object(
+        chat_module.vector_store, "add_memory", new_callable=AsyncMock
+    ) as mock_add:
+        await chat_module.run_consciousness_layer(
+            515, "hi", "reply", chat_id=8, message_id=99
+        )
+
+    mock_add.assert_awaited_once()
+    _args, kwargs = mock_add.call_args
+    assert kwargs["metadata"]["message_id"] == 99
+
+
 # ---------------------------------------------------------------------------
 # /chat/clear/{character_id} resets AgentState to the documented defaults
 # ---------------------------------------------------------------------------
@@ -879,6 +905,45 @@ def test_delete_message_deactivates_subtree_and_resets_current_message_to_parent
     assert refreshed_reply.is_active is False
     assert refreshed_grandchild.is_active is False
     assert refreshed_state.current_message_id == root.id
+
+
+def test_delete_message_purges_vector_memory_for_deactivated_nodes(client, db_session):
+    # PZ-01: deleting a message purges the RAG memories of the deleted node and
+    # its subtree so discarded content can't resurface via retrieval.
+    char = Character(id=516, name="PurgeChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    root = MessageNode(character_id=516, role="user", content="Hi", is_active=True)
+    db_session.add(root)
+    db_session.commit()
+    reply = MessageNode(
+        character_id=516,
+        role="assistant",
+        content="Hello!",
+        parent_id=root.id,
+        is_active=True,
+    )
+    db_session.add(reply)
+    db_session.commit()
+    follow = MessageNode(
+        character_id=516,
+        role="user",
+        content="More",
+        parent_id=reply.id,
+        is_active=True,
+    )
+    db_session.add(follow)
+    db_session.commit()
+
+    with patch.object(
+        chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+    ) as mock_del:
+        resp = client.delete(f"/chat/message/{reply.id}")
+
+    assert resp.status_code == 200
+    mock_del.assert_awaited_once()
+    purged = set(mock_del.call_args[0][0])
+    assert {reply.id, follow.id} <= purged
 
 
 def test_delete_message_not_found_returns_404(client, db_session):

@@ -167,8 +167,9 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error adding to vector store: {e}")
 
-    def _clear_by_metadata(self, key: str, value: Any, label: str) -> int:
-        """Delete every stored memory whose metadata[key] == value and persist.
+    def _delete_where(self, predicate, label: str) -> int:
+        """Delete every stored memory whose metadata satisfies `predicate` and
+        persist.
 
         turbovec has no delete-by-metadata, so we resolve the ids from the
         side-car doc metadata and delete by id (O(1) each). Returns the count."""
@@ -176,7 +177,7 @@ class VectorStore:
             ids = [
                 sid
                 for sid, (_text, meta) in self.memories_store._docs.items()
-                if meta.get(key) == value
+                if predicate(meta)
             ]
             if ids:
                 self.memories_store.delete(ids)
@@ -191,6 +192,9 @@ class VectorStore:
             logger.error(f"Error clearing memories for {label}: {e}")
             raise
 
+    def _clear_by_metadata(self, key: str, value: Any, label: str) -> int:
+        return self._delete_where(lambda meta: meta.get(key) == value, label)
+
     async def clear_character_memories(self, character_id: int) -> int:
         """Delete every stored memory belonging to a character so a reset
         conversation cannot resurface old or hallucinated memories via RAG."""
@@ -202,6 +206,17 @@ class VectorStore:
         """Delete every stored memory belonging to a single chat/session so its
         memories never leak into a sibling chat of the same character."""
         return self._clear_by_metadata("chat_id", chat_id, f"chat {chat_id}")
+
+    async def delete_by_message_ids(self, message_ids) -> int:
+        """Delete memories tied to specific assistant message nodes so content
+        that was edited/deleted/regenerated away stops being retrievable via RAG
+        (PZ-01). Memories are tagged with the assistant node's id at write time."""
+        ids = set(message_ids)
+        if not ids:
+            return 0
+        return self._delete_where(
+            lambda meta: meta.get("message_id") in ids, f"{len(ids)} message id(s)"
+        )
 
     async def query_memory(
         self,

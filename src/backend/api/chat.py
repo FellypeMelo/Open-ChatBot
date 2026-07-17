@@ -677,6 +677,48 @@ def _character_greetings(character: Character) -> List[str]:
     return greetings
 
 
+def seed_initial_chat(
+    db: Session,
+    character: Character,
+    user: Optional[User],
+    state: AgentState,
+) -> Chat:
+    """Create a character's FIRST chat and seed its opening greeting (greeting #1
+    / first_mes) as the root assistant message, wiring the live state at it. So a
+    freshly created or imported card shows its intro immediately instead of a
+    blank chat until the first manual 'New Chat' (SEC-02). Caller must have
+    flushed `character` and `state` (both need ids)."""
+    chat = Chat(
+        character_id=character.id,
+        user_id=(user.id if user else None),
+        title="New Chat",
+    )
+    db.add(chat)
+    db.flush()
+    state.active_chat_id = chat.id
+
+    greetings = _character_greetings(character)
+    greeting_text = greetings[0] if greetings else None
+    if greeting_text and greeting_text.strip():
+        rendered = render_macros(
+            greeting_text, character.name, user.name if user else "User"
+        )
+        greeting_msg = MessageNode(
+            character_id=character.id,
+            chat_id=chat.id,
+            user_id=(user.id if user else None),
+            role="assistant",
+            content=rendered,
+            parent_id=None,
+            request_id=None,
+        )
+        db.add(greeting_msg)
+        db.flush()
+        state.current_message_id = greeting_msg.id
+        chat.current_message_id = greeting_msg.id
+    return chat
+
+
 @router.post("/chat/new/{character_id}")
 async def new_chat(
     character_id: int,

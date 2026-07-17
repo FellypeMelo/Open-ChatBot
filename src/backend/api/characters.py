@@ -14,7 +14,9 @@ from src.backend.db.models import (
     MessageNode,
     LorebookEntry,
     Chat,
+    User,
 )
+from src.backend.api.chat import seed_initial_chat
 from src.backend.core.deps import brain, vector_store
 from src.backend.core.engine.engine import clamp_stat, DEFAULT_RELATIONSHIP_SCORE
 from src.backend.api.common import get_or_404
@@ -121,9 +123,15 @@ async def create_character(char: CharacterUpsert, db: Session = Depends(get_db))
     db.commit()
     db.refresh(new_char)
 
-    # Initialize state
-    db.add(AgentState(character_id=new_char.id))
+    # Initialize state and seed the opening greeting into a first chat so the
+    # card's intro shows immediately instead of a blank chat (SEC-02).
+    user = User.get_or_create_active(db)
+    state = AgentState(character_id=new_char.id)
+    db.add(state)
+    db.flush()
+    seed_initial_chat(db, new_char, user, state)
     db.commit()
+    db.refresh(new_char)
 
     return new_char
 
@@ -166,11 +174,15 @@ async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)
     with open(f"static/avatars/{new_char.id}.png", "wb") as f:
         f.write(content)
 
-    # Initialize state
+    # Initialize state and seed the opening greeting into a first chat so the
+    # imported card's intro shows immediately (SEC-02).
+    user = User.get_or_create_active(db)
     new_state = AgentState(character_id=new_char.id)
     if card.data.first_mes:
         new_state.mood = "Neutral (start of conversation)"
     db.add(new_state)
+    db.flush()
+    seed_initial_chat(db, new_char, user, new_state)
     db.commit()
 
     # Import Lorebook (character_book)

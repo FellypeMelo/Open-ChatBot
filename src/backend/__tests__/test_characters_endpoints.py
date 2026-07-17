@@ -462,3 +462,35 @@ def test_journal_entries_returned_newest_first(client, db_session):
     assert data[0]["mood_at_time"] == "Excited"
     assert data[0]["relationship_score"] == 60
     assert data[0]["energy_level"] == 90
+
+
+def test_create_character_seeds_opening_greeting(client, db_session):
+    # SEC-02: a created character with a first_mes immediately has an opening
+    # assistant message in a first chat (not a blank chat), with macros resolved.
+    resp = client.post(
+        "/characters/",
+        json={
+            "name": "Greeter",
+            "description": "d",
+            "first_mes": "Hello traveler, I am {{char}}.",
+        },
+    )
+    assert resp.status_code == 200
+    char_id = resp.json()["id"]
+
+    hist = client.get(f"/history/{char_id}").json()
+    assert len(hist) == 1
+    assert hist[0]["role"] == "assistant"
+    # {{char}} macro resolved to the character name.
+    assert hist[0]["content"] == "Hello traveler, I am Greeter."
+
+
+def test_create_character_without_greeting_has_no_opening_message(client, db_session):
+    # A character without a first_mes must NOT get a blank assistant node.
+    resp = client.post(
+        "/characters/",
+        json={"name": "Silent", "description": "d", "first_mes": ""},
+    )
+    assert resp.status_code == 200
+    char_id = resp.json()["id"]
+    assert client.get(f"/history/{char_id}").json() == []

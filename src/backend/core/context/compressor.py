@@ -3,6 +3,11 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# Bounded, most-recent slices so reflection-learned facts/traits actually reach
+# the prompt without letting them grow into the whole context window.
+FACTS_IN_PROMPT = 5
+TRAITS_IN_PROMPT = 5
+
 COMPRESSED_MASTER_PROMPT = """Roleplay as a living entity. You are NOT an AI.
 Rules:
 1. Describe body, emotions, environment naturally. Initiate actions. Evolve relationships.
@@ -56,5 +61,19 @@ def compress_state(state: Dict[str, Any], user_name: str = "User") -> str:
         parts.append(
             f"Rel(Close): Highly familiar, trusting, and at ease with {user_name}."
         )
+
+    # Reflection-learned memory: surface a bounded, most-recent slice so the
+    # character actually uses what it 'learned' about the user (RF-03).
+    facts = stats.get("facts")
+    if isinstance(facts, list):
+        shown = [str(f) for f in facts[-FACTS_IN_PROMPT:] if f]
+        if shown:
+            parts.append("Known facts: " + "; ".join(shown))
+
+    traits = stats.get("discovered_traits")
+    if isinstance(traits, list):
+        shown_traits = [str(t) for t in traits[-TRAITS_IN_PROMPT:] if t]
+        if shown_traits:
+            parts.append("Traits: " + ", ".join(shown_traits))
 
     return " | ".join(parts)

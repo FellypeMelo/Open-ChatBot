@@ -58,6 +58,27 @@ def test_compress_state_handles_nondict_relationship():
     assert isinstance(out, str) and "Office" in out
 
 
+def test_compress_state_injects_learned_facts_and_traits():
+    # RF-03: reflection extracts facts/traits and stores them, but they were
+    # never surfaced to the model, so the character 'forgot' them every turn.
+    out = compress_state(
+        {
+            "location": "X",
+            "mood": "Y",
+            "stats": {
+                "energy": 100,
+                "relationship": {"score": 50},
+                "facts": ["user's name is Alice", "allergic to cats"],
+                "discovered_traits": ["curious"],
+            },
+        },
+        "User",
+    )
+    assert "Alice" in out
+    assert "allergic to cats" in out
+    assert "curious" in out
+
+
 # --- Time-decay after clear -------------------------------------------------
 
 def test_clear_chat_history_keeps_stats_able_to_decay():

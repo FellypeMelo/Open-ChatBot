@@ -133,6 +133,15 @@ export interface Tag {
   instruction: string;
 }
 
+export interface User {
+  id: number;
+  name: string;
+  gender: string;
+  is_active: boolean;
+  persona_description?: string;
+  appearance?: string;
+}
+
 export interface CharacterStats {
   energy: number;
   hunger: number;

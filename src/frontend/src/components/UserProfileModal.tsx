@@ -1,11 +1,5 @@
 import React, { useState } from 'react'
-
-interface User {
-  name: string
-  gender: string
-  persona_description?: string
-  appearance?: string
-}
+import type { User } from '../services/api'
 
 interface UserProfileModalProps {
   user: User | null

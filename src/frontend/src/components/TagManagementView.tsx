@@ -1,10 +1,5 @@
 import React, { useMemo, useState } from 'react'
-
-interface Tag {
-  id: number
-  label: string
-  instruction: string
-}
+import type { Tag } from '../services/api'
 
 interface TagManagementViewProps {
   tags: Tag[]

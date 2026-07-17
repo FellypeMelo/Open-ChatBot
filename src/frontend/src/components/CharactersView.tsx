@@ -1,17 +1,5 @@
 import React, { useState } from 'react'
-
-interface Tag {
-  id: number
-  label: string
-}
-
-interface Character {
-  id: number
-  name: string
-  description: string
-  tags: Tag[]
-  avatar_url?: string
-}
+import type { Character } from '../services/api'
 
 interface CharactersViewProps {
   characters: Character[]

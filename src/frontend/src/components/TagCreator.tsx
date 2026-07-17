@@ -1,10 +1,5 @@
 import React, { useState } from 'react'
-
-interface Tag {
-  id: number
-  label: string
-  instruction: string
-}
+import type { Tag } from '../services/api'
 
 interface TagCreatorProps {
   onClose: () => void

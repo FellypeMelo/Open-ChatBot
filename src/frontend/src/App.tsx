@@ -11,17 +11,8 @@ import TagCreator from './components/TagCreator'
 import ErrorBoundary from './components/ErrorBoundary'
 import * as api from './services/api'
 import type { MessageNode } from './hooks/useMessageTree'
-import type { Character, Tag } from './services/api'
+import type { Character, Tag, User } from './services/api'
 import { useSettings } from './hooks/useSettings'
-
-interface User {
-  id: number
-  name: string
-  gender: string
-  is_active: boolean
-  persona_description?: string
-  appearance?: string
-}
 
 type View = 'chat' | 'characters' | 'archives' | 'library'
 type ModalType = 'character' | 'user' | 'tag' | 'settings' | null

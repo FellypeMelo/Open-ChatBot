@@ -1,11 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import type { Character } from '../services/api'
-
-interface Tag {
-  id: number
-  label: string
-  instruction: string
-}
+import type { Character, Tag } from '../services/api'
 
 interface CharacterFormData {
   name: string

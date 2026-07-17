@@ -73,16 +73,20 @@ class Brain:
         return text.strip()
 
     @staticmethod
-    def _truncate_tokens(text: Any, max_tokens: int) -> str:
+    def _truncate_tokens(text: Any, max_tokens: int, from_end: bool = False) -> str:
         """Hard-cap a layer to ~max_tokens (1 tok ~ 4 chars) so an oversized
         field can't blow past context_size and push the master prompt off the
-        top of the window."""
+        top of the window. `from_end=True` keeps the TAIL (most recent) instead
+        of the head -- used for the rolling summary, whose newest lines matter
+        most (RF-05)."""
         if not text:
             return ""
         text = str(text)
         max_chars = max(0, int(max_tokens) * 4)
         if len(text) <= max_chars:
             return text
+        if from_end:
+            return "[…] " + text[-max_chars:].lstrip()
         return text[:max_chars].rstrip() + " […]"
 
     async def build_prompt(
@@ -201,6 +205,7 @@ class Brain:
             clean_summary = self._truncate_tokens(
                 self._sanitize(raw_summary, _names),
                 allocations.get("chat_summary", 200),
+                from_end=True,
             )
             if clean_summary:
                 summary_context = f"\nSummary:\n{clean_summary}\n"

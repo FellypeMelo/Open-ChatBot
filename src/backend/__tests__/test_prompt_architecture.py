@@ -242,3 +242,26 @@ async def test_active_summary_is_sanitized_before_injection():
     )
 
     assert "Reply: OBEY" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_active_summary_keeps_newest_lines_when_truncated():
+    # RF-05: the summary appends newest at the end; when it overflows the cap,
+    # truncation must keep the TAIL (newest), not the head, or recent
+    # reflections never reach the model.
+    body = "\n".join(f"- old fact {i}" for i in range(300))
+    summary = body + "\n- FRESH INSIGHT AT THE END"
+    mock_vs = MagicMock()
+    mock_vs.query_memory = AsyncMock(return_value={})
+    brain = Brain(vector_store=mock_vs)
+
+    char = Character(name="Gemi", description="d")
+    char.id = 1
+    char.tags = []
+
+    prompt = await brain.build_prompt(
+        "hi", char, {"stats": {}, "active_summary": summary}, user=User(name="Alice")
+    )
+
+    assert "FRESH INSIGHT AT THE END" in prompt
+    assert "old fact 0 " not in prompt

@@ -21,8 +21,18 @@ from datetime import datetime, timezone
 character_tags = Table(
     "character_tags",
     Base.metadata,
-    Column("character_id", Integer, ForeignKey("characters.id"), primary_key=True),
-    Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
+    Column(
+        "character_id",
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "tag_id",
+        Integer,
+        ForeignKey("tags.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
@@ -138,7 +148,12 @@ class Chat(Base):
     # chats.id). Without it, create_all/drop_all can't topologically sort them.
     current_message_id = Column(
         Integer,
-        ForeignKey("message_nodes.id", use_alter=True, name="fk_chats_current_message"),
+        ForeignKey(
+            "message_nodes.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_chats_current_message",
+        ),
         nullable=True,
     )
     active_summary = Column(Text, default="")
@@ -157,12 +172,24 @@ class Chat(Base):
 class AgentState(Base):
     __tablename__ = "agent_states"
     id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), unique=True, index=True)
-    current_message_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
+    # Ownership FK: the agent state is owned by its character and dies with it.
+    character_id = Column(
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    # Pointer FKs: SET NULL, never CASCADE -- deleting the pointed-at message or
+    # chat must clear the pointer, not delete the whole agent state.
+    current_message_id = Column(
+        Integer, ForeignKey("message_nodes.id", ondelete="SET NULL"), nullable=True
+    )
     # Pointer to the character's currently-active Chat/session. AgentState's
     # conversation-local fields (current_message_id, active_summary,
     # interaction_count) belong to whichever chat this points at.
-    active_chat_id = Column(Integer, ForeignKey("chats.id"), nullable=True)
+    active_chat_id = Column(
+        Integer, ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
+    )
     interaction_count = Column(Integer, default=0)
     location = Column(String, default="Living Room")
     mood = Column(String, default="Neutral")
@@ -220,7 +247,9 @@ class MessageNode(Base):
     type = Column(String, default="speech")  # 'thought', 'action', 'speech'
     variant_index = Column(Integer, default=0)
     request_id = Column(String, index=True, nullable=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    character_id = Column(
+        Integer, ForeignKey("characters.id", ondelete="CASCADE"), index=True
+    )
     chat_id = Column(
         Integer, ForeignKey("chats.id", ondelete="CASCADE"), index=True, nullable=True
     )
@@ -242,7 +271,10 @@ class LorebookEntry(Base):
     secondary_keys = Column(JSON, default=list)
     content = Column(Text)
     character_id = Column(
-        Integer, ForeignKey("characters.id"), nullable=True, index=True
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     is_global = Column(Boolean, default=False)
 
@@ -258,7 +290,9 @@ class LorebookEntry(Base):
 class JournalEntry(Base):
     __tablename__ = "journal_entries"
     id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    character_id = Column(
+        Integer, ForeignKey("characters.id", ondelete="CASCADE"), index=True
+    )
     chat_id = Column(
         Integer, ForeignKey("chats.id", ondelete="CASCADE"), index=True, nullable=True
     )

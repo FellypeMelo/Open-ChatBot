@@ -187,6 +187,26 @@ describe('ChatView', () => {
     expect(setInput).toHaveBeenCalledWith('New text')
   })
 
+  it('auto-grows the composer to fit its content as the value changes', () => {
+    const { rerender } = render(<ChatView {...defaultProps} activeChar={baseCharacter} input="" />)
+    const textarea = screen.getByPlaceholderText('Write a prompt for Aria...') as HTMLTextAreaElement
+    Object.defineProperty(textarea, 'scrollHeight', { value: 72, configurable: true })
+
+    rerender(<ChatView {...defaultProps} activeChar={baseCharacter} input={'line1\nline2\nline3'} />)
+
+    expect(textarea.style.height).toBe('72px')
+  })
+
+  it('caps the composer height so tall content scrolls instead of growing unbounded', () => {
+    const { rerender } = render(<ChatView {...defaultProps} activeChar={baseCharacter} input="" />)
+    const textarea = screen.getByPlaceholderText('Write a prompt for Aria...') as HTMLTextAreaElement
+    Object.defineProperty(textarea, 'scrollHeight', { value: 999, configurable: true })
+
+    rerender(<ChatView {...defaultProps} activeChar={baseCharacter} input={'a\nb\nc\nd\ne\nf\ng\nh'} />)
+
+    expect(textarea.style.height).toBe('160px')
+  })
+
   // ---- Regenerate ----
 
   it('calls onRegenerate with the parent id when Regenerate is clicked', () => {

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import Icon from './components/Icon'
 import Sidebar from './components/Sidebar'
+import MobileTabBar from './components/MobileTabBar'
 import CharactersView from './components/CharactersView'
 import ChatView from './components/ChatView'
 import TagManagementView from './components/TagManagementView'
@@ -14,6 +16,7 @@ import type { MessageNode } from './hooks/useMessageTree'
 import type { Character, CharacterInput, CharacterState, Tag, User } from './services/api'
 import type { CharacterFormData } from './components/CharacterCreator'
 import { useSettings } from './hooks/useSettings'
+import { useIsMobile } from './hooks/useIsMobile'
 
 type View = 'chat' | 'characters' | 'archives' | 'library'
 type ModalType = 'character' | 'user' | 'tag' | 'settings' | null
@@ -61,6 +64,7 @@ function App() {
   const { config } = useSettings()
   const [currentView, setCurrentView] = useState<View>('characters')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const isMobile = useIsMobile()
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -535,14 +539,18 @@ function App() {
           onClose={() => setIsSidebarOpen(false)}
         />
 
-        <main className="flex-1 h-full overflow-hidden flex flex-col min-w-0">
+        <main
+          className="flex-1 h-full overflow-hidden flex flex-col min-w-0"
+          style={isMobile ? { paddingBottom: 'calc(3.5rem + env(safe-area-inset-bottom))' } : undefined}
+        >
           {/* Mobile Top Header */}
           <header className="md:hidden flex items-center justify-between px-md py-sm bg-[#0A0A0B]/90 backdrop-blur border-b border-white/5 z-30 shrink-0">
-            <button 
+            <button
               onClick={() => setIsSidebarOpen(true)}
-              className="p-1 text-[#A1A1AA] hover:text-white flex items-center"
+              aria-label="Open menu"
+              className="flex items-center justify-center min-h-11 min-w-11 -ml-2 text-[#A1A1AA] hover:text-white touch-manipulation active:scale-95"
             >
-              <span className="material-symbols-outlined text-[20px]">menu</span>
+              <Icon name="menu" size="md" />
             </button>
             <h2 className="font-sans text-xs font-bold text-white uppercase tracking-[0.2em]">
               {currentView === 'characters' && 'Characters'}
@@ -550,11 +558,12 @@ function App() {
               {currentView === 'library' && 'Lorebook'}
               {currentView === 'archives' && 'Knowledge Tags'}
             </h2>
-            <button 
+            <button
               onClick={() => setActiveModal('user')}
-              className="w-7 h-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0"
+              aria-label="Open profile"
+              className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0 touch-manipulation active:scale-95"
             >
-              <span className="material-symbols-outlined text-xs text-[#A1A1AA]">person</span>
+              <Icon name="person" size="sm" className="text-[#A1A1AA]" />
             </button>
           </header>
 
@@ -620,6 +629,15 @@ function App() {
             />
           )}
         </main>
+
+        {/* Mobile primary navigation: thumb-reachable bottom tab bar (replaces
+            the hamburger drawer for switching views on phones). */}
+        {isMobile && (
+          <MobileTabBar
+            currentView={currentView}
+            setView={(v) => setCurrentView(v as View)}
+          />
+        )}
 
         {/* Modals */}
         {(activeModal === 'character' || editingCharacter) && (

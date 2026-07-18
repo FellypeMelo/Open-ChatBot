@@ -1,4 +1,5 @@
 import React from 'react'
+import Icon from './Icon'
 
 interface SidebarProps {
   currentView: string
@@ -36,7 +37,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* Brand Header */}
       <div className="flex items-center gap-3 px-1 mb-xl relative z-10">
         <div className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg">
-          <span className="material-symbols-outlined text-white text-md">auto_stories</span>
+          <Icon name="auto_stories" size="md" className="text-white" />
         </div>
         <div className="flex flex-col gap-0.5">
           <h1 className="font-sans text-lg font-bold text-white tracking-tight leading-none">Open-ChatBot</h1>
@@ -46,11 +47,12 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
         
         {/* Mobile close button */}
-        <button 
+        <button
           onClick={onClose}
-          className="md:hidden ml-auto text-[#71717A] hover:text-white"
+          aria-label="Close menu"
+          className="md:hidden ml-auto flex items-center justify-center min-h-11 min-w-11 text-[#71717A] hover:text-white touch-manipulation active:scale-95"
         >
-          <span className="material-symbols-outlined text-lg">close</span>
+          <Icon name="close" size="sm" />
         </button>
       </div>
 
@@ -71,14 +73,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                     : 'text-[#A1A1AA] border-transparent hover:text-white hover:bg-white/5 hover:border-white/5'
                 }`}
               >
-                <span 
-                  className={`material-symbols-outlined text-[18px] transition-all duration-300 ${
+                <Icon
+                  name={item.icon}
+                  size="sm"
+                  filled={isActive}
+                  className={`transition-all duration-300 ${
                     isActive ? 'text-black' : 'text-[#71717A] group-hover:text-white'
                   }`}
-                  style={{ fontVariationSettings: isActive ? "'FILL' 1" : "'FILL' 0" }}
-                >
-                  {item.icon}
-                </span>
+                />
                 <span className="font-label-sm text-xs tracking-wider uppercase">
                   {item.label}
                 </span>
@@ -98,7 +100,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           className="flex-1 flex items-center gap-3 px-2 py-1.5 cursor-pointer hover:bg-white/5 rounded-full border border-transparent hover:border-white/5 transition-all duration-300 min-w-0"
         >
           <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-[#A1A1AA] text-sm">person</span>
+            <Icon name="person" size="sm" className="text-[#A1A1AA]" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-label-sm text-[11px] uppercase tracking-wider text-white truncate">
@@ -111,10 +113,11 @@ const Sidebar: React.FC<SidebarProps> = ({
             onSettingsClick?.()
             onClose?.()
           }}
-          className="w-8 h-8 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-all duration-300 flex items-center justify-center shrink-0"
+          className="w-9 h-9 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-all duration-300 flex items-center justify-center shrink-0 touch-manipulation active:scale-95"
           title="Settings"
+          aria-label="Settings"
         >
-          <span className="material-symbols-outlined text-[16px]">settings</span>
+          <Icon name="settings" size="sm" />
         </button>
       </div>
     </nav>

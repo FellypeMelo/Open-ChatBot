@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import Icon from './Icon'
 import type { Character } from '../services/api'
 
 interface CharactersViewProps {
@@ -80,23 +81,21 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                 disabled={importing}
                 className="btn-premium-secondary cursor-pointer border border-white/10 text-white bg-white/5 hover:bg-white/10 px-sm py-2 rounded-full font-label-sm uppercase tracking-wider text-xs transition-all"
               >
-                <span className="material-symbols-outlined text-[16px] mr-1">{importing ? 'sync' : 'upload_file'}</span>
+                <Icon name={importing ? 'sync' : 'upload_file'} size="sm" className="mr-1" />
                 {importing ? 'Importing...' : 'Import PNG'}
               </button>
               <button
                 onClick={onNewCharacter}
                 className="btn-premium-primary cursor-pointer"
               >
-                <span className="material-symbols-outlined text-[16px]">add</span>
+                <Icon name="add" size="sm" />
                 Initialize Persona
               </button>
             </div>
           </div>
 
           <div className="relative w-full">
-            <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] text-[18px]">
-              search
-            </span>
+            <Icon name="search" size="sm" className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A]" />
             <input
               type="text"
               placeholder="Search library..."
@@ -153,9 +152,9 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                               e.stopPropagation()
                               onEdit(character.id)
                             }}
-                            className="p-1.5 text-[#71717A] hover:text-white bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all duration-300 flex items-center justify-center"
+                            className="min-h-11 min-w-11 md:min-h-9 md:min-w-9 text-[#71717A] hover:text-white bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all duration-300 flex items-center justify-center touch-manipulation active:scale-95"
                           >
-                            <span className="material-symbols-outlined text-[16px]">edit</span>
+                            <Icon name="edit" size="sm" />
                           </button>
                           <button
                             aria-label="Delete"
@@ -163,9 +162,9 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                               e.stopPropagation()
                               onDelete(character.id)
                             }}
-                            className="p-1.5 text-[#71717A] hover:text-red-400 bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all duration-300 flex items-center justify-center"
+                            className="min-h-11 min-w-11 md:min-h-9 md:min-w-9 text-[#71717A] hover:text-red-400 bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all duration-300 flex items-center justify-center touch-manipulation active:scale-95"
                           >
-                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                            <Icon name="delete" size="sm" />
                           </button>
                           <button
                             aria-label="Chat"
@@ -173,9 +172,9 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                               e.stopPropagation()
                               onChat(character.id)
                             }}
-                            className="p-1.5 text-[#71717A] hover:text-emerald-400 bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all duration-300 flex items-center justify-center"
+                            className="min-h-11 min-w-11 md:min-h-9 md:min-w-9 text-[#71717A] hover:text-emerald-400 bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all duration-300 flex items-center justify-center touch-manipulation active:scale-95"
                           >
-                            <span className="material-symbols-outlined text-[16px]">chat</span>
+                            <Icon name="chat" size="sm" />
                           </button>
                         </div>
                       </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import Icon from './Icon'
 import * as api from '../services/api'
 import type { RunnerStatus } from '../services/api'
 
@@ -252,10 +253,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           <button 
             onClick={onClose}
             aria-label="Close modal" 
-            className="text-[#71717A] hover:text-white transition-all duration-300 p-1 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 flex items-center justify-center"
+            className="text-[#71717A] hover:text-white transition-all duration-300 min-h-11 min-w-11 md:min-h-9 md:min-w-9 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 flex items-center justify-center touch-manipulation active:scale-95"
             type="button"
           >
-            <span className="material-symbols-outlined text-[18px]">close</span>
+            <Icon name="close" size="sm" />
           </button>
         </div>
 
@@ -459,7 +460,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
               {isConsolidated && (
                 <div className="text-[10px] text-emerald-400/90 font-label-sm bg-emerald-500/5 border border-emerald-500/10 rounded-[0.75rem] p-sm flex items-center gap-2">
-                  <span className="material-symbols-outlined text-sm">info</span>
+                  <Icon name="info" size="xs" />
                   <span>Sharing port {infPort} and model {infModel.replace(MODEL_PREFIX, '') || 'Inference Model'}. Llama server will launch consolidated.</span>
                 </div>
               )}

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import Icon from './Icon';
+import IconButton from './IconButton';
 import * as api from '../services/api';
 
 interface LoreEntry {
@@ -109,7 +111,7 @@ const LorebookView: React.FC = () => {
               </button>
             </div>
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant/50">search</span>
+              <Icon name="search" size="sm" className="absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant/50" />
               <input 
                 type="text"
                 placeholder="Search lore..."
@@ -166,12 +168,13 @@ const LorebookView: React.FC = () => {
                   <span className="bg-surface-container-high text-on-surface px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
                     {entry.keyword}
                   </span>
-                  <button 
+                  <IconButton
+                    icon="delete"
+                    label="Delete lore entry"
+                    size="sm"
                     onClick={() => handleDelete(entry.id)}
-                    className="text-on-surface-variant/40 hover:text-error transition-colors"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                    className="text-on-surface-variant/40 hover:text-error"
+                  />
                 </div>
                 <p className="text-on-surface text-body-sm mt-sm flex-1 italic line-clamp-4">
                   "{entry.content}"
@@ -183,13 +186,13 @@ const LorebookView: React.FC = () => {
             ))}
             {filteredEntries.length === 0 && entries.length > 0 && (
               <div className="col-span-full py-10 flex flex-col items-center justify-center opacity-30">
-                <span className="material-symbols-outlined text-[48px] mb-2">search_off</span>
+                <Icon name="search_off" size="xl" className="mb-2" />
                 <p>No lore matches your search.</p>
               </div>
             )}
             {entries.length === 0 && (
               <div className="col-span-full py-10 flex flex-col items-center justify-center opacity-30">
-                <span className="material-symbols-outlined text-[48px] mb-2">auto_stories</span>
+                <Icon name="auto_stories" size="xl" className="mb-2" />
                 <p>The library is empty.</p>
               </div>
             )}

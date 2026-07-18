@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react'
+import Icon from './Icon'
+import IconButton from './IconButton'
 import type { Tag } from '../services/api'
 
 interface TagManagementViewProps {
@@ -28,7 +30,7 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
         </div>
         <div className="flex gap-sm items-center">
           <div className="relative hidden sm:block">
-            <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+            <Icon name="search" size="sm" className="absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant" />
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -41,7 +43,7 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
             onClick={onCreateTag}
             className="bg-transparent border border-outline text-on-surface rounded px-sm py-xs font-body-md text-body-md hover:border-primary hover:text-primary transition-colors flex items-center gap-2"
           >
-            <span className="material-symbols-outlined text-[18px]">add</span>
+            <Icon name="add" size="sm" />
             Create New Tag
           </button>
         </div>
@@ -63,21 +65,21 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
                   <span className="font-label-sm text-label-sm text-on-surface border border-outline rounded px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-primary transition-colors">
                     {tag.label}
                   </span>
-                  <div className="flex items-center gap-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                    <button
+                  <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                    <IconButton
+                      icon="edit"
+                      label="Edit"
+                      size="sm"
                       onClick={() => onEditTag(tag)}
-                      className="text-on-surface-variant hover:text-primary transition-colors"
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">edit</span>
-                    </button>
-                    <button
+                      className="text-on-surface-variant hover:text-primary"
+                    />
+                    <IconButton
+                      icon="delete"
+                      label="Delete"
+                      size="sm"
                       onClick={() => onDeleteTag(tag.id)}
-                      className="text-on-surface-variant hover:text-primary transition-colors"
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
+                      className="text-on-surface-variant hover:text-primary"
+                    />
                   </div>
                 </div>
                 <p className="font-body-md text-body-md text-on-surface-variant pt-2">

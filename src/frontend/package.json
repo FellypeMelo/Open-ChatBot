@@ -19,7 +19,6 @@
     "@fontsource-variable/outfit": "^5.2.8",
     "@fontsource/crimson-text": "^5.2.7",
     "@tailwindcss/vite": "^4.3.0",
-    "lucide-react": "^1.14.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
   },

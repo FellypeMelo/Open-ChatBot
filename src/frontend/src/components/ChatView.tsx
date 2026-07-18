@@ -1,4 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
+import Icon from './Icon'
+import IconButton from './IconButton'
 import MessageRenderer from './MessageRenderer'
 import { useMessageTree } from '../hooks/useMessageTree'
 import type { MessageNode } from '../hooks/useMessageTree'
@@ -14,6 +16,9 @@ const ACTIONS = [
   { id: 'tease', name: 'Tease', icon: 'theater_comedy', effect: 'HAPPINESS +2 • SOCIAL +8 • RELATION +1' },
   { id: 'hold_hand', name: 'Hold Hand', icon: 'handshake', effect: 'HAPPINESS +4 • SOCIAL +8 • RELATION +2' }
 ]
+
+// Composer grows with its content up to this height, then scrolls internally.
+const COMPOSER_MAX_HEIGHT = 160
 
 const GIFTS = [
   { id: 'coffee', name: 'Hot Coffee', icon: 'local_cafe', effect: 'HUNGER -10 • ENERGY +15 • RELATION +2' },
@@ -69,21 +74,23 @@ const StatBar: React.FC<{
   </div>
 )
 
+// Shared styling for the compact stat controls (+/- steppers and Sleep/Feed).
+// Comfortable tap size on mobile (~34px), compact on desktop, with a pressed
+// state so a thumb gets feedback. Replaces the old ~16px text-[8px] targets.
+const STAT_CONTROL_CLASS =
+  'inline-flex items-center justify-center bg-white/5 border border-white/10 rounded ' +
+  'min-w-[34px] min-h-[30px] md:min-w-0 md:min-h-0 md:px-1 md:py-0.5 ' +
+  'text-xs md:text-[9px] leading-none font-mono hover:bg-white/10 text-[#A1A1AA] hover:text-white ' +
+  'transition-colors cursor-pointer select-none touch-manipulation active:scale-95 ' +
+  'disabled:opacity-20 disabled:pointer-events-none'
+
 // The identical minus/plus pair used by happiness / social / relationship.
 const AdjustButtons: React.FC<{ onDecrement: () => void; onIncrement: () => void }> = ({ onDecrement, onIncrement }) => (
-  <div className="flex gap-0.5">
-    <button
-      type="button"
-      onClick={onDecrement}
-      className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-    >
+  <div className="flex gap-1">
+    <button type="button" onClick={onDecrement} className={STAT_CONTROL_CLASS} aria-label="Decrease">
       -
     </button>
-    <button
-      type="button"
-      onClick={onIncrement}
-      className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
-    >
+    <button type="button" onClick={onIncrement} className={STAT_CONTROL_CLASS} aria-label="Increase">
       +
     </button>
   </div>
@@ -134,6 +141,7 @@ const ChatView: React.FC<ChatViewProps> = ({
   // character has more than one greeting).
   const [greetingChoice, setGreetingChoice] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const { activePath, nextVariant, prevVariant, getSiblings } = useMessageTree(messages)
   const { playTypewriterClick, resumeAudio, playAmbient, stopAmbient } = useAudio()
   const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20, playTypewriterClick)
@@ -201,6 +209,16 @@ const ChatView: React.FC<ChatViewProps> = ({
   useEffect(() => {
     scrollToBottom()
   }, [activePath, displayedContent, scrollToBottom])
+
+  // Auto-grow the composer with its content (capped), and shrink it back when
+  // the value is cleared after a send. Keyed on `input` so it also reacts to
+  // external resets/edits, not only keystrokes.
+  useEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
+  }, [input])
 
   useEffect(() => {
     if (isLoading) {
@@ -318,31 +336,33 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onNewChat(greetings.length > 1 ? greetingChoice : undefined)}
-                  className="font-mono text-[9.5px] text-emerald-200 hover:text-emerald-100 bg-emerald-950/25 hover:bg-emerald-900/40 border border-emerald-800/40 px-3 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
+                  className="font-mono text-[11px] text-emerald-200 hover:text-emerald-100 bg-emerald-950/25 hover:bg-emerald-900/40 border border-emerald-800/40 px-2.5 py-1.5 min-h-9 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0 touch-manipulation active:scale-95"
                   title="Start a new chat (keeps this one)"
                 >
-                  <span className="material-symbols-outlined text-[11px] leading-none">add</span>
-                  NEW CHAT
+                  <Icon name="add" size="sm" />
+                  <span className="hidden sm:inline">NEW CHAT</span>
                 </button>
               )}
               {activeChar && onDeleteChat && activeChatId != null && chats.length > 1 && (
                 <button
                   type="button"
                   onClick={() => onDeleteChat(activeChatId)}
-                  className="font-mono text-[9.5px] text-[#FDA4AF] hover:text-red-400 bg-red-950/20 hover:bg-red-950/45 border border-red-900/40 px-2.5 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
+                  className="font-mono text-[#FDA4AF] hover:text-red-400 bg-red-950/20 hover:bg-red-950/45 border border-red-900/40 rounded-full transition-all duration-300 flex items-center justify-center min-h-9 min-w-9 cursor-pointer select-none shrink-0 touch-manipulation active:scale-95"
                   title="Delete this chat session"
+                  aria-label="Delete this chat session"
                 >
-                  <span className="material-symbols-outlined text-[11px] leading-none">delete</span>
+                  <Icon name="delete" size="sm" />
                 </button>
               )}
               {activeChar && (
                 <button
                   type="button"
                   onClick={onClearChat}
-                  className="font-mono text-[9.5px] text-[#A1A1AA] hover:text-red-400 bg-white/5 hover:bg-red-950/40 border border-white/10 hover:border-red-900/40 px-2.5 py-1 rounded-full transition-all duration-300 flex items-center gap-1 cursor-pointer select-none shrink-0"
+                  className="font-mono text-[#A1A1AA] hover:text-red-400 bg-white/5 hover:bg-red-950/40 border border-white/10 hover:border-red-900/40 rounded-full transition-all duration-300 flex items-center justify-center min-h-9 min-w-9 cursor-pointer select-none shrink-0 touch-manipulation active:scale-95"
                   title="Reset: delete this character's entire history"
+                  aria-label="Reset: delete this character's entire history"
                 >
-                  <span className="material-symbols-outlined text-[11px] leading-none">restart_alt</span>
+                  <Icon name="restart_alt" size="sm" />
                 </button>
               )}
             </div>
@@ -365,7 +385,7 @@ const ChatView: React.FC<ChatViewProps> = ({
               </span>
               <span className="flex items-center gap-0.5 text-zinc-500">
                 {statsExpanded ? 'Hide' : 'Stats'}
-                <span className="material-symbols-outlined text-[16px]">{statsExpanded ? 'expand_less' : 'expand_more'}</span>
+                <Icon name={statsExpanded ? 'expand_less' : 'expand_more'} size="xs" />
               </span>
             </button>
             <div className={`${statsExpanded ? 'grid' : 'hidden'} md:grid grid-cols-2 md:grid-cols-5 gap-md border-t border-white/5 pt-2`}>
@@ -374,7 +394,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <button
                   type="button"
                   onClick={() => activeChar && onUpdateState(activeChar.id, { stats: { is_sleeping: !activeChar.state?.stats?.is_sleeping } })}
-                  className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none"
+                  className={`${STAT_CONTROL_CLASS} uppercase px-2`}
                 >
                   {activeChar?.state?.stats?.is_sleeping ? 'Wake' : 'Sleep'}
                 </button>
@@ -385,7 +405,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <button
                   type="button"
                   onClick={() => adjustStat('hunger', activeChar?.state?.stats?.hunger ?? 0, -30)}
-                  className="text-[8px] bg-white/5 border border-white/10 px-1 py-0.5 rounded uppercase hover:bg-white/10 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer select-none disabled:opacity-20"
+                  className={`${STAT_CONTROL_CLASS} uppercase px-2`}
                   disabled={activeChar?.state?.stats?.hunger === 0}
                 >
                   Feed
@@ -472,7 +492,7 @@ const ChatView: React.FC<ChatViewProps> = ({
 
               {activePath.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-24 opacity-20">
-                  <span className="material-symbols-outlined text-[48px] mb-3">menu_book</span>
+                  <Icon name="menu_book" size="xl" className="mb-3" />
                   <p className="font-sans text-xs tracking-widest uppercase font-medium">Core Idle. Input prompt.</p>
                 </div>
               )}
@@ -497,27 +517,27 @@ const ChatView: React.FC<ChatViewProps> = ({
                         </div>
                         
                         {!isEditing && (
-                          <div className="flex items-center gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                            <button 
+                          <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                            <IconButton
+                              icon="edit"
+                              label="Edit"
+                              size="sm"
                               onClick={() => {
                                 setEditingMessageId(msg.id)
                                 setEditContent(msg.content)
                               }}
-                              className="text-[#71717A] hover:text-white transition-colors cursor-pointer"
-                              title="Edit"
-                            >
-                              <span className="material-symbols-outlined text-[14px]">edit</span>
-                            </button>
+                              className="text-[#71717A] hover:text-white"
+                            />
                             {onDeleteMessage && (
-                              <button 
+                              <IconButton
+                                icon="delete"
+                                label="Delete"
+                                size="sm"
                                 onClick={() => {
                                   if(confirm('Delete this message and everything after it?')) onDeleteMessage(msg.id)
                                 }}
-                                className="text-[#71717A] hover:text-red-400 transition-colors cursor-pointer"
-                                title="Delete"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">delete</span>
-                              </button>
+                                className="text-[#71717A] hover:text-red-400"
+                              />
                             )}
                           </div>
                         )}
@@ -561,24 +581,26 @@ const ChatView: React.FC<ChatViewProps> = ({
 
                       {/* Variant Navigation switcher */}
                       {hasSiblings && (
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                          <button 
+                        <div className="flex items-center gap-0.5 px-1 rounded-full bg-white/5 border border-white/10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
+                          <IconButton
+                            icon="chevron_left"
+                            label="Previous variant"
+                            size="sm"
                             onClick={() => prevVariant(msg.id)}
                             disabled={currentIndex === 0}
-                            className="text-[#71717A] hover:text-white disabled:opacity-30 transition-colors flex items-center cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-[12px]">chevron_left</span>
-                          </button>
-                          <span className="font-mono text-[8px] text-[#71717A]">
+                            className="text-[#71717A] hover:text-white"
+                          />
+                          <span className="font-mono text-[11px] text-[#71717A] tabular-nums px-0.5">
                             {currentIndex + 1} / {siblings.length}
                           </span>
-                          <button 
+                          <IconButton
+                            icon="chevron_right"
+                            label="Next variant"
+                            size="sm"
                             onClick={() => nextVariant(msg.id)}
                             disabled={currentIndex === siblings.length - 1}
-                            className="text-[#71717A] hover:text-white disabled:opacity-30 transition-colors flex items-center cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-[12px]">chevron_right</span>
-                          </button>
+                            className="text-[#71717A] hover:text-white"
+                          />
                         </div>
                       )}
                     </div>
@@ -602,49 +624,53 @@ const ChatView: React.FC<ChatViewProps> = ({
                       </div>
                     )}
 
-                    {/* Controls Footer */}
-                    <div className="flex gap-4 mt-3 items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                      <button 
+                    {/* Controls Footer. Icon-only on mobile (labels hidden but
+                        kept in the DOM), icon + label from md up. */}
+                    <div className="flex flex-wrap gap-x-1 gap-y-1 mt-3 items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
+                      <button
                         onClick={() => handleRegenerate(msg)}
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer"
+                        aria-label="Regenerate response"
+                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95"
                       >
-                        <span className="material-symbols-outlined text-[12px]">refresh</span>
-                        Regenerate
+                        <Icon name="refresh" size="sm" />
+                        <span className="hidden md:inline">Regenerate</span>
                       </button>
-                      <button 
+                      <button
                         onClick={() => {
                           setEditingMessageId(msg.id)
                           setEditContent(msg.content)
                         }}
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer"
+                        aria-label="Edit response"
+                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95"
                       >
-                        <span className="material-symbols-outlined text-[12px]">edit</span>
-                        Edit
+                        <Icon name="edit" size="sm" />
+                        <span className="hidden md:inline">Edit</span>
                       </button>
                       {onDeleteMessage && (
-                        <button 
+                        <button
                           onClick={() => {
                             if(confirm('Delete this message and everything after it?')) onDeleteMessage(msg.id)
                           }}
-                          className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-red-400 transition-colors cursor-pointer"
+                          aria-label="Delete response"
+                          className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-red-400 transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95"
                         >
-                          <span className="material-symbols-outlined text-[12px]">delete</span>
-                          Delete
+                          <Icon name="delete" size="sm" />
+                          <span className="hidden md:inline">Delete</span>
                         </button>
                       )}
                       <button
                         onClick={() => handleCopyID(msg.request_id || '')}
                         disabled={!msg.request_id}
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[#71717A]"
+                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[#71717A]"
                         title={msg.request_id ? 'Copy Request ID' : 'Request ID not available yet'}
                       >
-                        <span className="material-symbols-outlined text-[11px]">
-                          {msg.request_id && copiedId === msg.request_id ? 'check' : 'content_copy'}
+                        <Icon name={msg.request_id && copiedId === msg.request_id ? 'check' : 'content_copy'} size="sm" />
+                        <span className="hidden md:inline">
+                          {msg.request_id && copiedId === msg.request_id ? 'Copied' : 'Copy ID'}
                         </span>
-                        {msg.request_id && copiedId === msg.request_id ? 'Copied' : 'Copy ID'}
                       </button>
                       {msg.request_id && (
-                        <span className="font-mono text-[8px] text-[#71717A]/30 ml-auto uppercase tracking-wider select-none">
+                        <span className="font-mono text-[9px] text-[#71717A]/30 ml-auto uppercase tracking-wider select-none">
                           REQ: {msg.request_id.split('-')[0]}
                         </span>
                       )}
@@ -669,7 +695,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 </div>
               ) : journalEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-24 opacity-20 select-none">
-                  <span className="material-symbols-outlined text-[48px] mb-3">auto_stories</span>
+                  <Icon name="auto_stories" size="xl" className="mb-3" />
                   <p className="font-sans text-xs tracking-widest uppercase font-medium">No journal entries yet.</p>
                   <p className="font-sans text-[10px] text-center max-w-[280px] mt-2 leading-relaxed">
                     As you chat and interact, {activeChar?.name || 'the character'} will write down first-person reflections in this private log.
@@ -753,14 +779,13 @@ const ChatView: React.FC<ChatViewProps> = ({
                     Gifting
                   </button>
                 </div>
-                <button
-                  type="button"
+                <IconButton
+                  icon="close"
+                  label="Close Drawer"
+                  size="sm"
                   onClick={() => setIsDrawerOpen(false)}
-                  className="text-zinc-500 hover:text-white flex items-center cursor-pointer p-1"
-                  title="Close Drawer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">close</span>
-                </button>
+                  className="text-zinc-500 hover:text-white"
+                />
               </div>
 
               {/* Items Grid (actions and gifts share one layout) */}
@@ -773,13 +798,11 @@ const ChatView: React.FC<ChatViewProps> = ({
                     disabled={isLoading}
                     className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
                   >
-                    <span className="material-symbols-outlined text-[20px] text-emerald-400 group-hover:scale-110 transition-transform duration-300">
-                      {item.icon}
-                    </span>
-                    <span className="font-mono text-[10px] text-zinc-200 font-medium">
+                    <Icon name={item.icon} size="md" className="text-emerald-400 group-hover:scale-110 transition-transform duration-300" />
+                    <span className="font-mono text-[11px] text-zinc-200 font-medium">
                       {item.name}
                     </span>
-                    <span className="text-[8px] text-zinc-500 font-mono tracking-tighter">
+                    <span className="text-[9px] text-zinc-500 font-mono tracking-tighter">
                       {item.effect}
                     </span>
                   </button>
@@ -793,18 +816,21 @@ const ChatView: React.FC<ChatViewProps> = ({
             <button
               type="button"
               onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-              className={`p-1.5 rounded-xl transition-all duration-300 flex items-center justify-center shrink-0 cursor-pointer mr-1 mb-0.5 border ${
+              className={`rounded-xl transition-all duration-300 flex items-center justify-center shrink-0 cursor-pointer mr-1 mb-0.5 border min-h-11 min-w-11 md:min-h-9 md:min-w-9 touch-manipulation active:scale-95 ${
                 isDrawerOpen
                   ? 'bg-white text-black border-white'
                   : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-white border-white/10'
               }`}
               title="Interact & Gift"
+              aria-label="Interact & Gift"
+              aria-expanded={isDrawerOpen}
               disabled={isLoading || !activeChar}
             >
-              <span className="material-symbols-outlined text-[18px]">bolt</span>
+              <Icon name="bolt" size="sm" />
             </button>
 
-            <textarea 
+            <textarea
+              ref={composerRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -813,19 +839,20 @@ const ChatView: React.FC<ChatViewProps> = ({
                   handleSend()
                 }
               }}
-              className="w-full bg-transparent border-none focus:outline-none text-white font-sans text-sm resize-none min-h-[28px] max-h-[160px] py-1 px-2 overflow-y-auto" 
+              className="w-full bg-transparent border-none focus:outline-none text-white font-sans text-base md:text-sm resize-none min-h-[28px] max-h-[160px] py-1 px-2 overflow-y-auto"
               placeholder={`Write a prompt for ${activeChar?.name || 'Core'}...`}
               rows={1}
               disabled={isLoading || !activeChar}
             />
             <div className="flex gap-1 ml-2">
-              <button 
+              <IconButton
+                icon="arrow_upward"
+                label="Send"
+                size="sm"
                 onClick={handleSend}
                 disabled={isLoading || !input.trim()}
-                className="bg-white text-black hover:bg-[#E4E4E7] disabled:opacity-30 transition-all duration-300 flex items-center justify-center h-8 w-8 rounded-full shadow-lg shrink-0 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[16px] font-bold">arrow_upward</span>
-              </button>
+                className="bg-white text-black hover:bg-[#E4E4E7] disabled:opacity-30 shadow-lg self-end mb-0.5"
+              />
             </div>
           </div>
           <div className="text-center">

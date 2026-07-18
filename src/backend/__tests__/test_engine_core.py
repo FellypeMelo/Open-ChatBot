@@ -45,9 +45,12 @@ def test_get_time_context():
 def test_update_needs():
     current_time = datetime(2026, 6, 23, 12, 0, tzinfo=timezone.utc)
 
-    # 1. No last_update
+    # 1. No last_update: values are unchanged THIS call, but a baseline is now
+    # seeded so decay starts on the next call instead of freezing forever (ST-01).
     stats_no_update = {"energy": 100}
-    assert update_needs(stats_no_update, current_time) == stats_no_update
+    res_seed = update_needs(stats_no_update, current_time)
+    assert res_seed["energy"] == 100
+    assert res_seed["last_update"] == current_time.isoformat()
 
     # 2. Update needs with last_update timezone-naive fallback
     naive_last = datetime(2026, 6, 23, 10, 0)  # 2 hours ago
@@ -144,72 +147,52 @@ def test_evolve_character_tag_swaps():
     mock_db = MagicMock(spec=Session)
     agent_state = AgentState(character_id=1, stats={"relationship": {"score": 50}})
 
-    # Setup Tags
+    # Setup authored Tags
     t_distant = Tag(label="emotionally distant", instruction="Distant instruction")
-    t_affectionate = Tag(label="affectionate", instruction="Affectionate instruction")
     t_guarded = Tag(label="guarded", instruction="Guarded instruction")
-    t_vulnerable = Tag(label="vulnerable", instruction="Vulnerable instruction")
 
-    # 1. Test score >= 80 evolution (distant -> affectionate, guarded -> vulnerable)
-    mock_char_high = Character(name="Luna")
-    mock_char_high.tags = [t_distant, t_guarded]
+    # Authored personality: emotionally distant + guarded.
+    mock_char = Character(name="Luna")
+    mock_char.tags = [t_distant, t_guarded]
 
-    # Dynamic Query Mocking
     def mock_query(model):
         q = MagicMock()
         if model == Character:
-            q.filter.return_value.first.return_value = mock_char_high
+            q.filter.return_value.first.return_value = mock_char
         elif model == AgentState:
             q.filter.return_value.with_for_update.return_value.first.return_value = (
                 agent_state
             )
         elif model == Tag:
-            # Always return None so get_or_create_tag creates new instances in the test context
+            # Always return None so get_or_create_tag creates new instances.
             q.filter.return_value.first.return_value = None
         return q
 
     mock_db.query.side_effect = mock_query
 
+    # 1. Warm to 90: evolution LAYERS affectionate + vulnerable on top; the
+    #    author-defined distant + guarded are NOT deleted (RF-06 option C).
     evolve_character(mock_db, 1, {"relationship_change": 40})  # 50 -> 90
-
-    labels = [t.label for t in mock_char_high.tags]
-    assert "emotionally distant" not in labels
-    assert "guarded" not in labels
+    labels = [t.label for t in mock_char.tags]
     assert "affectionate" in labels
     assert "vulnerable" in labels
+    assert "emotionally distant" in labels  # authored, retained
+    assert "guarded" in labels  # authored, retained
 
-    # 2. Test score <= 30 evolution (affectionate -> distant, vulnerable -> guarded)
+    # 2. Cool to 20: evolution removes ONLY the warmth it added; authored tags stay.
     mock_db.reset_mock()
-    agent_state.stats = {"relationship": {"score": 50}}
-    mock_char_low = Character(name="Luna")
-    mock_char_low.tags = [t_affectionate, t_vulnerable]
-
-    def mock_query_low(model):
-        q = MagicMock()
-        if model == Character:
-            q.filter.return_value.first.return_value = mock_char_low
-        elif model == AgentState:
-            q.filter.return_value.with_for_update.return_value.first.return_value = (
-                agent_state
-            )
-        elif model == Tag:
-            q.filter.return_value.first.return_value = None
-        return q
-
-    mock_db.query.side_effect = mock_query_low
-
-    evolve_character(mock_db, 1, {"relationship_change": -30})  # 50 -> 20
-
-    labels_low = [t.label for t in mock_char_low.tags]
-    assert "affectionate" not in labels_low
+    mock_db.query.side_effect = mock_query
+    evolve_character(mock_db, 1, {"relationship_change": -70})  # 90 -> 20
+    labels_low = [t.label for t in mock_char.tags]
+    assert "affectionate" not in labels_low  # evolution-owned -> removed
     assert "vulnerable" not in labels_low
-    assert "emotionally distant" in labels_low
+    assert "emotionally distant" in labels_low  # authored, retained
     assert "guarded" in labels_low
 
     # 3. Test evolution exception pathway (db rollback)
     mock_db.reset_mock()
     mock_db.commit.side_effect = Exception("DB error")
-    mock_db.query.side_effect = mock_query_low
+    mock_db.query.side_effect = mock_query
 
     evolve_character(mock_db, 1, {"relationship_change": 5})
     mock_db.rollback.assert_called_once()

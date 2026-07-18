@@ -48,6 +48,7 @@ describe('ChatView', () => {
   let onSendAction: ReturnType<typeof vi.fn>
   let onEditMessage: ReturnType<typeof vi.fn>
   let onDeleteMessage: ReturnType<typeof vi.fn>
+  let onNewChat: ReturnType<typeof vi.fn>
   let setInput: ReturnType<typeof vi.fn>
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,6 +63,7 @@ describe('ChatView', () => {
     onSendAction = vi.fn().mockResolvedValue(undefined)
     onEditMessage = vi.fn().mockResolvedValue(undefined)
     onDeleteMessage = vi.fn().mockResolvedValue(undefined)
+    onNewChat = vi.fn()
     setInput = vi.fn()
 
     defaultProps = {
@@ -76,7 +78,8 @@ describe('ChatView', () => {
       onClearChat,
       onSendAction,
       onEditMessage,
-      onDeleteMessage
+      onDeleteMessage,
+      onNewChat
     }
 
     vi.mocked(api.fetchJournal).mockResolvedValue([])
@@ -99,17 +102,27 @@ describe('ChatView', () => {
     expect(textarea).toBeDisabled()
   })
 
-  it('renders the active character name and clear chat button when a character is active', () => {
+  it('renders the active character name and NEW CHAT button when a character is active', () => {
     render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
 
     expect(screen.getByText('Aria')).toBeInTheDocument()
     expect(screen.getByText('NEW CHAT')).toBeInTheDocument()
   })
 
-  it('calls onClearChat when the NEW CHAT button is clicked', () => {
+  it('calls onNewChat (non-destructive) when the NEW CHAT button is clicked', () => {
     render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
 
     fireEvent.click(screen.getByText('NEW CHAT'))
+
+    expect(onNewChat).toHaveBeenCalledTimes(1)
+    // NEW CHAT must not trigger the destructive reset.
+    expect(onClearChat).not.toHaveBeenCalled()
+  })
+
+  it('calls onClearChat when the destructive reset button is clicked', () => {
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
+
+    fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
 
     expect(onClearChat).toHaveBeenCalledTimes(1)
   })

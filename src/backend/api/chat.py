@@ -1,175 +1,250 @@
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from typing import List, Dict, Any, Optional
 
 from src.backend.core.deps import llama_client as llama, vector_store, brain
 from src.backend.core.orchestration.validator import validate_narrative_formatting
-from src.backend.core.engine.engine import update_needs, evolve_character
+from src.backend.core.context.macros import render_macros
+from src.backend.core.engine.engine import (
+    update_needs,
+    evolve_character,
+    apply_scene_update,
+)
+from src.backend.core.engine.state_transitions import (
+    ACTIONS_CONFIG,
+    apply_action_stats,
+    parse_actions_to_state,
+)
 from src.backend.db.database import get_db, SessionLocal
-from src.backend.db.models import AgentState, Character, User, MessageNode
-import re
+from src.backend.db.models import (
+    AgentState,
+    Character,
+    User,
+    MessageNode,
+    Chat,
+    JournalEntry,
+    SamplerPreset,
+    default_stats,
+)
 import uuid
 from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-
-def parse_actions_to_state(ai_response: str, state: AgentState):
-    """Parses AI response for narrative actions like **enters [location]** and updates state."""
-    # Pattern for location: **enters [location]** or **walks into [location]**
-    loc_match = re.search(
-        r"\*\*(?:enters|walks into|arrives at|is now in) (.+?)\*\*",
-        ai_response,
-        re.IGNORECASE,
-    )
-    if loc_match:
-        new_loc = loc_match.group(1).strip().strip(".")
-        # Strip articles
-        new_loc = re.sub(r"^(?:The|A|An)\s+", "", new_loc, flags=re.IGNORECASE)
-        new_loc = new_loc.capitalize()
-        if new_loc != state.location:
-            logger.info(f"State Update: Location -> {new_loc}")
-            state.location = new_loc
-
-    # Pattern for outfit: **changes into [outfit]** or **is wearing [outfit]**
-    outfit_match = re.search(
-        r"\*\*(?:changes into|puts on|is wearing|dresses in) (.+?)\*\*",
-        ai_response,
-        re.IGNORECASE,
-    )
-    if outfit_match:
-        new_outfit = outfit_match.group(1).strip().strip(".")
-        # Strip articles
-        new_outfit = re.sub(r"^(?:The|A|An)\s+", "", new_outfit, flags=re.IGNORECASE)
-        new_outfit = new_outfit.capitalize()
-        if new_outfit != state.clothes:
-            logger.info(f"State Update: Clothes -> {new_outfit}")
-            state.clothes = new_outfit
-
-    # Physiological stats updates based on keywords in actions
-    stats = dict(state.stats) if state.stats else {}
-
-    # Check for eating/drinking
-    eat_match = re.search(
-        r"\*\*(?:eats|takes a bite of|chews on|drinks|sips|consumes|devours) (.+?)\*\*",
-        ai_response,
-        re.IGNORECASE,
-    )
-    if eat_match:
-        old_hunger = stats.get("hunger", 0)
-        new_hunger = max(0, old_hunger - 30)
-        stats["hunger"] = new_hunger
-        logger.info(
-            f"State Update: Hunger {old_hunger}% -> {new_hunger}% due to eating action"
-        )
-
-    # Check for sleeping
-    sleep_match = re.search(
-        r"\*\*(?:goes to sleep|falls asleep|nods off|sleeps|rests her eyes)\*\*",
-        ai_response,
-        re.IGNORECASE,
-    )
-    if sleep_match:
-        stats["is_sleeping"] = True
-        logger.info("State Update: is_sleeping -> True due to sleeping action")
-
-    # Check for waking up
-    wake_match = re.search(
-        r"\*\*(?:wakes up|stretches and yawns|wakes)\*\*", ai_response, re.IGNORECASE
-    )
-    if wake_match:
-        stats["is_sleeping"] = False
-        logger.info("State Update: is_sleeping -> False due to waking action")
-
-    state.stats = stats
-
-
 router = APIRouter()
 
 
+def _active_branch_messages(
+    db: Session,
+    character_id: int,
+    chat_id: Optional[int],
+    leaf_id: Optional[int],
+    limit: int,
+) -> List[MessageNode]:
+    """The last `limit` messages on the ACTIVE branch -- the parent chain from
+    the selected leaf. Walking the chain (rather than a flat is_active+timestamp
+    fetch) excludes non-selected regenerate variants, so reflection never
+    summarizes a reroll the user swiped away (PZ-02b). Falls back to the flat
+    fetch when no leaf id is available."""
+    if leaf_id is None:
+        q = db.query(MessageNode).filter(
+            MessageNode.character_id == character_id,
+            MessageNode.is_active == True,  # noqa: E712
+        )
+        if chat_id is not None:
+            q = q.filter(MessageNode.chat_id == chat_id)
+        rows = q.order_by(MessageNode.timestamp.desc()).limit(limit).all()
+        return list(reversed(rows))
+
+    chain: List[MessageNode] = []
+    curr = leaf_id
+    while curr is not None and len(chain) < limit:
+        node = db.query(MessageNode).filter(MessageNode.id == curr).first()
+        if node is None or not node.is_active:
+            break
+        chain.append(node)
+        curr = node.parent_id
+    chain.reverse()
+    return chain
+
+
+# Movement / scene-transition cues. The per-turn scene extractor is an LLM call,
+# but most RP turns are pure dialogue/emotion and don't move the character, so
+# gate the inference behind this cheap regex: location only changes on movement,
+# so skipping the extractor on no-movement turns costs nothing (mood still
+# refreshes on movement turns and on each reflection). Cuts the large majority of
+# the extra per-turn inferences.
+_SCENE_MOVE_RE = re.compile(
+    r"\b(?:go|goes|going|went|head(?:s|ed|ing)?|enter(?:s|ed|ing)?|"
+    r"walk(?:s|ed|ing)?|arriv(?:e|es|ed|ing)|step(?:s|ped|ping)?|"
+    r"exit(?:s|ed|ing)?|leav(?:e|es|ing)|left|mov(?:e|es|ed|ing)|"
+    r"run(?:s|ning)?|ran|rush(?:es|ed|ing)?|climb(?:s|ed|ing)?|"
+    r"descend(?:s|ed|ing)?|ascend(?:s|ed|ing)?|return(?:s|ed|ing)?|"
+    r"wander(?:s|ed|ing)?|stroll(?:s|ed|ing)?|cross(?:es|ed|ing)?|"
+    r"approach(?:es|ed|ing)?|retreat(?:s|ed|ing)?|depart(?:s|ed|ing)?|"
+    r"doorway|hallway|corridor|stair(?:s|way|case)?|elevator|threshold|lobby|"
+    r"makes? (?:his|her|their|its) way)\b",
+    re.IGNORECASE,
+)
+
+
+def _reply_suggests_scene_change(text: str) -> bool:
+    """Cheap gate before the per-turn scene-extractor LLM call: only worth
+    extracting when the narration carries movement/transition language, since a
+    character's location changes only on movement. Skips the inference on the
+    majority of turns that are pure dialogue/emotion."""
+    return bool(text) and bool(_SCENE_MOVE_RE.search(text))
+
+
 async def run_consciousness_layer(
-    character_id: int, user_message: str, ai_response: str, force_reflect: bool = False
+    character_id: int,
+    user_message: str,
+    ai_response: str,
+    force_reflect: bool = False,
+    chat_id: Optional[int] = None,
+    store_memory: bool = True,
+    message_id: Optional[int] = None,
+    reflected_at_count: Optional[int] = None,
 ):
     """Background task for memory and evolution."""
     try:
         db = SessionLocal()
         try:
-            # 1. Store memory (always)
-            await vector_store.add_memory(
-                f"User: {user_message}\nAI: {ai_response}",
-                metadata={"character_id": character_id},
-            )
-
-            # 2. Reflect & Evolve (only on interval or force)
-            if force_reflect:
-                # Fetch last 20 messages for deep context
-                messages = (
-                    db.query(MessageNode)
-                    .filter(MessageNode.character_id == character_id)
-                    .order_by(MessageNode.timestamp.desc())
-                    .limit(20)
-                    .all()
+            # 1. Store memory, scoped to (character, chat) so this turn can only
+            # ever be recalled inside its own chat/session. Skipped for synthetic
+            # (quick-action) turns whose canned first-person text would otherwise
+            # accumulate and self-retrieve on every repeat (PZ-04). Tagged with the
+            # assistant message id so it can be purged when that node is edited or
+            # deleted (PZ-01).
+            if store_memory:
+                # Keep only the selected/latest variant's memory for a turn: a
+                # regenerate creates a new sibling under the same parent, so purge
+                # the superseded siblings' memories before storing this one, so
+                # only the chosen reply stays retrievable (PZ-01b).
+                if message_id is not None:
+                    node = (
+                        db.query(MessageNode)
+                        .filter(MessageNode.id == message_id)
+                        .first()
+                    )
+                    if node is not None and node.parent_id is not None:
+                        siblings = (
+                            db.query(MessageNode.id)
+                            .filter(
+                                MessageNode.parent_id == node.parent_id,
+                                MessageNode.id != message_id,
+                            )
+                            .all()
+                        )
+                        if siblings:
+                            await vector_store.delete_by_message_ids(
+                                [s.id for s in siblings]
+                            )
+                memory_meta = {"character_id": character_id}
+                if chat_id is not None:
+                    memory_meta["chat_id"] = chat_id
+                if message_id is not None:
+                    memory_meta["message_id"] = message_id
+                await vector_store.add_memory(
+                    f"User: {user_message}\nAI: {ai_response}",
+                    metadata=memory_meta,
                 )
-                msg_dicts = [
-                    {"role": m.role, "content": m.content} for m in reversed(messages)
-                ]
 
-                reflection = await brain.reflect(msg_dicts, window_size=20)
-                evolve_character(db, character_id, reflection)
+            # 1.5 Per-turn scene tracking (EPIC Phase 2): read the latest
+            # narration and update the character's CURRENT location/mood, so the
+            # HUD + recency anchor follow the scene continuously instead of only
+            # on the 20-turn reflection (why a move like 'takes the elevator
+            # down' never updated the location before). Cheap + decoupled;
+            # failures are non-fatal (the turn already succeeded). Skipped under
+            # pytest (like the llama boot in the lifespan) so the unit suite never
+            # makes a real inference call here; the logic is covered directly by
+            # test_scene_extractor.
+            if (
+                store_memory
+                and ai_response
+                and ai_response.strip()
+                and not settings.TESTING
+                and _reply_suggests_scene_change(ai_response)
+            ):
+                try:
+                    # Read the current-scene hint from the SAME source
+                    # apply_scene_update will write to (mirror-aware): the live
+                    # agent while it still mirrors this chat, else this chat's own
+                    # snapshot -- otherwise a mid-turn switch would feed the
+                    # foreground chat's location as the hint and stamp it onto this
+                    # background chat, bleeding scene across storylines.
+                    _agent = (
+                        db.query(AgentState)
+                        .filter(AgentState.character_id == character_id)
+                        .first()
+                    )
+                    if _agent is not None and (
+                        chat_id is None or _agent.active_chat_id == chat_id
+                    ):
+                        cur_loc = _agent.location or "Unknown"
+                        cur_mood = _agent.mood or "Neutral"
+                    else:
+                        _chat = db.query(Chat).filter(Chat.id == chat_id).first()
+                        cur_loc = (_chat.location if _chat else None) or "Unknown"
+                        cur_mood = (_chat.mood if _chat else None) or "Neutral"
+                    scene = await brain.extract_scene(ai_response, cur_loc, cur_mood)
+                    apply_scene_update(db, character_id, scene, active_chat_id=chat_id)
+                except Exception as e:
+                    logger.warning(f"Scene extraction skipped: {e}")
+
+            # 2. Reflect & Evolve (only on interval or force). Reflect over the
+            # ACTIVE branch from the selected leaf so discarded edit/delete
+            # branches (PZ-02) and non-selected regenerate variants (PZ-02b) can
+            # never leak into the character's permanent state.
+            if force_reflect:
+                messages = _active_branch_messages(
+                    db, character_id, chat_id, message_id, settings.REFLECTION_INTERVAL
+                )
+                msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
+
+                reflection = await brain.reflect(
+                    msg_dicts, window_size=settings.REFLECTION_INTERVAL
+                )
+                # Mark this reflection window as consumed only now that it
+                # succeeded, so a failed boundary turn is retried next time rather
+                # than skipped forever (RF-04). The AgentState mirror is written
+                # atomically inside evolve_character, guarded so a chat switch
+                # during reflect() can't stamp it onto a different chat.
+                evolve_character(
+                    db,
+                    character_id,
+                    reflection,
+                    reflected_at_count=reflected_at_count,
+                    active_chat_id=chat_id,
+                )
+
+                # The Chat row is the per-chat source of truth for the reflecting
+                # chat: stamp it explicitly (by chat_id), correct regardless of any
+                # concurrent switch to another chat.
+                if reflected_at_count is not None and chat_id is not None:
+                    db.query(Chat).filter(Chat.id == chat_id).update(
+                        {Chat.last_reflected_at_count: reflected_at_count},
+                        synchronize_session=False,
+                    )
+                    db.commit()
+
                 logger.info(
                     f"Consciousness Layer: Reflection complete for character {character_id}"
                 )
         finally:
             db.close()
-            import gc
-
-            gc.collect()
     except Exception as e:
         logger.exception(f"Consciousness layer error: {e}")
-
-
-ACTIONS_CONFIG = {
-    "hug": {
-        "message": "*I step forward and wrap my arms around you in a warm, gentle hug.*",
-        "stats": {"happiness": 5, "social": 10, "relationship_score": 2},
-    },
-    "pat_head": {
-        "message": "*I reach out and pat your head gently, smiling softly.*",
-        "stats": {"happiness": 3, "social": 5, "relationship_score": 1},
-    },
-    "tease": {
-        "message": "*I look at you with a playful smirk, teasing you lightly.*",
-        "stats": {"happiness": 2, "social": 8, "relationship_score": 1},
-    },
-    "hold_hand": {
-        "message": "*I slide my hand into yours, holding it gently.*",
-        "stats": {"happiness": 4, "social": 8, "relationship_score": 2},
-    },
-    "coffee": {
-        "message": "*I hand you a hot, freshly brewed cup of black coffee.*",
-        "stats": {"hunger": -10, "energy": 15, "relationship_score": 2},
-    },
-    "croissant": {
-        "message": "*I offer you a warm, freshly baked chocolate croissant.*",
-        "stats": {"hunger": -35, "energy": 5, "relationship_score": 3},
-    },
-    "book": {
-        "message": "*I present you with a beautifully bound, vintage book.*",
-        "stats": {"happiness": 8, "social": 5, "relationship_score": 4},
-    },
-    "necklace": {
-        "message": "*I hand you a small velvet box containing a delicate silver necklace.*",
-        "stats": {"happiness": 15, "social": 10, "relationship_score": 8},
-    },
-}
 
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -198,6 +273,7 @@ class ChatRequest(BaseModel):
     message: Optional[str] = None
     character_id: int = 1
     parent_id: Optional[int] = None
+    chat_id: Optional[int] = None
     config: Optional[LLMConfig] = None
     action_id: Optional[str] = None
 
@@ -236,6 +312,8 @@ class ChatTurnContext:
         effective_parent_id: Optional[int],
         user_message_content: Optional[str],
         force_reflect: bool,
+        chat_id: Optional[int] = None,
+        is_action: bool = False,
     ):
         self.user = user
         self.character = character
@@ -246,34 +324,169 @@ class ChatTurnContext:
         self.effective_parent_id = effective_parent_id
         self.user_message_content = user_message_content
         self.force_reflect = force_reflect
+        self.chat_id = chat_id
+        self.is_action = is_action
 
 
-def _apply_action_stats(
-    stats: Optional[Dict[str, Any]], stat_mod: Dict[str, Any]
-) -> Dict[str, Any]:
-    stats = dict(stats) if stats else {}
-    stats["energy"] = max(
-        0, min(100, stats.get("energy", 100) + stat_mod.get("energy", 0))
-    )
-    stats["hunger"] = max(
-        0, min(100, stats.get("hunger", 0) + stat_mod.get("hunger", 0))
-    )
-    stats["happiness"] = max(
-        0, min(100, stats.get("happiness", 100) + stat_mod.get("happiness", 0))
-    )
-    stats["social"] = max(
-        0, min(100, stats.get("social", 100) + stat_mod.get("social", 0))
-    )
+def _sync_state_to_chat(db: Session, state: AgentState, chat_id: Optional[int]):
+    """Persist AgentState's conversation-local fields (pointer/summary/counter)
+    into its Chat row so switching away and back restores this session."""
+    if not chat_id:
+        return
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if chat:
+        chat.current_message_id = state.current_message_id
+        chat.active_summary = state.active_summary or ""
+        chat.interaction_count = state.interaction_count or 0
+        chat.last_reflected_at_count = state.last_reflected_at_count or 0
+        # Persona snapshot for this storyline (B8): save the live persona so
+        # switching away and back restores this chat's own mood/scene/relationship.
+        chat.location = state.location
+        chat.mood = state.mood
+        chat.clothes = state.clothes
+        chat.stats = state.stats
+        chat.updated_at = datetime.now(timezone.utc)
 
-    relationship = stats.get("relationship", {})
-    if not isinstance(relationship, dict):
-        relationship = {"score": 50}
-    old_score = relationship.get("score", 50)
-    relationship["score"] = max(
-        0, min(100, old_score + stat_mod.get("relationship_score", 0))
-    )
-    stats["relationship"] = relationship
-    return stats
+
+def _load_chat_into_state(state: AgentState, chat: Chat):
+    """Mirror a Chat's conversation-local snapshot onto the live AgentState."""
+    state.current_message_id = chat.current_message_id
+    state.active_summary = chat.active_summary or ""
+    state.interaction_count = chat.interaction_count or 0
+    state.last_reflected_at_count = chat.last_reflected_at_count or 0
+    # Restore this storyline's persona snapshot (B8). A chat with no snapshot
+    # (legacy row, or a character that had no agent state at backfill time) must
+    # start from a FRESH default -- never keep the outgoing chat's persona, which
+    # would bleed one storyline into another (B8 review P2).
+    if chat.stats is not None:
+        state.location = chat.location or "Living Room"
+        state.mood = chat.mood or "Neutral"
+        state.clothes = chat.clothes or "Casual"
+        state.stats = chat.stats
+    else:
+        state.location = "Living Room"
+        state.mood = "Neutral"
+        state.clothes = "Casual"
+        state.stats = default_stats()
+    state.active_chat_id = chat.id
+
+
+def _persist_assistant_reply(
+    db: Session,
+    state: Optional[AgentState],
+    ctx: "ChatTurnContext",
+    reply: str,
+    request_id: str,
+    _max_retries: int = 2,
+) -> MessageNode:
+    """Persist an assistant reply as the next variant under the turn's parent,
+    advance the conversation pointer, and commit. Shared by /chat and /chat/stream
+    so the two paths can never diverge. `state` may be None (a stream re-query
+    that failed): the message is still saved, only the pointer update is skipped.
+    Callers apply parse_actions_to_state before calling.
+
+    On a StaleDataError -- a concurrent stat PUT or turn advanced this
+    AgentState's version between our read and commit -- re-query fresh state and
+    retry, so a fully generated (already streamed) reply is never silently
+    dropped over routine same-user contention (TF-03)."""
+    state_id = state.id if state is not None else None
+    for attempt in range(_max_retries + 1):
+        variant_count = (
+            db.query(MessageNode)
+            .filter(MessageNode.parent_id == ctx.effective_parent_id)
+            .count()
+        )
+        ai_msg = MessageNode(
+            character_id=ctx.character.id,
+            chat_id=ctx.chat_id,
+            user_id=ctx.user.id,
+            role="assistant",
+            content=reply,
+            parent_id=ctx.effective_parent_id,
+            variant_index=variant_count,
+            request_id=request_id,
+        )
+        db.add(ai_msg)
+        db.flush()
+        if state is not None:
+            state.current_message_id = ai_msg.id
+            _sync_state_to_chat(db, state, ctx.chat_id)
+        try:
+            db.commit()
+            return ai_msg
+        except StaleDataError:
+            db.rollback()  # discards the just-flushed ai_msg INSERT too
+            if attempt >= _max_retries:
+                raise
+            if state_id is not None:
+                state = db.query(AgentState).filter(AgentState.id == state_id).first()
+
+
+def _resolve_active_chat(
+    db: Session,
+    character: Character,
+    state: AgentState,
+    requested_chat_id: Optional[int],
+    user: Optional[User],
+) -> Chat:
+    """Resolve which Chat/session this turn belongs to, switching if the client
+    asked for a different chat than the currently-active one. Lazily creates a
+    first chat for a character that has none (adopting its existing live
+    conversation), so a config-less clone always resolves a valid session."""
+    target = None
+    if requested_chat_id is not None:
+        target = (
+            db.query(Chat)
+            .filter(Chat.id == requested_chat_id, Chat.character_id == character.id)
+            .first()
+        )
+        if not target:
+            raise HTTPException(
+                status_code=400, detail="chat_id does not belong to this character"
+            )
+    elif state.active_chat_id:
+        target = db.query(Chat).filter(Chat.id == state.active_chat_id).first()
+
+    if target is None:
+        # No chat yet: adopt the character's existing live conversation into a
+        # first Chat row so pre-Chat-entity history stays intact.
+        target = Chat(
+            character_id=character.id,
+            user_id=(user.id if user else None),
+            title="New Chat",
+            current_message_id=state.current_message_id,
+            active_summary=state.active_summary or "",
+            interaction_count=state.interaction_count or 0,
+            # Adopt the character's current persona into its first chat (B8).
+            location=state.location,
+            mood=state.mood,
+            clothes=state.clothes,
+            stats=state.stats,
+        )
+        db.add(target)
+        db.flush()
+        state.active_chat_id = target.id
+        # Adopt any pre-existing (pre-Chat-entity) messages/journals for this
+        # character into this first chat, so a later "New Chat" doesn't inherit
+        # or display them.
+
+        db.query(MessageNode).filter(
+            MessageNode.character_id == character.id,
+            MessageNode.chat_id.is_(None),
+        ).update({MessageNode.chat_id: target.id}, synchronize_session=False)
+        db.query(JournalEntry).filter(
+            JournalEntry.character_id == character.id,
+            JournalEntry.chat_id.is_(None),
+        ).update({JournalEntry.chat_id: target.id}, synchronize_session=False)
+        db.flush()
+        return target
+
+    # Switching to a different chat: save the outgoing session, load the target.
+    if state.active_chat_id != target.id:
+        _sync_state_to_chat(db, state, state.active_chat_id)
+        _load_chat_into_state(state, target)
+
+    return target
 
 
 async def _prepare_chat_turn(
@@ -292,9 +505,25 @@ async def _prepare_chat_turn(
         db.add(state)
         db.flush()
 
-    state.stats = update_needs(state.stats, datetime.now(timezone.utc))
+    # Resolve the chat/session this turn belongs to BEFORE bumping the counter,
+    # so switching to another chat restores that chat's interaction_count first.
+    chat = _resolve_active_chat(db, character, state, request.chat_id, user)
+
+    # Static-persona mode (EPIC Phase 3): freeze the simulation -- no need-decay
+    # and no reflection-driven evolution -- so the character stays exactly as
+    # authored. Legacy rows with a NULL flag default to dynamic. Scene tracking
+    # + memory recall still run in both modes.
+    is_dynamic = getattr(character, "dynamic_persona", True) is not False
+    if is_dynamic:
+        state.stats = update_needs(state.stats, datetime.now(timezone.utc))
     state.interaction_count += 1
-    force_reflect = state.interaction_count % 20 == 0
+    # Trigger when at least REFLECTION_INTERVAL turns have passed since the last
+    # SUCCESSFUL reflection (not a bare modulo): a reflection due on a boundary
+    # turn that fails is caught on the next turn instead of skipped forever (RF-04).
+    force_reflect = is_dynamic and (
+        state.interaction_count - (state.last_reflected_at_count or 0)
+        >= settings.REFLECTION_INTERVAL
+    )
     # Commit the decay/counter bump now, unconditionally -- a message-less
     # "regenerate" call never reaches the request.message commit below, and
     # this session gets closed (without a commit) once the request ends.
@@ -309,18 +538,58 @@ async def _prepare_chat_turn(
         # attached the way it was before the rollback, which isn't guaranteed.
         db.rollback()
         state = db.query(AgentState).filter(AgentState.id == state.id).first()
-        force_reflect = state.interaction_count % 20 == 0
+        force_reflect = is_dynamic and (
+            state.interaction_count - (state.last_reflected_at_count or 0)
+            >= settings.REFLECTION_INTERVAL
+        )
 
     effective_parent_id = (
         request.parent_id if request.parent_id is not None else state.current_message_id
     )
+    # Reject a client-supplied parent_id that belongs to a different character
+    # or a different chat (cross-thread grafting) -- otherwise the history walk
+    # would splice another conversation's messages into this prompt. Fall back
+    # to this chat's own current pointer.
+    if effective_parent_id is not None:
+        parent_node = (
+            db.query(MessageNode).filter(MessageNode.id == effective_parent_id).first()
+        )
+        # Reject a parent_id that is missing, deactivated (a deleted/superseded
+        # node -- grafting onto it would splice the turn onto a dead branch,
+        # TF-05), or belongs to another character/chat (cross-thread grafting
+        # that would splice a foreign conversation into this prompt). Fall back
+        # to this chat's own current pointer.
+        invalid = (
+            parent_node is None
+            or not parent_node.is_active
+            or parent_node.character_id != character.id
+            or (parent_node.chat_id is not None and parent_node.chat_id != chat.id)
+        )
+        if invalid:
+            reason = (
+                "missing"
+                if parent_node is None
+                else "inactive"
+                if not parent_node.is_active
+                else f"char {parent_node.character_id}/chat {parent_node.chat_id}"
+            )
+            logger.warning(
+                f"[{request_id}] Rejected parent_id={effective_parent_id} ({reason}) "
+                f"for char {character.id}/chat {chat.id}; falling back to chat pointer."
+            )
+            effective_parent_id = (
+                state.current_message_id
+                if state.current_message_id != effective_parent_id
+                else None
+            )
     user_message_content = request.message
 
-    if request.action_id and request.action_id in ACTIONS_CONFIG:
+    is_action = bool(request.action_id and request.action_id in ACTIONS_CONFIG)
+    if is_action:
         action_cfg = ACTIONS_CONFIG[request.action_id]
         user_message_content = action_cfg["message"]
         request.message = user_message_content
-        state.stats = _apply_action_stats(state.stats, action_cfg.get("stats", {}))
+        state.stats = apply_action_stats(state.stats, action_cfg.get("stats", {}))
 
     if not user_message_content and effective_parent_id:
         last_msg = (
@@ -332,6 +601,7 @@ async def _prepare_chat_turn(
     if request.message:
         user_msg = MessageNode(
             character_id=character.id,
+            chat_id=chat.id,
             user_id=user.id,
             role="user",
             content=request.message,
@@ -361,7 +631,16 @@ async def _prepare_chat_turn(
     while curr_id and len(history) < 50:
         m = (
             db.query(MessageNode)
-            .filter(MessageNode.id == curr_id, MessageNode.is_active == True)
+            .filter(
+                MessageNode.id == curr_id,
+                MessageNode.is_active == True,
+                # Stay within this chat: match its chat_id, or NULL for legacy
+                # nodes adopted into a lazily-created first chat.
+                or_(
+                    MessageNode.chat_id == chat.id,
+                    MessageNode.chat_id.is_(None),
+                ),
+            )
             .first()
         )
         if not m:
@@ -369,6 +648,21 @@ async def _prepare_chat_turn(
         history.append({"role": m.role, "content": m.content})
         curr_id = m.parent_id
     history.reverse()
+
+    # Drop the trailing history line when it is the same user turn we re-append
+    # below as "{user}: {message}". This is the last line in BOTH paths: a normal
+    # send (the just-inserted user node) and a regenerate (message is None, so
+    # effective_parent_id still points at that user node). Without this, a
+    # regenerate feeds the model the user's last line twice in a row.
+    prompt_history = history
+    if history and user_message_content:
+        last = history[-1]
+        if last.get("role") == "user" and last.get("content") == user_message_content:
+            prompt_history = history[:-1]
+
+    # Per-chat lore cooldown map (B8: lives in this chat's stats). The scanner
+    # reads it to suppress recently-fired lore and records fresh fires into it.
+    lore_cooldowns = dict((state.stats or {}).get("lore_cooldowns") or {})
 
     prompt = await brain.build_prompt(
         user_message_content or "",
@@ -380,13 +674,19 @@ async def _prepare_chat_turn(
             "active_summary": getattr(state, "active_summary", ""),
         },
         user=user,
-        history=history[:-1] if request.message else history,
+        history=prompt_history,
         db=db,
+        chat_id=chat.id,
+        interaction_count=state.interaction_count or 0,
+        lore_cooldowns=lore_cooldowns,
     )
 
-    config = request.config or LLMConfig()
+    # Persist cooldown updates recorded during the scan (reassign so the JSON
+    # column change is tracked); saved with this chat's stats on reply-persist.
+    if lore_cooldowns != ((state.stats or {}).get("lore_cooldowns") or {}):
+        state.stats = {**(state.stats or {}), "lore_cooldowns": lore_cooldowns}
 
-    from src.backend.db.models import SamplerPreset
+    config = request.config or LLMConfig()
 
     if config.preset_id:
         preset_obj = (
@@ -422,18 +722,31 @@ async def _prepare_chat_turn(
         effective_parent_id=effective_parent_id,
         user_message_content=user_message_content,
         force_reflect=force_reflect,
+        chat_id=chat.id,
+        is_action=is_action,
     )
 
 
 @router.get("/history/{character_id}", response_model=List[Dict[str, Any]])
-async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
-    messages = (
-        db.query(MessageNode)
-        .filter(MessageNode.character_id == character_id, MessageNode.is_active == True)
-        .order_by(MessageNode.timestamp.desc())
-        .limit(100)
-        .all()
+async def get_chat_history(
+    character_id: int,
+    chat_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Messages for a character, scoped to one chat/session. Defaults to the
+    character's active chat so the current UI (which passes only character_id)
+    never mixes messages from different sessions."""
+    q = db.query(MessageNode).filter(
+        MessageNode.character_id == character_id, MessageNode.is_active == True
     )
+    if chat_id is None:
+        state = (
+            db.query(AgentState).filter(AgentState.character_id == character_id).first()
+        )
+        chat_id = state.active_chat_id if state else None
+    if chat_id is not None:
+        q = q.filter(or_(MessageNode.chat_id == chat_id, MessageNode.chat_id.is_(None)))
+    messages = q.order_by(MessageNode.timestamp.desc()).limit(100).all()
     return [
         {
             "id": m.id,
@@ -442,40 +755,337 @@ async def get_chat_history(character_id: int, db: Session = Depends(get_db)):
             "content": m.content,
             "variant_index": m.variant_index,
             "timestamp": m.timestamp,
+            "chat_id": m.chat_id,
         }
         for m in reversed(messages)
     ]
 
 
+class ChatUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    is_archived: Optional[bool] = None
+
+
+class NewChatRequest(BaseModel):
+    # The opening greeting to seed. Either explicit text, or an index into the
+    # character's greetings ([first_mes, *alternate_greetings]). If neither is
+    # given, greeting #1 (first_mes) is used when present.
+    greeting: Optional[str] = None
+    greeting_index: Optional[int] = None
+
+
+def _character_greetings(character: Character) -> List[str]:
+    """The ordered greeting list: first_mes is #1, alternate_greetings follow."""
+    greetings = []
+    if getattr(character, "first_mes", None):
+        greetings.append(character.first_mes)
+    alts = getattr(character, "alternate_greetings", None) or []
+    greetings.extend([g for g in alts if g])
+    return greetings
+
+
+def seed_initial_chat(
+    db: Session,
+    character: Character,
+    user: Optional[User],
+    state: AgentState,
+) -> Chat:
+    """Create a character's FIRST chat and seed its opening greeting (greeting #1
+    / first_mes) as the root assistant message, wiring the live state at it. So a
+    freshly created or imported card shows its intro immediately instead of a
+    blank chat until the first manual 'New Chat' (SEC-02). Caller must have
+    flushed `character` and `state` (both need ids)."""
+    chat = Chat(
+        character_id=character.id,
+        user_id=(user.id if user else None),
+        title="New Chat",
+        # First chat snapshots the (default, for a new character) persona (B8).
+        location=state.location,
+        mood=state.mood,
+        clothes=state.clothes,
+        stats=state.stats,
+    )
+    db.add(chat)
+    db.flush()
+    state.active_chat_id = chat.id
+
+    greetings = _character_greetings(character)
+    greeting_text = greetings[0] if greetings else None
+    if greeting_text and greeting_text.strip():
+        rendered = render_macros(
+            greeting_text, character.name, user.name if user else "User"
+        )
+        greeting_msg = MessageNode(
+            character_id=character.id,
+            chat_id=chat.id,
+            user_id=(user.id if user else None),
+            role="assistant",
+            content=rendered,
+            parent_id=None,
+            request_id=None,
+        )
+        db.add(greeting_msg)
+        db.flush()
+        state.current_message_id = greeting_msg.id
+        chat.current_message_id = greeting_msg.id
+    return chat
+
+
+@router.post("/chat/new/{character_id}")
+async def new_chat(
+    character_id: int,
+    req: Optional[NewChatRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+):
+    """Start a fresh chat/session with a character WITHOUT destroying the
+    previous one. Saves the currently-active chat's live state, creates a new
+    Chat row, points the character at it with reset conversation-local fields
+    (persona/relationship/stats persist across a character's chats), and seeds
+    the chosen opening greeting as the first assistant message."""
+    user = User.get_or_create_active(db)
+    character = db.query(Character).filter(Character.id == character_id).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    state = character.state or AgentState(character_id=character.id)
+    if not state.id:
+        db.add(state)
+        db.flush()
+
+    # Persist the outgoing session so it can be revisited later.
+    _sync_state_to_chat(db, state, state.active_chat_id)
+
+    fresh = Chat(
+        character_id=character.id,
+        user_id=user.id,
+        title="New Chat",
+        current_message_id=None,
+        active_summary="",
+        interaction_count=0,
+        last_reflected_at_count=0,
+        # A new storyline starts from the character's fresh default persona (B8).
+        location="Living Room",
+        mood="Neutral",
+        clothes="Casual",
+        stats=default_stats(),
+    )
+    db.add(fresh)
+    db.flush()
+
+    state.active_chat_id = fresh.id
+    state.current_message_id = None
+    state.active_summary = ""
+    state.interaction_count = 0
+    # Reset the reflection checkpoint too, or force_reflect goes negative and
+    # suppresses reflection for dozens of turns after a reset (RF-04).
+    state.last_reflected_at_count = 0
+    # Reset the live persona to defaults too, so the new storyline doesn't
+    # inherit the previous chat's mood/relationship (B8).
+    state.location = "Living Room"
+    state.mood = "Neutral"
+    state.clothes = "Casual"
+    state.stats = default_stats()
+
+    # Resolve the opening greeting to seed (explicit text > index > first_mes).
+    greetings = _character_greetings(character)
+    greeting_text = None
+    if req and req.greeting is not None:
+        greeting_text = req.greeting
+    elif req and req.greeting_index is not None:
+        if 0 <= req.greeting_index < len(greetings):
+            greeting_text = greetings[req.greeting_index]
+    elif greetings:
+        greeting_text = greetings[0]
+
+    if greeting_text and greeting_text.strip():
+        rendered = render_macros(greeting_text, character.name, user.name)
+        greeting_msg = MessageNode(
+            character_id=character.id,
+            chat_id=fresh.id,
+            user_id=user.id,
+            role="assistant",
+            content=rendered,
+            parent_id=None,
+            request_id=None,
+        )
+        db.add(greeting_msg)
+        db.flush()
+        state.current_message_id = greeting_msg.id
+        fresh.current_message_id = greeting_msg.id
+
+    db.commit()
+    return {"chat_id": fresh.id, "title": fresh.title}
+
+
+@router.get("/chats/{character_id}", response_model=List[Dict[str, Any]])
+async def list_chats(character_id: int, db: Session = Depends(get_db)):
+    """List a character's chats (newest first) for a chat-picker sidebar."""
+    character = db.query(Character).filter(Character.id == character_id).first()
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    active_id = character.state.active_chat_id if character.state else None
+    chats = (
+        db.query(Chat)
+        .filter(Chat.character_id == character_id)
+        .order_by(Chat.updated_at.desc())
+        .all()
+    )
+    # Single grouped COUNT instead of one query per chat (avoids an N+1).
+    counts = dict(
+        db.query(MessageNode.chat_id, func.count(MessageNode.id))
+        .filter(MessageNode.chat_id.in_([c.id for c in chats]))
+        .group_by(MessageNode.chat_id)
+        .all()
+    )
+    return [
+        {
+            "id": c.id,
+            "title": c.title,
+            "is_archived": bool(c.is_archived),
+            "is_active": c.id == active_id,
+            "message_count": counts.get(c.id, 0),
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        for c in chats
+    ]
+
+
+@router.put("/chat/{chat_id}")
+async def update_chat(
+    chat_id: int, req: ChatUpdateRequest, db: Session = Depends(get_db)
+):
+    """Rename or archive a chat."""
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    if req.title is not None:
+        chat.title = req.title
+    if req.is_archived is not None:
+        chat.is_archived = req.is_archived
+    chat.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {
+        "id": chat.id,
+        "title": chat.title,
+        "is_archived": bool(chat.is_archived),
+    }
+
+
+@router.delete("/chat/{chat_id}")
+async def delete_chat(chat_id: int, db: Session = Depends(get_db)):
+    """Delete a single chat: its messages, journals and vector memories only.
+    Sibling chats of the same character are untouched. If it was the active
+    chat, repoint the character to its most recent remaining chat."""
+
+    chat = db.query(Chat).filter(Chat.id == chat_id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    character_id = chat.character_id
+    state = db.query(AgentState).filter(AgentState.character_id == character_id).first()
+    was_active = bool(state and state.active_chat_id == chat_id)
+
+    # Null pointers that reference rows we are about to delete (FK-safe order).
+    if was_active:
+        state.current_message_id = None
+    if state and state.active_chat_id == chat_id:
+        state.active_chat_id = None
+    chat.current_message_id = None
+    db.flush()
+
+    db.query(MessageNode).filter(MessageNode.chat_id == chat_id).delete(
+        synchronize_session=False
+    )
+    db.query(JournalEntry).filter(JournalEntry.chat_id == chat_id).delete(
+        synchronize_session=False
+    )
+    db.delete(chat)
+    db.flush()
+
+    if was_active:
+        remaining = (
+            db.query(Chat)
+            .filter(Chat.character_id == character_id)
+            .order_by(Chat.updated_at.desc())
+            .first()
+        )
+        if remaining:
+            _load_chat_into_state(state, remaining)
+        else:
+            state.current_message_id = None
+            state.active_summary = ""
+            state.interaction_count = 0
+            state.last_reflected_at_count = 0
+            # No chats left: reset the live persona to defaults too (B8).
+            state.location = "Living Room"
+            state.mood = "Neutral"
+            state.clothes = "Casual"
+            state.stats = default_stats()
+    db.commit()
+
+    removed = await vector_store.clear_chat_memories(chat_id)
+    return {"status": "success", "removed_memories": removed}
+
+
 @router.post("/chat/clear/{character_id}")
 async def clear_chat_history(character_id: int, db: Session = Depends(get_db)):
+    """Destructive full reset for a character: wipes ALL of its chats, messages,
+    journals, summary and RAG memories and resets its live state. This is the
+    'nuke everything' path -- use POST /chat/new for a non-destructive fresh
+    session that keeps prior chats."""
     try:
-        from src.backend.db.models import JournalEntry
-
-        # Delete all messages and journal entries for this character
-        db.query(MessageNode).filter(MessageNode.character_id == character_id).delete()
-        db.query(JournalEntry).filter(
-            JournalEntry.character_id == character_id
-        ).delete()
-        # Reset current message ID and states on AgentState
+        # Reset AgentState first and null its pointers into rows we will delete
+        # (FK-safe once PRAGMA foreign_keys=ON is in effect).
         state = (
             db.query(AgentState).filter(AgentState.character_id == character_id).first()
         )
         if state:
             state.current_message_id = None
+            state.active_chat_id = None
             state.location = "Living Room"
             state.clothes = "Casual"
             state.mood = "Neutral"
             state.interaction_count = 0
-            state.stats = {
-                "energy": 100,
-                "hunger": 0,
-                "happiness": 100,
-                "social": 100,
-                "is_sleeping": False,
-                "relationship": {"score": 50, "history": [], "nickname": None},
-            }
+            state.last_reflected_at_count = 0
+            # Wipe the running summary too; otherwise summary-based context
+            # (including hallucinated content) survives a reset.
+            state.active_summary = ""
+            # One source for the fresh-start persona (default_stats seeds
+            # last_update so need-decay isn't frozen -- ST-01) (B8 review P3).
+            state.stats = default_stats()
+        # Null chat->message pointers before deleting the messages they reference.
+        db.query(Chat).filter(Chat.character_id == character_id).update(
+            {Chat.current_message_id: None}, synchronize_session=False
+        )
+        db.flush()
+
+        # Delete all messages, journals and chats for this character.
+        db.query(MessageNode).filter(MessageNode.character_id == character_id).delete(
+            synchronize_session=False
+        )
+        db.query(JournalEntry).filter(JournalEntry.character_id == character_id).delete(
+            synchronize_session=False
+        )
+        db.query(Chat).filter(Chat.character_id == character_id).delete(
+            synchronize_session=False
+        )
         db.commit()
+
+        # Purge this character's RAG memories. Without this, a reset leaves the
+        # vector store intact and old/hallucinated memories get re-injected into
+        # future prompts (context poisoning).
+        await vector_store.clear_character_memories(character_id)
+
+        # Re-seed a fresh first chat with the opening greeting, so a cleared
+        # character shows its intro again instead of a blank session. The
+        # lazy-create path (_resolve_active_chat) only ADOPTS existing history
+        # and never seeds a greeting, so without this a clear strands the
+        # character with no first message.
+        character = db.query(Character).filter(Character.id == character_id).first()
+        if character and state:
+            user = User.get_or_create_active(db)
+            seed_initial_chat(db, character, user, state)
+            db.commit()
+
         return {"status": "success", "message": "Chat history cleared successfully."}
     except Exception as e:
         db.rollback()
@@ -513,34 +1123,24 @@ async def chat(
             # For now, we log and proceed to maintain responsiveness,
             # but could append a correction instruction to the next prompt.
 
-        parse_actions_to_state(reply, ctx.state)
+        # Only persist + remember a real reply. An empty/failed generation must
+        # not leave a blank assistant node or a "User: ..\nAI: " memory (PZ-07;
+        # mirrors the /chat/stream guard).
+        if reply.strip():
+            parse_actions_to_state(reply, ctx.state)
+            ai_msg = _persist_assistant_reply(db, ctx.state, ctx, reply, request_id)
 
-        variant_count = (
-            db.query(MessageNode)
-            .filter(MessageNode.parent_id == ctx.effective_parent_id)
-            .count()
-        )
-        ai_msg = MessageNode(
-            character_id=ctx.character.id,
-            user_id=ctx.user.id,
-            role="assistant",
-            content=reply,
-            parent_id=ctx.effective_parent_id,
-            variant_index=variant_count,
-            request_id=request_id,
-        )
-        db.add(ai_msg)
-        db.flush()
-        ctx.state.current_message_id = ai_msg.id
-        db.commit()
-
-        background_tasks.add_task(
-            run_consciousness_layer,
-            ctx.character.id,
-            ctx.user_message_content or "",
-            reply,
-            force_reflect=ctx.force_reflect,
-        )
+            background_tasks.add_task(
+                run_consciousness_layer,
+                ctx.character.id,
+                ctx.user_message_content or "",
+                reply,
+                force_reflect=ctx.force_reflect,
+                chat_id=ctx.chat_id,
+                store_memory=not ctx.is_action,
+                message_id=ai_msg.id,
+                reflected_at_count=ctx.state.interaction_count,
+            )
 
         latency = (
             {"total": time.perf_counter() - start} if settings.DEBUG_LATENCY else {}
@@ -622,26 +1222,11 @@ async def chat_stream(
                         .filter(AgentState.id == ctx.state.id)
                         .first()
                     )
-                    variant_count = (
-                        inner_db.query(MessageNode)
-                        .filter(MessageNode.parent_id == ctx.effective_parent_id)
-                        .count()
-                    )
-                    ai_msg = MessageNode(
-                        character_id=ctx.character.id,
-                        user_id=ctx.user.id,
-                        role="assistant",
-                        content=full_reply,
-                        parent_id=ctx.effective_parent_id,
-                        variant_index=variant_count,
-                        request_id=request_id,
-                    )
-                    inner_db.add(ai_msg)
-                    inner_db.flush()
                     if inner_state:
-                        inner_state.current_message_id = ai_msg.id
                         parse_actions_to_state(full_reply, inner_state)
-                    inner_db.commit()
+                    ai_msg = _persist_assistant_reply(
+                        inner_db, inner_state, ctx, full_reply, request_id
+                    )
 
                     # RN-003: Formatting Validation (Stream)
                     is_formatted = validate_narrative_formatting(full_reply)
@@ -656,6 +1241,10 @@ async def chat_stream(
                         ctx.user_message_content or "",
                         full_reply,
                         force_reflect=ctx.force_reflect,
+                        chat_id=ctx.chat_id,
+                        store_memory=not ctx.is_action,
+                        message_id=ai_msg.id,
+                        reflected_at_count=ctx.state.interaction_count,
                     )
                     # Return full state for reactive HUD
                     updated_state = {
@@ -680,11 +1269,47 @@ async def chat_stream(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-def deactivate_subtree(node_id: int, db: Session):
-    children = db.query(MessageNode).filter(MessageNode.parent_id == node_id).all()
-    for child in children:
-        child.is_active = False
-        deactivate_subtree(child.id, db)
+def deactivate_subtree(node_id: int, db: Session) -> List[int]:
+    """Mark every descendant of node_id inactive (the node itself is untouched)
+    and return the ids of the nodes deactivated, so callers can purge those
+    turns' vector memories (PZ-01). Iterative, level-batched walk -- avoids
+    per-node queries and unbounded recursion on a long linear message chain."""
+    deactivated: List[int] = []
+    frontier = [node_id]
+    while frontier:
+        children = (
+            db.query(MessageNode).filter(MessageNode.parent_id.in_(frontier)).all()
+        )
+        if not children:
+            break
+        for child in children:
+            child.is_active = False
+        frontier = [child.id for child in children]
+        deactivated.extend(frontier)
+    return deactivated
+
+
+def _set_branch_pointer(
+    db: Session,
+    state: Optional[AgentState],
+    target_chat_id: Optional[int],
+    new_pointer: Optional[int],
+):
+    """Repoint the resume pointer of the chat that OWNS the edited/deleted node.
+
+    If that chat is the live/active one (or the node is a legacy NULL-chat node
+    adopted into it), update the AgentState mirror. Otherwise update the owning
+    Chat row directly -- writing the live AgentState for a node in a background
+    chat would silently move the foreground chat's resume pointer to another
+    chat's message (TF-02)."""
+    if state is not None and (
+        target_chat_id is None or state.active_chat_id == target_chat_id
+    ):
+        state.current_message_id = new_pointer
+    elif target_chat_id is not None:
+        db.query(Chat).filter(Chat.id == target_chat_id).update(
+            {Chat.current_message_id: new_pointer}, synchronize_session=False
+        )
 
 
 @router.put("/chat/message/{message_id}")
@@ -705,23 +1330,34 @@ async def edit_message(
 
     msg.content = req.content
 
-    # If a user message is edited, invalidate all subsequent assistant responses (and their subtrees)
+    # Collect the message ids whose stale vector memories must be purged (PZ-01).
+    purge_ids: List[int] = []
     if msg.role == "user":
+        # Editing a user turn invalidates every reply below it (and their
+        # subtrees): purge those turns' memories.
         logger.info(
             f"Backend edit_message: deactivating subtree for user message {message_id}"
         )
-        deactivate_subtree(msg.id, db)
+        purge_ids = deactivate_subtree(msg.id, db)
 
-        # Update current_message_id to the edited message so tree can resume from here
+        # Resume the OWNING chat from the edited message. Target that chat
+        # specifically so an edit in a background chat never repoints the
+        # active chat's live pointer (TF-02).
         state = (
             db.query(AgentState)
             .filter(AgentState.character_id == msg.character_id)
             .first()
         )
-        if state:
-            state.current_message_id = msg.id
+        _set_branch_pointer(db, state, msg.chat_id, msg.id)
+    elif msg.role == "assistant":
+        # The edited reply's stored memory holds the OLD AI text; drop it so the
+        # pre-edit content can't resurface via RAG (its metadata is keyed on this
+        # exact assistant node id).
+        purge_ids = [msg.id]
 
     db.commit()
+    if purge_ids:
+        await vector_store.delete_by_message_ids(purge_ids)
     logger.info(f"Backend edit_message: committed successfully for {message_id}")
     return {"status": "success", "message": "Message edited successfully"}
 
@@ -737,14 +1373,26 @@ async def delete_message(message_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Message not found or inactive")
 
     msg.is_active = False
-    deactivate_subtree(msg.id, db)
+    deactivated = [msg.id] + deactivate_subtree(msg.id, db)
 
-    # Update current_message_id to parent if this was the current message
+    # If the deleted node was the resume pointer of its OWNING chat, move that
+    # pointer to the parent. Target the right chat: a delete in a background chat
+    # must repoint THAT chat (not the live AgentState, which mirrors the active
+    # chat) so neither is left dangling at a deactivated node (TF-02).
     state = (
         db.query(AgentState).filter(AgentState.character_id == msg.character_id).first()
     )
-    if state and state.current_message_id == msg.id:
-        state.current_message_id = msg.parent_id
+    if state is not None and (
+        msg.chat_id is None or state.active_chat_id == msg.chat_id
+    ):
+        if state.current_message_id == msg.id:
+            state.current_message_id = msg.parent_id
+    elif msg.chat_id is not None:
+        owning = db.query(Chat).filter(Chat.id == msg.chat_id).first()
+        if owning and owning.current_message_id == msg.id:
+            owning.current_message_id = msg.parent_id
 
     db.commit()
+    # Purge the deleted turn's (and its subtree's) vector memories (PZ-01).
+    await vector_store.delete_by_message_ids(deactivated)
     return {"status": "success", "message": "Message deleted successfully"}

@@ -17,12 +17,42 @@ from sqlalchemy.orm import relationship, backref, Session
 from src.backend.db.database import Base
 from datetime import datetime, timezone
 
+
+def default_stats() -> dict:
+    """The fresh-start persona stats for a new agent state / a new storyline
+    (B8). A factory (not a constant) because last_update must be stamped now so
+    need-decay has a baseline (ST-01)."""
+    return {
+        "energy": 100,
+        "hunger": 0,
+        "happiness": 100,
+        "social": 100,
+        "is_sleeping": False,
+        "last_update": datetime.now(timezone.utc).isoformat(),
+        "relationship": {
+            "score": 50,
+            "dynamic_preferences": ["teasing", "playful"],
+            "user_sentiment": "Neutral",
+        },
+    }
+
+
 # Junction table for Character <-> Tag (Many-to-Many)
 character_tags = Table(
     "character_tags",
     Base.metadata,
-    Column("character_id", Integer, ForeignKey("characters.id"), primary_key=True),
-    Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
+    Column(
+        "character_id",
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "tag_id",
+        Integer,
+        ForeignKey("tags.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
 )
 
 
@@ -76,9 +106,22 @@ class Character(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     description = Column(Text)
-    short_description = Column(Text)
-    persona_prompt = Column(Text)
+    short_description = Column(Text, default="")
+    persona_prompt = Column(Text, default="")
+    nickname = Column(String, default="")
+    scenario = Column(Text, default="")
+    first_mes = Column(Text, default="")
+    # Extra opening messages beyond first_mes (Tavern-card alternate_greetings).
+    # first_mes is greeting #1; these are #2..N, offered as a picker at chat start.
+    alternate_greetings = Column(JSON, default=list)
+    mes_example = Column(Text, default="")
+    content_rating = Column(String, default="limited")
     is_active = Column(Boolean, default=True)
+    # Dynamic (default) = needs decay over time + reflection evolves the persona
+    # to adapt to the user. Static = persona frozen as authored: no need-decay,
+    # no reflection-driven drift. Scene tracking + memory recall still run in
+    # both modes (EPIC Phase 3).
+    dynamic_persona = Column(Boolean, default=True)
 
     # Relationships
     tags = relationship("Tag", secondary=character_tags, backref="characters")
@@ -100,12 +143,96 @@ class Character(Base):
         return default
 
 
+class Chat(Base):
+    """A single named conversation/session with a character. Introduced so a
+    character can hold multiple independent storylines: memory, history and
+    summary are scoped by (character_id, chat_id), so starting a "New Chat"
+    creates a fresh session instead of destroying the previous one, and one
+    chat's memories can never poison another. The character's persistent
+    persona (relationship/stats on AgentState) is intentionally shared across
+    its chats."""
+
+    __tablename__ = "chats"
+    id = Column(Integer, primary_key=True, index=True)
+    character_id = Column(
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
+    title = Column(String, default="New Chat")
+    is_archived = Column(Boolean, default=False)
+    # Per-chat snapshot of the conversation-local pointer/summary/counter. While
+    # a chat is the character's active chat, AgentState mirrors these live; on a
+    # chat switch they are saved here and the incoming chat's are restored.
+    # use_alter breaks the chats<->message_nodes FK cycle for DDL ordering
+    # (chats.current_message_id -> message_nodes.id and message_nodes.chat_id ->
+    # chats.id). Without it, create_all/drop_all can't topologically sort them.
+    current_message_id = Column(
+        Integer,
+        ForeignKey(
+            "message_nodes.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_chats_current_message",
+        ),
+        nullable=True,
+    )
+    active_summary = Column(Text, default="")
+    interaction_count = Column(Integer, default=0)
+    # interaction_count at the last successful reflection, so a reflection due on
+    # an interval boundary that failed is retried on the next turn instead of
+    # skipped forever (RF-04).
+    last_reflected_at_count = Column(Integer, default=0)
+    # Per-chat persona snapshot (B8, independent storylines): mood/location/
+    # clothes/stats now belong to the chat, not globally to the character. The
+    # active chat's snapshot is mirrored live on AgentState; switching chats
+    # saves the outgoing snapshot here and restores the incoming one, so each
+    # storyline has its own relationship score, mood and scene.
+    location = Column(String, default="Living Room")
+    mood = Column(String, default="Neutral")
+    clothes = Column(String, default="Casual")
+    stats = Column(JSON)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    character = relationship("Character")
+    current_message = relationship("MessageNode", foreign_keys=[current_message_id])
+
+
 class AgentState(Base):
     __tablename__ = "agent_states"
     id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), unique=True, index=True)
-    current_message_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
+    # Ownership FK: the agent state is owned by its character and dies with it.
+    character_id = Column(
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        # Owning key: an agent state without a character is meaningless, and a
+        # UNIQUE index over a nullable column lets SQLite hold multiple NULL rows,
+        # half-opening the "one state per character" invariant (ER review B4).
+        nullable=False,
+    )
+    # Pointer FKs: SET NULL, never CASCADE -- deleting the pointed-at message or
+    # chat must clear the pointer, not delete the whole agent state.
+    current_message_id = Column(
+        Integer, ForeignKey("message_nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    # Pointer to the character's currently-active Chat/session. AgentState's
+    # conversation-local fields (current_message_id, active_summary,
+    # interaction_count) belong to whichever chat this points at.
+    active_chat_id = Column(
+        Integer, ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
+    )
     interaction_count = Column(Integer, default=0)
+    # Mirrors Chat.last_reflected_at_count for the active chat (RF-04).
+    last_reflected_at_count = Column(Integer, default=0)
     location = Column(String, default="Living Room")
     mood = Column(String, default="Neutral")
     clothes = Column(String, default="Casual")
@@ -137,32 +264,36 @@ class AgentState(Base):
             self.mood = "Neutral"
         if self.interaction_count is None:
             self.interaction_count = 0
+        if self.last_reflected_at_count is None:
+            self.last_reflected_at_count = 0
         if not self.stats:
-            self.stats = {
-                "energy": 100,
-                "hunger": 0,
-                "happiness": 100,
-                "social": 100,
-                "is_sleeping": False,
-                "last_update": datetime.now(timezone.utc).isoformat(),
-                "relationship": {
-                    "score": 50,
-                    "dynamic_preferences": ["teasing", "playful"],
-                    "user_sentiment": "Neutral",
-                },
-            }
+            self.stats = default_stats()
 
 
 class MessageNode(Base):
     __tablename__ = "message_nodes"
+    # parent_id is the most-queried predicate in the app (variant COUNT, subtree
+    # sweep, branch walk) -- index it, plus composites for the subtree walk and
+    # the per-chat active-history fetch (ER review B3).
+    __table_args__ = (
+        Index("ix_message_nodes_parent_active", "parent_id", "is_active"),
+        Index("ix_message_nodes_chat_active_ts", "chat_id", "is_active", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    parent_id = Column(Integer, ForeignKey("message_nodes.id"), nullable=True)
+    parent_id = Column(
+        Integer, ForeignKey("message_nodes.id"), nullable=True, index=True
+    )
     role = Column(String)  # 'user' or 'assistant'
     content = Column(Text)  # Raw message or sequence JSON
     type = Column(String, default="speech")  # 'thought', 'action', 'speech'
     variant_index = Column(Integer, default=0)
     request_id = Column(String, index=True, nullable=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    character_id = Column(
+        Integer, ForeignKey("characters.id", ondelete="CASCADE"), index=True
+    )
+    chat_id = Column(
+        Integer, ForeignKey("chats.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
@@ -181,7 +312,10 @@ class LorebookEntry(Base):
     secondary_keys = Column(JSON, default=list)
     content = Column(Text)
     character_id = Column(
-        Integer, ForeignKey("characters.id"), nullable=True, index=True
+        Integer,
+        ForeignKey("characters.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     is_global = Column(Boolean, default=False)
 
@@ -197,7 +331,12 @@ class LorebookEntry(Base):
 class JournalEntry(Base):
     __tablename__ = "journal_entries"
     id = Column(Integer, primary_key=True, index=True)
-    character_id = Column(Integer, ForeignKey("characters.id"), index=True)
+    character_id = Column(
+        Integer, ForeignKey("characters.id", ondelete="CASCADE"), index=True
+    )
+    chat_id = Column(
+        Integer, ForeignKey("chats.id", ondelete="CASCADE"), index=True, nullable=True
+    )
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     content = Column(Text)
     summary = Column(Text)

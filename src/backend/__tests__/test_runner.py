@@ -1,3 +1,4 @@
+import copy
 import json
 import subprocess
 from pathlib import Path
@@ -65,6 +66,26 @@ def test_runner_load_config_defaults_with_models():
                 assert runner.config["embedding"]["model_path"] == "models/m2.gguf"
 
 
+def test_load_config_does_not_mutate_default_config():
+    """Regression: the no-config-file branch must deepcopy DEFAULT_CONFIG. A
+    shallow copy shared the nested dicts, so assigning model_path leaked into the
+    module-level constant and every later runner inherited the stale value."""
+    original = copy.deepcopy(DEFAULT_CONFIG)
+
+    mock_config_file = MagicMock(spec=Path)
+    mock_config_file.exists.return_value = False
+    with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
+        with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
+            with patch(
+                "src.backend.core.engine.runner.LlamaServerRunner.get_available_models",
+                return_value=["a.gguf", "b.gguf"],
+            ):
+                runner = LlamaServerRunner()
+                assert runner.config["inference"]["model_path"] == "models/a.gguf"
+
+    assert DEFAULT_CONFIG == original, "DEFAULT_CONFIG was mutated by load_config"
+
+
 def test_runner_load_config_exceptions():
     """Verify JSON errors, permissions, or general exceptions reload defaults."""
     mock_config_file = MagicMock(spec=Path)
@@ -90,13 +111,15 @@ def test_runner_load_config_migrations():
     mock_config_file = MagicMock(spec=Path)
     mock_config_file.exists.return_value = True
 
-    # Custom config containing old values to trigger all migration code paths
+    # Config with NO cache-type set on inference -> triggers cache-type
+    # injection; plus a bare embedding arg that triggers flash-attn injection
+    # and the 8081 -> 8080 port consolidation.
     old_cfg = {
         "inference": {
             "binary_path": "llama-server.exe",
             "model_path": "models/model.gguf",
             "port": 8080,
-            "additional_args": "--extra --cache-type-k q8_0 --cache-type-v q8_0",  # triggers replacement
+            "additional_args": "--extra",  # no cache-type -> triggers injection
         },
         "embedding": {
             "binary_path": "llama-server.exe",
@@ -113,10 +136,11 @@ def test_runner_load_config_migrations():
             ) as mock_save:
                 runner = LlamaServerRunner()
 
-                # Check inference migrations
+                # Injected cache-type must be the supported pair, never q4_0.
                 inf_args = runner.config["inference"]["additional_args"]
-                assert "q8_0" not in inf_args
-                assert "q4_0" in inf_args
+                assert "--cache-type-k q8_0" in inf_args
+                assert "--cache-type-v turbo3" in inf_args
+                assert "q4_0" not in inf_args
                 assert "--flash-attn" in inf_args
                 assert "--parallel 1" in inf_args
 
@@ -126,6 +150,38 @@ def test_runner_load_config_migrations():
                 assert runner.config["embedding"]["port"] == 8080
 
                 mock_save.assert_called()
+
+
+def test_runner_preserves_explicit_cache_type():
+    """An explicit, valid cache-type the user set must never be rewritten
+    (regression guard for the old q8_0 -> q4_0 force-migration that broke
+    inference on the turboquant binary)."""
+    mock_config_file = MagicMock(spec=Path)
+    mock_config_file.exists.return_value = True
+
+    cfg = {
+        "inference": {
+            "binary_path": "llama-server.exe",
+            "model_path": "models/model.gguf",
+            "port": 8080,
+            "additional_args": "--cache-type-k q8_0 --cache-type-v turbo3 --flash-attn on --parallel 1",
+        },
+        "embedding": {
+            "binary_path": "llama-server.exe",
+            "model_path": "models/model.gguf",
+            "port": 8080,
+            "additional_args": "--flash-attn on",
+        },
+    }
+
+    with patch("src.backend.core.engine.runner.CONFIG_FILE", mock_config_file):
+        with patch("builtins.open", mock_open(read_data=json.dumps(cfg))):
+            with patch("src.backend.core.engine.runner.LlamaServerRunner.save_config"):
+                runner = LlamaServerRunner()
+                inf_args = runner.config["inference"]["additional_args"]
+                assert "--cache-type-k q8_0" in inf_args
+                assert "--cache-type-v turbo3" in inf_args
+                assert "q4_0" not in inf_args
 
 
 def test_runner_save_config_success():

@@ -107,9 +107,9 @@ describe('App', () => {
     await screen.findAllByText('Luna')
     fireEvent.click(screen.getByText('Initialize Persona'))
 
-    const nameInput = await screen.findByPlaceholderText(/e\.g\. Architect/)
+    const nameInput = await screen.findByPlaceholderText(/A unique title/)
     fireEvent.change(nameInput, { target: { value: 'Nova' } })
-    fireEvent.change(screen.getByPlaceholderText(/Describe the character/), { target: { value: 'New AI' } })
+    fireEvent.change(screen.getByPlaceholderText(/Provide a short description/), { target: { value: 'New AI' } })
 
     const submitBtn = screen.getByText('Initialize')
     await act(async () => {
@@ -714,6 +714,37 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByTitle('Copy Request ID')).toBeInTheDocument())
   })
 
+  it('reassembles a data frame split across two stream chunks', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // The token frame is deliberately split mid-JSON across two reads.
+        return streamResponse([
+          'data: {"token": "Split ',
+          'works"}\n\n',
+          'data: {"done": true}\n\n'
+        ])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    await waitFor(() => expect(screen.queryByText(/Split works/)).not.toBeNull())
+  })
+
   it('regenerates an assistant response', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)
@@ -981,7 +1012,7 @@ describe('App', () => {
     await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
     await act(async () => {
-      fireEvent.click(screen.getByTitle('Clear conversation history and start a new chat'))
+      fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
     })
 
     expect(window.confirm).toHaveBeenCalled()
@@ -1009,7 +1040,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
     await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
-    fireEvent.click(screen.getByTitle('Clear conversation history and start a new chat'))
+    fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
 
     expect(clearSpy).not.toHaveBeenCalled()
   })
@@ -1031,10 +1062,42 @@ describe('App', () => {
     await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
     await act(async () => {
-      fireEvent.click(screen.getByTitle('Clear conversation history and start a new chat'))
+      fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
     })
 
     expect(await screen.findByText('Failed to clear conversation history.')).toBeInTheDocument()
+  })
+
+  it('starts a new chat non-destructively (no confirm, calls /chat/new)', async () => {
+    const newChatSpy = vi.fn()
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/new/1' && options?.method === 'POST') {
+        newChatSpy()
+        return mockResponse({ chat_id: 99, title: 'New Chat' })
+      }
+      if (u === '/chat/clear/1') return mockResponse({}, false) // must NOT be called
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/chats/')) return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    await screen.findByPlaceholderText(/Write a prompt for Luna/)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle('Start a new chat (keeps this one)'))
+    })
+
+    expect(newChatSpy).toHaveBeenCalled()
+    // Non-destructive: no confirmation dialog for starting a new chat.
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(await screen.findByText('Started a new chat.')).toBeInTheDocument()
   })
 
   it('opens and closes the mobile sidebar drawer', async () => {
@@ -1077,9 +1140,9 @@ describe('App', () => {
     await screen.findAllByText('Luna')
     fireEvent.click(screen.getByText('Initialize Persona'))
 
-    const nameInput = await screen.findByPlaceholderText(/e\.g\. Architect/)
+    const nameInput = await screen.findByPlaceholderText(/A unique title/)
     fireEvent.change(nameInput, { target: { value: 'Nova' } })
-    fireEvent.change(screen.getByPlaceholderText(/Describe the character/), { target: { value: 'New AI' } })
+    fireEvent.change(screen.getByPlaceholderText(/Provide a short description/), { target: { value: 'New AI' } })
 
     await act(async () => {
       fireEvent.click(screen.getByText('Initialize'))

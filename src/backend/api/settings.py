@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import re
 from pathlib import Path
@@ -6,10 +7,33 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 from src.backend.core.engine.runner import runner
+from src.backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _handle_errors(action: str):
+    """Wrap a route handler so any unexpected error is logged and surfaced as a
+    500, while intentional HTTPExceptions pass through untouched. Keeps error
+    logging consistent across every settings endpoint."""
+
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to {action}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        return wrapper
+
+    return decorator
+
 
 # Reject shell/control metacharacters in additional_args. args.split() already
 # passes tokens straight into Popen's argv (never through a shell), so this
@@ -24,7 +48,7 @@ class ServerConfigModel(BaseModel):
     port: int
     threads: int
     gpu_layers: int
-    context_size: int = 4096
+    context_size: int = settings.CONTEXT_SIZE
     additional_args: str
 
     @field_validator("binary_path")
@@ -68,79 +92,85 @@ class LlamaConfigModel(BaseModel):
 
 
 @router.get("/status")
+@_handle_errors("get runner status")
 async def get_runner_status():
-    try:
-        return runner.get_status()
-    except Exception as e:
-        logger.error(f"Failed to get runner status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return runner.get_status()
 
 
 @router.post("/save")
+@_handle_errors("save runner config")
 async def save_runner_config(config: LlamaConfigModel):
-    try:
-        runner.config["inference"] = config.inference.model_dump()
-        runner.config["embedding"] = config.embedding.model_dump()
-        runner.save_config()
-        return {"status": "success", "message": "Configuration saved successfully."}
-    except Exception as e:
-        logger.error(f"Failed to save runner config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    runner.config["inference"] = config.inference.model_dump()
+    runner.config["embedding"] = config.embedding.model_dump()
+    runner.save_config()
+    return {"status": "success", "message": "Configuration saved successfully."}
 
 
 @router.post("/start/inference")
+@_handle_errors("start inference server")
 async def start_inference_server():
     success = await asyncio.to_thread(runner.start_inference)
     if success:
         return {"status": "success", "message": "Inference server started."}
-    else:
-        raise HTTPException(
-            status_code=500, detail="Failed to start inference server. Check logs."
-        )
+    raise HTTPException(
+        status_code=500, detail="Failed to start inference server. Check logs."
+    )
 
 
 @router.post("/stop/inference")
+@_handle_errors("stop inference server")
 async def stop_inference_server():
-    try:
-        await asyncio.to_thread(runner.stop_inference)
-        return {"status": "success", "message": "Inference server stopped."}
-    except Exception as e:
-        logger.error(f"Failed to stop inference server: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    await asyncio.to_thread(runner.stop_inference)
+    return {"status": "success", "message": "Inference server stopped."}
 
 
 @router.post("/start/embedding")
+@_handle_errors("start embedding server")
 async def start_embedding_server():
     success = await asyncio.to_thread(runner.start_embedding)
     if success:
         return {"status": "success", "message": "Embedding server started."}
-    else:
-        raise HTTPException(
-            status_code=500, detail="Failed to start embedding server. Check logs."
-        )
+    raise HTTPException(
+        status_code=500, detail="Failed to start embedding server. Check logs."
+    )
 
 
 @router.post("/stop/embedding")
+@_handle_errors("stop embedding server")
 async def stop_embedding_server():
-    try:
-        await asyncio.to_thread(runner.stop_embedding)
-        return {"status": "success", "message": "Embedding server stopped."}
-    except Exception as e:
-        logger.error(f"Failed to stop embedding server: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    await asyncio.to_thread(runner.stop_embedding)
+    return {"status": "success", "message": "Embedding server stopped."}
 
 
 @router.post("/restart-all")
+@_handle_errors("restart servers")
 async def restart_all_servers():
-    try:
-        inf_success = await asyncio.to_thread(runner.start_inference)
-        emb_success = await asyncio.to_thread(runner.start_embedding)
-        return {
-            "status": "success",
-            "message": "Servers restarted.",
-            "inference": inf_success,
-            "embedding": emb_success,
-        }
-    except Exception as e:
-        logger.error(f"Failed to restart servers: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    inf_success = await asyncio.to_thread(runner.start_inference)
+    emb_success = await asyncio.to_thread(runner.start_embedding)
+    if not (inf_success and emb_success):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Failed to restart servers "
+                f"(inference={inf_success}, embedding={emb_success}). Check logs."
+            ),
+        )
+    return {
+        "status": "success",
+        "message": "Servers restarted.",
+        "inference": inf_success,
+        "embedding": emb_success,
+    }
+
+
+class TokenizeRequest(BaseModel):
+    text: str
+
+
+@router.post("/tokenize")
+@_handle_errors("tokenize text")
+async def tokenize_text(payload: TokenizeRequest):
+    from src.backend.core.deps import brain
+
+    count = await brain.budget_calc.count_tokens(payload.text)
+    return {"tokens": count}

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel, ConfigDict
 
 from src.backend.db.database import get_db
 from src.backend.db.models import Tag
+from src.backend.api.common import get_or_404
 
 router = APIRouter()
 
@@ -24,7 +25,7 @@ class TagResponse(BaseModel):
 
 @router.post("/", response_model=TagResponse)
 def create_tag(tag: TagCreate, db: Session = Depends(get_db)):
-    new_tag = Tag(label=tag.label, instruction=tag.instruction)
+    new_tag = Tag(**tag.model_dump())
     db.add(new_tag)
     db.commit()
     db.refresh(new_tag)
@@ -38,11 +39,9 @@ def list_tags(db: Session = Depends(get_db)):
 
 @router.put("/{tag_id}", response_model=TagResponse)
 def update_tag(tag_id: int, tag_data: TagCreate, db: Session = Depends(get_db)):
-    tag = db.query(Tag).filter(Tag.id == tag_id).first()
-    if not tag:
-        raise HTTPException(status_code=404, detail="Tag not found")
-    tag.label = tag_data.label
-    tag.instruction = tag_data.instruction
+    tag = get_or_404(db, Tag, tag_id, "Tag")
+    for key, value in tag_data.model_dump().items():
+        setattr(tag, key, value)
     db.commit()
     db.refresh(tag)
     return tag
@@ -50,9 +49,7 @@ def update_tag(tag_id: int, tag_data: TagCreate, db: Session = Depends(get_db)):
 
 @router.delete("/{tag_id}")
 def delete_tag(tag_id: int, db: Session = Depends(get_db)):
-    tag = db.query(Tag).filter(Tag.id == tag_id).first()
-    if not tag:
-        raise HTTPException(status_code=404, detail="Tag not found")
+    tag = get_or_404(db, Tag, tag_id, "Tag")
     db.delete(tag)
     db.commit()
     return {"message": "Tag deleted"}

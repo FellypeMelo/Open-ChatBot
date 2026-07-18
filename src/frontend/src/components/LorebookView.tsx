@@ -20,7 +20,7 @@ const LorebookView: React.FC = () => {
 
   const fetchLore = async () => {
     try {
-      const data = await api.fetchLore();
+      const data = (await api.fetchLore()) as LoreEntry[];
       setLore(data);
     } catch (err) {
       console.error('Failed to fetch lore', err);

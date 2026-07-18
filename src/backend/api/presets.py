@@ -4,8 +4,14 @@ from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 from src.backend.db.database import get_db
 from src.backend.db.models import SamplerPreset
+from src.backend.api.common import get_or_404
 
 router = APIRouter()
+
+
+def _clear_default_flag(db: Session) -> None:
+    """Clear is_default on every preset so a new default can be set uniquely."""
+    db.query(SamplerPreset).update({SamplerPreset.is_default: False})
 
 
 class PresetSchema(BaseModel):
@@ -50,7 +56,7 @@ def get_presets(db: Session = Depends(get_db)):
 @router.post("/", response_model=PresetSchema)
 def create_preset(request: PresetCreateSchema, db: Session = Depends(get_db)):
     if request.is_default:
-        db.query(SamplerPreset).update({SamplerPreset.is_default: False})
+        _clear_default_flag(db)
 
     preset = SamplerPreset(**request.model_dump())
     db.add(preset)
@@ -63,12 +69,10 @@ def create_preset(request: PresetCreateSchema, db: Session = Depends(get_db)):
 def update_preset(
     preset_id: int, request: PresetCreateSchema, db: Session = Depends(get_db)
 ):
-    preset = db.query(SamplerPreset).filter(SamplerPreset.id == preset_id).first()
-    if not preset:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    preset = get_or_404(db, SamplerPreset, preset_id, "Preset")
 
     if request.is_default:
-        db.query(SamplerPreset).update({SamplerPreset.is_default: False})
+        _clear_default_flag(db)
 
     # exclude_unset: only overwrite fields the caller actually sent, so a
     # partial PUT doesn't silently reset every omitted field back to
@@ -84,9 +88,7 @@ def update_preset(
 
 @router.delete("/{preset_id}")
 def delete_preset(preset_id: int, db: Session = Depends(get_db)):
-    preset = db.query(SamplerPreset).filter(SamplerPreset.id == preset_id).first()
-    if not preset:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    preset = get_or_404(db, SamplerPreset, preset_id, "Preset")
 
     if preset.is_default:
         raise HTTPException(status_code=400, detail="Cannot delete the default preset")

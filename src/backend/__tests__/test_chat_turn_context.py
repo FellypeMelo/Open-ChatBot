@@ -20,9 +20,16 @@ from sqlalchemy.orm.exc import StaleDataError
 from fastapi.testclient import TestClient
 
 from src.backend.db.database import Base, get_db
-from src.backend.db.models import AgentState, Character, MessageNode, SamplerPreset
+from src.backend.db.models import (
+    AgentState,
+    Chat,
+    Character,
+    MessageNode,
+    SamplerPreset,
+)
 from src.backend.api import chat as chat_module
-from src.backend.api.chat import ACTIONS_CONFIG, LLMConfig, _apply_action_stats
+from src.backend.api.chat import LLMConfig
+from src.backend.core.engine.state_transitions import ACTIONS_CONFIG, apply_action_stats
 from src.backend.main import app
 
 
@@ -103,7 +110,7 @@ def test_apply_action_stats_clamps_between_0_and_100():
         "social": 15,
         "relationship_score": 20,
     }
-    result = _apply_action_stats(stats, stat_mod)
+    result = apply_action_stats(stats, stat_mod)
 
     assert result["energy"] == 100
     assert result["hunger"] == 0
@@ -120,13 +127,13 @@ def test_apply_action_stats_relationship_non_dict_falls_back_to_default_score():
         "social": 50,
         "relationship": "corrupted-legacy-value",
     }
-    result = _apply_action_stats(stats, {"relationship_score": 5})
+    result = apply_action_stats(stats, {"relationship_score": 5})
 
     assert result["relationship"] == {"score": 55}
 
 
 def test_apply_action_stats_handles_missing_stats_dict():
-    result = _apply_action_stats(None, {"energy": 10, "hunger": -5})
+    result = apply_action_stats(None, {"energy": 10, "hunger": -5})
 
     assert result["energy"] == 100  # default 100 + 10, clamped
     assert result["hunger"] == 0  # default 0 - 5, clamped
@@ -222,6 +229,70 @@ def test_regenerate_without_message_persists_interaction_count_and_stat_decay(
         .all()
     )
     assert len(user_messages) == 1
+
+
+def test_regenerate_does_not_duplicate_user_message_in_prompt(client, db_session):
+    """RP bug: on a regenerate (no message, parent_id -> last user turn), the
+    history walk ends on that user line AND build_prompt re-appends it as the
+    trailing 'User:' turn, so the model saw the user's last line twice. The
+    trailing line must be dropped from the history slice."""
+    char = Character(id=514, name="RegenPromptChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(
+        character_id=514,
+        interaction_count=1,
+        stats={
+            "energy": 100,
+            "hunger": 0,
+            "happiness": 100,
+            "social": 100,
+            "is_sleeping": False,
+            "last_update": datetime.now(timezone.utc).isoformat(),
+            "relationship": {"score": 50},
+        },
+    )
+    db_session.add(state)
+    db_session.commit()
+    user_msg = MessageNode(
+        character_id=514, role="user", content="tell me a secret", is_active=True
+    )
+    db_session.add(user_msg)
+    db_session.commit()
+    state.current_message_id = user_msg.id
+    db_session.commit()
+
+    captured = {}
+
+    async def fake_build_prompt(user_message, character, state_dict, **kwargs):
+        captured["user_message"] = user_message
+        captured["history"] = kwargs.get("history") or []
+        return "PROMPT"
+
+    with (
+        patch(
+            "src.backend.api.chat.brain.build_prompt",
+            new=AsyncMock(side_effect=fake_build_prompt),
+        ),
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+    ):
+        mock_complete.return_value = {"content": "A whispered secret."}
+        resp = client.post(
+            "/chat", json={"character_id": 514, "parent_id": user_msg.id}
+        )
+
+    assert resp.status_code == 200
+    # build_prompt appends the user line as the trailing turn, so it must NOT
+    # also appear inside the history slice.
+    dupes = [
+        m
+        for m in captured["history"]
+        if m.get("role") == "user" and m.get("content") == "tell me a secret"
+    ]
+    assert dupes == [], "regenerate duplicated the user message into history"
+    assert captured["user_message"] == "tell me a secret"
 
 
 def test_chat_history_walk_stops_at_missing_ancestor(client, db_session):
@@ -549,6 +620,404 @@ async def test_run_consciousness_layer_force_reflect_evolves_character(
     assert args[1] == 510
 
 
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_reflection_excludes_inactive_messages(
+    db_session, monkeypatch
+):
+    # Reflection must summarize only the live branch: an edited-away or
+    # regenerated (is_active=False) node must never reach brain.reflect, or its
+    # discarded content becomes permanent cross-chat canon (PZ-02).
+    char = Character(id=511, name="ActiveOnlyChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=511))
+    db_session.commit()
+
+    db_session.add(
+        MessageNode(
+            character_id=511,
+            chat_id=77,
+            role="user",
+            content="ACTIVE user line",
+            is_active=True,
+        )
+    )
+    db_session.add(
+        MessageNode(
+            character_id=511,
+            chat_id=77,
+            role="assistant",
+            content="DISCARDED variant",
+            is_active=False,
+        )
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+        patch("src.backend.api.chat.evolve_character"),
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            511, "hello", "hi", force_reflect=True, chat_id=77
+        )
+
+    mock_reflect.assert_called_once()
+    passed_msgs, _ = mock_reflect.call_args
+    contents = [m["content"] for m in passed_msgs[0]]
+    assert "ACTIVE user line" in contents
+    assert "DISCARDED variant" not in contents
+
+
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_skips_memory_when_store_memory_false(
+    db_session, monkeypatch
+):
+    # Quick-action turns pass store_memory=False so their canned first-person
+    # text ("*I wrap my arms around you*") is never written as a User: memory,
+    # where it would accumulate and self-retrieve on every repeat (PZ-04).
+    char = Character(id=514, name="ActionChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=514))
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with patch.object(
+        chat_module.vector_store, "add_memory", new_callable=AsyncMock
+    ) as mock_add:
+        await chat_module.run_consciousness_layer(
+            514, "*I hug you*", "a reply", store_memory=False
+        )
+
+    mock_add.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_purges_superseded_variant_memories(
+    db_session, monkeypatch
+):
+    # PZ-01b: a regenerate creates a new sibling variant; only the selected
+    # (latest) variant's memory should remain -- purge the superseded siblings.
+    char = Character(id=521, name="RerollChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=521))
+    db_session.commit()
+    parent = MessageNode(character_id=521, role="user", content="hi", is_active=True)
+    db_session.add(parent)
+    db_session.commit()
+    v1 = MessageNode(
+        character_id=521,
+        role="assistant",
+        content="v1",
+        parent_id=parent.id,
+        is_active=True,
+    )
+    v2 = MessageNode(
+        character_id=521,
+        role="assistant",
+        content="v2",
+        parent_id=parent.id,
+        is_active=True,
+    )
+    db_session.add_all([v1, v2])
+    db_session.commit()
+    # Capture ids before the call (run_consciousness_layer closes the session).
+    v1_id, v2_id = v1.id, v2.id
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+        ) as mock_del,
+    ):
+        await chat_module.run_consciousness_layer(
+            521, "hi", "v2", chat_id=None, message_id=v2_id
+        )
+
+    mock_del.assert_awaited_once()
+    purged = set(mock_del.call_args[0][0])
+    assert v1_id in purged
+    assert v2_id not in purged
+
+
+@pytest.mark.asyncio
+async def test_reflection_walks_active_branch_excluding_offbranch_variant(
+    db_session, monkeypatch
+):
+    # PZ-02b: reflection walks the active branch from the selected leaf, so a
+    # non-selected regenerate variant (off the chosen path) never enters the
+    # permanent-state summary even though it is is_active=True.
+    char = Character(id=522, name="BranchChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=522))
+    db_session.commit()
+    u = MessageNode(character_id=522, role="user", content="u-line", is_active=True)
+    db_session.add(u)
+    db_session.commit()
+    chosen = MessageNode(
+        character_id=522,
+        role="assistant",
+        content="CHOSEN",
+        parent_id=u.id,
+        is_active=True,
+    )
+    offbranch = MessageNode(
+        character_id=522,
+        role="assistant",
+        content="OFFBRANCH",
+        parent_id=u.id,
+        is_active=True,
+    )
+    db_session.add_all([chosen, offbranch])
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+        patch("src.backend.api.chat.evolve_character"),
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            522, "u-line", "CHOSEN", force_reflect=True, message_id=chosen.id
+        )
+
+    passed = [m["content"] for m in mock_reflect.call_args[0][0]]
+    assert "CHOSEN" in passed
+    assert "u-line" in passed
+    assert "OFFBRANCH" not in passed
+
+
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_marks_chat_last_reflected_count(
+    db_session, monkeypatch
+):
+    # RF-04: a successful reflection records the consumed interaction count on the
+    # reflecting Chat row (the per-chat source of truth), so a failed boundary
+    # turn is retried next time instead of skipped forever.
+    char = Character(id=525, name="MarkChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    chat = Chat(character_id=525, title="C")
+    db_session.add(chat)
+    db_session.commit()
+    chat_id = chat.id
+    db_session.add(
+        AgentState(character_id=525, interaction_count=20, active_chat_id=chat_id)
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+        patch("src.backend.api.chat.evolve_character"),
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            525, "u", "a", force_reflect=True, chat_id=chat_id, reflected_at_count=20
+        )
+
+    refreshed_chat = db_session.query(Chat).filter_by(id=chat_id).first()
+    assert refreshed_chat.last_reflected_at_count == 20
+
+
+def test_chat_triggers_reflection_at_interval_via_range_check(client, db_session):
+    # RF-04 (review #5): the range-check trigger in _prepare_chat_turn must fire a
+    # reflection when interaction_count - last_reflected reaches the interval.
+    from src.backend.core.config import settings
+
+    char = Character(id=526, name="IntervalChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(
+        AgentState(
+            character_id=526,
+            interaction_count=settings.REFLECTION_INTERVAL - 1,
+            last_reflected_at_count=0,
+        )
+    )
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "a reply"}
+        resp = client.post("/chat", json={"character_id": 526, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_called_once()
+    assert mock_rcl.call_args.kwargs["force_reflect"] is True
+
+
+def test_chat_static_persona_skips_reflection_at_interval(client, db_session):
+    # EPIC Phase 3 (review finding): a STATIC character AT the reflection boundary
+    # must NOT force_reflect -- its persona is frozen. Mirror of the dynamic test.
+    from src.backend.core.config import settings
+
+    char = Character(
+        id=527, name="StaticIntervalChar", description="d", dynamic_persona=False
+    )
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(
+        AgentState(
+            character_id=527,
+            interaction_count=settings.REFLECTION_INTERVAL - 1,
+            last_reflected_at_count=0,
+        )
+    )
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "a reply"}
+        resp = client.post("/chat", json={"character_id": 527, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_called_once()
+    assert mock_rcl.call_args.kwargs["force_reflect"] is False
+
+
+def test_toggle_static_to_dynamic_reseeds_decay_clock(client, db_session):
+    # EPIC Phase 3 (review finding): re-enabling a static->dynamic persona must
+    # reset the decay clock so the frozen interval isn't dumped as one-shot decay.
+    old = (datetime.now(timezone.utc) - timedelta(hours=200)).isoformat()
+    char = Character(
+        id=730, name="ToggleReseed", description="d", dynamic_persona=False
+    )
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=730)
+    state.stats = {
+        "energy": 100,
+        "hunger": 0,
+        "relationship": {"score": 50},
+        "last_update": old,
+    }
+    db_session.add(state)
+    db_session.commit()
+
+    resp = client.put(
+        "/characters/730",
+        json={
+            "name": "ToggleReseed",
+            "description": "d",
+            "dynamic_persona": True,
+            "tag_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 730).first()
+    )
+    lu = datetime.fromisoformat(refreshed.stats["last_update"])
+    if lu.tzinfo is None:
+        lu = lu.replace(tzinfo=timezone.utc)
+    assert (datetime.now(timezone.utc) - lu).total_seconds() < 120  # re-seeded to ~now
+
+
+@pytest.mark.asyncio
+async def test_reflection_stamps_reflecting_chat_and_respects_active_chat_guard(
+    db_session, monkeypatch
+):
+    # RF-04 (review #1/#2/#6): a reflection for chat A that finishes AFTER the
+    # user switched to chat B must stamp chat A's row (the reflecting chat) but
+    # NOT clobber the shared AgentState mirror (now belonging to chat B).
+    char = Character(id=527, name="SwitchChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    chat_a = Chat(character_id=527, title="A")
+    chat_b = Chat(character_id=527, title="B")
+    db_session.add_all([chat_a, chat_b])
+    db_session.commit()
+    chat_a_id, chat_b_id = chat_a.id, chat_b.id
+    # Active chat is now B; the reflection being finished is for A.
+    db_session.add(
+        AgentState(
+            character_id=527, active_chat_id=chat_b_id, last_reflected_at_count=0
+        )
+    )
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+
+    with (
+        patch.object(chat_module.vector_store, "add_memory", new_callable=AsyncMock),
+        patch.object(
+            chat_module.brain, "reflect", new_callable=AsyncMock
+        ) as mock_reflect,
+    ):
+        mock_reflect.return_value = {"summary": "s", "traits": {}, "facts": []}
+        await chat_module.run_consciousness_layer(
+            527,
+            "u",
+            "a",
+            force_reflect=True,
+            chat_id=chat_a_id,
+            reflected_at_count=20,
+        )
+
+    agent = db_session.query(AgentState).filter_by(character_id=527).first()
+    reflecting_chat = db_session.query(Chat).filter_by(id=chat_a_id).first()
+    # Chat A (reflecting) is stamped; the AgentState mirror (now chat B) is NOT.
+    assert reflecting_chat.last_reflected_at_count == 20
+    assert agent.last_reflected_at_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_consciousness_layer_tags_memory_with_message_id(
+    db_session, monkeypatch
+):
+    # The memory carries the assistant message id so it can be purged when that
+    # node is edited/deleted/regenerated away (PZ-01).
+    char = Character(id=515, name="TagChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=515))
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with patch.object(
+        chat_module.vector_store, "add_memory", new_callable=AsyncMock
+    ) as mock_add:
+        await chat_module.run_consciousness_layer(
+            515, "hi", "reply", chat_id=8, message_id=99
+        )
+
+    mock_add.assert_awaited_once()
+    _args, kwargs = mock_add.call_args
+    assert kwargs["metadata"]["message_id"] == 99
+
+
 # ---------------------------------------------------------------------------
 # /chat/clear/{character_id} resets AgentState to the documented defaults
 # ---------------------------------------------------------------------------
@@ -590,14 +1059,145 @@ def test_clear_chat_history_resets_all_agent_state_defaults(client, db_session):
     assert refreshed.clothes == "Casual"
     assert refreshed.mood == "Neutral"
     assert refreshed.interaction_count == 0
-    assert refreshed.stats == {
+    # last_update is a live timestamp (required so needs can decay after a
+    # reset); assert it exists + is ISO-parseable, then compare the rest.
+    assert "last_update" in refreshed.stats
+    from datetime import datetime as _dt
+
+    _dt.fromisoformat(refreshed.stats["last_update"])
+    stats_no_ts = {k: v for k, v in refreshed.stats.items() if k != "last_update"}
+    # A full reset now yields the same fresh-start persona as a new chat /
+    # character (single source: default_stats(), B8 review P3).
+    assert stats_no_ts == {
         "energy": 100,
         "hunger": 0,
         "happiness": 100,
         "social": 100,
         "is_sleeping": False,
-        "relationship": {"score": 50, "history": [], "nickname": None},
+        "relationship": {
+            "score": 50,
+            "dynamic_preferences": ["teasing", "playful"],
+            "user_sentiment": "Neutral",
+        },
     }
+
+
+def test_clear_chat_history_reseeds_opening_greeting(client, db_session):
+    """Clearing a character (the 'nuke everything' path) must leave it showing
+    its opening greeting again, not a blank session. The lazy-create path only
+    ADOPTS existing history and never seeds a greeting, so without a re-seed a
+    clear strands the character with no first message."""
+    char = Character(
+        id=515,
+        name="GreetChar",
+        description="Desc",
+        first_mes="Hello there, fellow traveler.",
+    )
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=515)
+    db_session.add(state)
+    db_session.commit()
+
+    resp = client.post(f"/chat/clear/{char.id}")
+    assert resp.status_code == 200
+
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 515).first()
+    )
+    assert refreshed.current_message_id is not None, "clear left no opening message"
+    assert refreshed.active_chat_id is not None, "clear left no active chat"
+    greeting = (
+        db_session.query(MessageNode)
+        .filter(MessageNode.id == refreshed.current_message_id)
+        .first()
+    )
+    assert greeting is not None
+    assert greeting.role == "assistant"
+    assert "Hello there, fellow traveler." in greeting.content
+    assert greeting.chat_id == refreshed.active_chat_id
+
+
+def _mock_chat_turn(client, char_id, message="hi"):
+    with (
+        patch(
+            "src.backend.api.chat.brain.build_prompt", new=AsyncMock(return_value="P")
+        ),
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mc,
+    ):
+        mc.return_value = {"content": "a reply"}
+        return client.post("/chat", json={"character_id": char_id, "message": message})
+
+
+def test_static_persona_freezes_needs(client, db_session):
+    # EPIC Phase 3: a static character does not decay its needs over time.
+    old = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    char = Character(id=710, name="StaticChar", description="d", dynamic_persona=False)
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=710)
+    state.stats = {
+        "energy": 100,
+        "hunger": 0,
+        "relationship": {"score": 50},
+        "last_update": old,
+    }
+    db_session.add(state)
+    db_session.commit()
+
+    assert _mock_chat_turn(client, 710).status_code == 200
+
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 710).first()
+    )
+    assert refreshed.stats["energy"] == 100  # frozen: no decay applied
+    assert refreshed.stats["hunger"] == 0
+
+
+def test_dynamic_persona_decays_needs(client, db_session):
+    old = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    char = Character(id=711, name="DynChar", description="d", dynamic_persona=True)
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=711)
+    state.stats = {
+        "energy": 100,
+        "hunger": 0,
+        "relationship": {"score": 50},
+        "last_update": old,
+    }
+    db_session.add(state)
+    db_session.commit()
+
+    assert _mock_chat_turn(client, 711).status_code == 200
+
+    refreshed = (
+        db_session.query(AgentState).filter(AgentState.character_id == 711).first()
+    )
+    assert refreshed.stats["energy"] < 100  # dynamic: decayed over the 8h gap
+
+
+def test_dynamic_persona_flag_round_trips_via_api(client, db_session):
+    # The static/dynamic flag survives the character write DTO + read model, so
+    # the Phase 5 UI can toggle it; omitting it defaults to dynamic.
+    resp = client.post(
+        "/characters/",
+        json={
+            "name": "ToggleChar",
+            "description": "d",
+            "dynamic_persona": False,
+            "tag_ids": [],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["dynamic_persona"] is False
+
+    resp2 = client.post(
+        "/characters/", json={"name": "DefaultChar", "description": "d", "tag_ids": []}
+    )
+    assert resp2.json()["dynamic_persona"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +1333,170 @@ def test_delete_message_deactivates_subtree_and_resets_current_message_to_parent
     assert refreshed_reply.is_active is False
     assert refreshed_grandchild.is_active is False
     assert refreshed_state.current_message_id == root.id
+
+
+def test_delete_message_purges_vector_memory_for_deactivated_nodes(client, db_session):
+    # PZ-01: deleting a message purges the RAG memories of the deleted node and
+    # its subtree so discarded content can't resurface via retrieval.
+    char = Character(id=516, name="PurgeChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    root = MessageNode(character_id=516, role="user", content="Hi", is_active=True)
+    db_session.add(root)
+    db_session.commit()
+    reply = MessageNode(
+        character_id=516,
+        role="assistant",
+        content="Hello!",
+        parent_id=root.id,
+        is_active=True,
+    )
+    db_session.add(reply)
+    db_session.commit()
+    follow = MessageNode(
+        character_id=516,
+        role="user",
+        content="More",
+        parent_id=reply.id,
+        is_active=True,
+    )
+    db_session.add(follow)
+    db_session.commit()
+
+    with patch.object(
+        chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+    ) as mock_del:
+        resp = client.delete(f"/chat/message/{reply.id}")
+
+    assert resp.status_code == 200
+    mock_del.assert_awaited_once()
+    purged = set(mock_del.call_args[0][0])
+    assert {reply.id, follow.id} <= purged
+
+
+def test_edit_assistant_message_purges_its_stale_memory(client, db_session):
+    # PZ-01 (review follow-up): editing an ASSISTANT reply must purge its memory,
+    # which holds the pre-edit text -- otherwise the old content resurfaces.
+    char = Character(id=518, name="EditAsstChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    root = MessageNode(character_id=518, role="user", content="Hi", is_active=True)
+    db_session.add(root)
+    db_session.commit()
+    reply = MessageNode(
+        character_id=518,
+        role="assistant",
+        content="old text",
+        parent_id=root.id,
+        is_active=True,
+    )
+    db_session.add(reply)
+    db_session.commit()
+
+    with patch.object(
+        chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+    ) as mock_del:
+        resp = client.put(f"/chat/message/{reply.id}", json={"content": "new text"})
+
+    assert resp.status_code == 200
+    mock_del.assert_awaited_once()
+    assert reply.id in set(mock_del.call_args[0][0])
+
+
+def test_edit_user_message_purges_subtree_memories(client, db_session):
+    # PZ-01 edit path (coverage): editing a USER turn purges its descendants'
+    # memories (the replies it invalidated).
+    char = Character(id=519, name="EditUserChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    root = MessageNode(character_id=519, role="user", content="Hi", is_active=True)
+    db_session.add(root)
+    db_session.commit()
+    reply = MessageNode(
+        character_id=519,
+        role="assistant",
+        content="a reply",
+        parent_id=root.id,
+        is_active=True,
+    )
+    db_session.add(reply)
+    db_session.commit()
+
+    with patch.object(
+        chat_module.vector_store, "delete_by_message_ids", new_callable=AsyncMock
+    ) as mock_del:
+        resp = client.put(f"/chat/message/{root.id}", json={"content": "Hi (edited)"})
+
+    assert resp.status_code == 200
+    mock_del.assert_awaited_once()
+    assert reply.id in set(mock_del.call_args[0][0])
+
+
+def test_chat_schedules_consciousness_with_message_id_and_store_memory(
+    client, db_session
+):
+    # PZ-01/PZ-04 wiring (coverage): a real /chat turn must schedule the
+    # consciousness layer with the assistant message_id and store_memory=True,
+    # or both fixes silently no-op end to end.
+    char = Character(id=520, name="WireChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=520))
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "A reply."}
+        resp = client.post("/chat", json={"character_id": 520, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_called_once()
+    kwargs = mock_rcl.call_args.kwargs
+    assert isinstance(kwargs["message_id"], int)
+    assert kwargs["store_memory"] is True
+
+
+def test_chat_empty_reply_stores_no_memory(client, db_session):
+    # PZ-07: an empty/failed non-stream reply must not persist an assistant node
+    # or store a "User: ..\nAI: " memory (the stream path already guards this).
+    char = Character(id=523, name="EmptyReplyChar", description="d")
+    db_session.add(char)
+    db_session.commit()
+    db_session.add(AgentState(character_id=523))
+    db_session.commit()
+
+    with (
+        patch(
+            "src.backend.core.engine.llm.LlamaClient.complete", new_callable=AsyncMock
+        ) as mock_complete,
+        patch.object(chat_module, "run_consciousness_layer") as mock_rcl,
+    ):
+        mock_complete.return_value = {"content": "   "}
+        resp = client.post("/chat", json={"character_id": 523, "message": "hi"})
+
+    assert resp.status_code == 200
+    mock_rcl.assert_not_called()
+    assistant_nodes = (
+        db_session.query(MessageNode)
+        .filter(MessageNode.character_id == 523, MessageNode.role == "assistant")
+        .all()
+    )
+    assert assistant_nodes == []
+
+    # TF-01 (decision: keep on failure): the user's message survives and the
+    # pointer rests on it, so the turn is cleanly retryable/regenerable.
+    user_node = (
+        db_session.query(MessageNode)
+        .filter(MessageNode.character_id == 523, MessageNode.role == "user")
+        .one()
+    )
+    assert user_node.content == "hi"
+    state = db_session.query(AgentState).filter(AgentState.character_id == 523).first()
+    assert state.current_message_id == user_node.id
 
 
 def test_delete_message_not_found_returns_404(client, db_session):

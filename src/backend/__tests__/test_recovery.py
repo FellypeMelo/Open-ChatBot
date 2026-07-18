@@ -1,8 +1,51 @@
 import pytest
 from unittest.mock import patch
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.exc import StaleDataError
+from src.backend.db.database import Base
 from src.backend.db.models import AgentState, Character
 from src.backend.core.engine.engine import evolve_character
 from src.backend.api.chat import run_consciousness_layer
+
+
+def test_evolve_character_retries_on_stale_data_error():
+    # RF-02: a concurrent chat commit advances AgentState.version; evolve's
+    # commit then raises StaleDataError. It must re-query fresh state and retry,
+    # not swallow the whole reflection (relationship/summary/facts/journal lost).
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        char = Character(name="Retry", description="d")
+        db.add(char)
+        db.commit()
+        db.add(AgentState(character_id=char.id))
+        db.commit()
+
+        real_commit = db.commit
+        calls = {"n": 0}
+
+        def flaky_commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise StaleDataError("simulated concurrent update")
+            return real_commit()
+
+        with patch.object(db, "commit", side_effect=flaky_commit):
+            evolve_character(db, char.id, {"relationship_change": 5})
+
+        state = db.query(AgentState).filter_by(character_id=char.id).first()
+        db.refresh(state)
+        # Applied exactly once on the retry (55, not 50 swallowed nor 60 double).
+        assert state.stats["relationship"]["score"] == 55
+        assert calls["n"] == 2
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_evolve_character_race_condition_safety(db_session):
@@ -110,23 +153,126 @@ def test_evolve_character_tag_evolution(db_session):
     assert "emotionally distant" in [t.label.lower() for t in char.tags]
     assert "guarded" in [t.label.lower() for t in char.tags]
 
-    # Evolve relationship to score 85 (above threshold of 80)
+    # Warm to 85: evolution LAYERS affectionate + vulnerable on top; the
+    # author-defined distant + guarded are preserved (RF-06 option C).
     evolve_character(db_session, char.id, {"relationship_change": 35})
     db_session.refresh(char)
 
-    # Distant and guarded tags should be swapped for affectionate and vulnerable
     tag_labels = [t.label.lower() for t in char.tags]
-    assert "emotionally distant" not in tag_labels
-    assert "guarded" not in tag_labels
     assert "affectionate" in tag_labels
     assert "vulnerable" in tag_labels
+    assert "emotionally distant" in tag_labels  # authored, retained
+    assert "guarded" in tag_labels  # authored, retained
 
-    # Evolve relationship back down to 25 (below threshold of 30)
+    # Cool to 25: evolution removes ONLY the warmth it added; authored tags stay.
     evolve_character(db_session, char.id, {"relationship_change": -60})
     db_session.refresh(char)
 
     tag_labels_low = [t.label.lower() for t in char.tags]
     assert "affectionate" not in tag_labels_low
     assert "vulnerable" not in tag_labels_low
-    assert "emotionally distant" in tag_labels_low
+    assert "emotionally distant" in tag_labels_low  # authored, retained
     assert "guarded" in tag_labels_low
+
+
+def test_evolve_character_preserves_authored_warm_tag_on_cold_swing(db_session):
+    # RF-06 (option C): a tag the AUTHOR defined must never be deleted by tag
+    # evolution -- only evolution-owned tags are removable.
+    from src.backend.db.models import Tag
+
+    authored = Tag(label="affectionate", instruction="Authored: always warm.")
+    db_session.add(authored)
+    db_session.commit()
+
+    char = Character(name="Sunny", description="Warm by design", tags=[authored])
+    db_session.add(char)
+    db_session.commit()
+
+    state = AgentState(character_id=char.id)
+    state.stats["relationship"]["score"] = 50
+    db_session.add(state)
+    db_session.commit()
+
+    # Relationship collapses well below the cold threshold.
+    evolve_character(db_session, char.id, {"relationship_change": -40})  # 50 -> 10
+    db_session.refresh(char)
+
+    labels = [t.label.lower() for t in char.tags]
+    assert "affectionate" in labels, "authored tag must survive a cold swing"
+
+
+def test_reflection_on_background_chat_targets_that_chat_not_live_state(db_session):
+    # B8 review P1: if the user switched chats during the slow background
+    # reflect(), evolve_character must apply the reflection to the reflecting
+    # chat's OWN persona snapshot, never the now-active chat's live AgentState.
+    from src.backend.db.models import Chat
+
+    db = db_session
+    char = Character(name="Race", description="d")
+    db.add(char)
+    db.commit()
+    chat_a = Chat(
+        character_id=char.id,
+        title="A",
+        mood="Calm",
+        stats={"energy": 100, "relationship": {"score": 50}},
+    )
+    chat_b = Chat(character_id=char.id, title="B")
+    db.add_all([chat_a, chat_b])
+    db.commit()
+
+    state = AgentState(character_id=char.id)
+    db.add(state)
+    db.commit()
+    # The live agent has already switched to chat B (its persona: score 30).
+    state.active_chat_id = chat_b.id
+    st = dict(state.stats)
+    st["relationship"] = {"score": 30}
+    state.stats = st
+    db.commit()
+
+    # A reflection produced from chat A's turns lands while the agent mirrors B.
+    evolve_character(
+        db,
+        char.id,
+        {"relationship_change": 10, "diary_entry": "A only"},
+        active_chat_id=chat_a.id,
+    )
+
+    db.refresh(chat_a)
+    db.refresh(state)
+    assert chat_a.stats["relationship"]["score"] == 60, (
+        "not applied to reflecting chat A"
+    )
+    assert state.stats["relationship"]["score"] == 30, (
+        "corrupted the live (chat B) state"
+    )
+
+    # The diary entry is scoped to chat A, not leaked globally.
+    from src.backend.db.models import JournalEntry
+
+    j = db.query(JournalEntry).filter(JournalEntry.character_id == char.id).all()
+    assert len(j) == 1
+    assert j[0].chat_id == chat_a.id
+
+
+def test_reflection_updates_location_and_mood(db_session):
+    # SEC-01: the grammar-constrained reflection reliably reports the current
+    # scene, so evolve applies location/mood (the per-turn regex fast-path misses
+    # most real narration).
+    db = db_session
+    char = Character(name="Scene", description="d")
+    db.add(char)
+    db.commit()
+    state = AgentState(character_id=char.id)
+    db.add(state)
+    db.commit()
+
+    evolve_character(
+        db,
+        char.id,
+        {"location": "the rooftop garden", "mood": "wistful", "relationship_change": 0},
+    )
+    db.refresh(state)
+    assert state.location == "Rooftop garden"  # article dropped, first-letter cap
+    assert state.mood == "wistful"

@@ -66,9 +66,13 @@ async def test_llama_cpp_embeddings_methods():
     with patch.object(embeddings, "embed_documents", return_value=[]) as mock_emb:
         assert embeddings.embed_query("test") == []
 
-    # aembed_documents
-    res_docs = await embeddings.aembed_documents(["test", "fail"])
-    assert res_docs == [[0.1]]
+    # aembed_documents must NOT silently drop a failed embedding -- that would
+    # misalign text<->metadata in a batch add. It raises so the caller aborts
+    # the whole add instead (SEC-03).
+    with pytest.raises(ValueError):
+        await embeddings.aembed_documents(["test", "fail"])
+    # All-successful stays 1:1 and ordered.
+    assert await embeddings.aembed_documents(["test", "test"]) == [[0.1], [0.1]]
 
     # aembed_query
     assert await embeddings.aembed_query("test") == [0.1]
@@ -147,6 +151,15 @@ async def test_vector_store_lore_operations(tmp_path):
     res = await store.query_lore(["key1", "key2"])
     assert res == {"documents": [["lore_content"]]}
 
+    # 5b. SEC-05: a below-threshold (irrelevant) nearest neighbor is dropped.
+    low_doc = MagicMock()
+    low_doc.page_content = "irrelevant"
+    mock_lore_store.asimilarity_search_with_score = AsyncMock(
+        return_value=[(low_doc, 0.2)]
+    )
+    res = await store.query_lore(["unrelated"])
+    assert res == {"documents": [[]]}
+
     # 6. Query lore exception
     mock_lore_store.asimilarity_search_with_score.side_effect = Exception("Query error")
     res = await store.query_lore(["key"])
@@ -204,11 +217,210 @@ async def test_vector_store_memory_operations(tmp_path):
         "query", n_results=3, metadata_filter={"user": "123"}
     )
     assert res == {"documents": [["mem_content"]]}
+    # Over-fetches n_results*4 candidates so the recency re-rank has room (RQ-01).
     mock_mem_store.asimilarity_search_with_score.assert_called_once_with(
-        "query", k=3, filter={"user": "123"}
+        "query", k=12, filter={"user": "123"}
     )
 
     # 4. Query memory exception
     mock_mem_store.asimilarity_search_with_score.side_effect = Exception("Search error")
     res = await store.query_memory("hello")
     assert res == {"documents": [[]]}
+
+
+class _FakeLLM:
+    """Deterministic 8-dim embeddings so a real turbovec store persists to disk
+    without a llama-server."""
+
+    async def embed(self, text):
+        vec = [0.1] * 8
+        vec[sum(map(ord, text)) % 8] = 1.0
+        return vec
+
+
+def test_atomic_dump_failure_does_not_corrupt_persisted_store(tmp_path):
+    # PF-02: turbovec.dump writes multiple files directly into the store dir; a
+    # crash mid-dump would corrupt the only persisted copy. _atomic_dump stages
+    # into a temp dir and swaps atomically, so a failing dump leaves the prior
+    # on-disk store fully intact and reloadable.
+    path = str(tmp_path / "cdb")
+    vs = VectorStore(llm_client=_FakeLLM(), path=path)
+
+    asyncio.run(vs.add_memory("first memory", {"character_id": 1}))
+
+    # A dump that raises must NOT damage the persisted store nor leave a temp dir.
+    with patch.object(
+        vs.memories_store, "dump", side_effect=IOError("simulated disk failure")
+    ):
+        asyncio.run(vs.add_memory("second memory", {"character_id": 1}))
+
+    assert not (vs.memories_path.parent / "memories.tmp").exists(), "temp dir leaked"
+
+    reloaded = VectorStore(llm_client=_FakeLLM(), path=path)
+    texts = [t for t, _m in reloaded.memories_store._docs.values()]
+    assert any("first memory" in t for t in texts), "prior store lost after failed dump"
+    assert all("second memory" not in t for t in texts), (
+        "half-written store persisted the failed add"
+    )
+
+
+def test_atomic_dump_persists_and_reloads(tmp_path):
+    # Happy path: an atomic dump round-trips through disk correctly.
+    path = str(tmp_path / "cdb")
+    vs = VectorStore(llm_client=_FakeLLM(), path=path)
+    asyncio.run(vs.add_memory("hello world", {"character_id": 7}))
+
+    reloaded = VectorStore(llm_client=_FakeLLM(), path=path)
+    texts = [t for t, _m in reloaded.memories_store._docs.values()]
+    assert any("hello world" in t for t in texts)
+    assert not (vs.memories_path.parent / "memories.tmp").exists()
+
+
+class _FakeLLMWithComplete:
+    """Deterministic embeddings + a mockable complete() for consolidation."""
+
+    def __init__(self, summary="CONDENSED SUMMARY", fail=False):
+        self._summary = summary
+        self._fail = fail
+        self.complete_calls = 0
+
+    async def embed(self, text):
+        vec = [0.1] * 8
+        vec[sum(map(ord, text)) % 8] = 1.0
+        return vec
+
+    async def complete(self, prompt, **kwargs):
+        self.complete_calls += 1
+        if self._fail:
+            raise RuntimeError("llm unavailable")
+        return {"content": self._summary}
+
+
+def _scope(vs, character_id, chat_id):
+    return [
+        (t, m)
+        for t, m in vs.memories_store._docs.values()
+        if m.get("character_id") == character_id and m.get("chat_id") == chat_id
+    ]
+
+
+def test_memory_consolidation_condenses_oldest_when_capped(tmp_path, monkeypatch):
+    # RQ-05: exceeding the cap folds the oldest batch into one consolidated
+    # memory, leaving recent memories intact.
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMWithComplete()
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"User: msg {i}\nAI: reply {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    scope = _scope(vs, 1, 10)
+    assert len(scope) == 4, "should be 6 - 3 oldest + 1 consolidated"
+    assert llm.complete_calls == 1
+    assert any(m.get("consolidated") for _t, m in scope)
+    assert any("CONDENSED SUMMARY" in t for t, _m in scope)
+    # The most recent originals survive full-fidelity.
+    assert any("reply 5" in t for t, _m in scope)
+
+
+def test_consolidation_is_scoped_and_spares_other_chats(tmp_path, monkeypatch):
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMWithComplete()
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"chat10 msg {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+        for i in range(2):
+            await vs.add_memory(
+                f"chat20 msg {i}",
+                {"character_id": 1, "chat_id": 20, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    assert len(_scope(vs, 1, 20)) == 2, "a different chat's memories must be untouched"
+
+
+def test_consolidation_failure_keeps_originals(tmp_path, monkeypatch):
+    # A failed summarize must NOT delete the batch (no data loss without a
+    # replacement in hand).
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMWithComplete(fail=True)
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"User: msg {i}\nAI: reply {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    assert len(_scope(vs, 1, 10)) == 6, "failed consolidation must not drop memories"
+    assert llm.complete_calls == 1
+
+
+class _FakeLLMEmbedFailsOnSummary:
+    """Embeds every text EXCEPT the consolidated summary, which fails -- models a
+    transient embedding-server hiccup on the consolidation add step."""
+
+    def __init__(self, summary="CONDENSED SUMMARY"):
+        self._summary = summary
+        self.complete_calls = 0
+
+    async def embed(self, text):
+        if text == self._summary:
+            return None
+        vec = [0.1] * 8
+        vec[sum(map(ord, text)) % 8] = 1.0
+        return vec
+
+    async def complete(self, prompt, **kwargs):
+        self.complete_calls += 1
+        return {"content": self._summary}
+
+
+def test_consolidation_add_failure_keeps_originals(tmp_path, monkeypatch):
+    # RQ-05 (P2): summarize succeeds but STORING the consolidated memory fails
+    # (embedding-server hiccup on the add step). The oldest batch must NOT be
+    # lost -- the store must happen before the delete, never the reverse.
+    from src.backend.core.config import settings
+
+    monkeypatch.setattr(settings, "MEMORY_STORE_CAP", 5)
+    monkeypatch.setattr(settings, "MEMORY_CONSOLIDATE_BATCH", 3)
+    llm = _FakeLLMEmbedFailsOnSummary()
+    vs = VectorStore(llm_client=llm, path=str(tmp_path / "cdb"))
+
+    async def run():
+        for i in range(6):
+            await vs.add_memory(
+                f"User: msg {i}\nAI: reply {i}",
+                {"character_id": 1, "chat_id": 10, "message_id": i + 1},
+            )
+
+    asyncio.run(run())
+
+    # 6 originals must all survive; none consolidated away without a replacement.
+    scope = _scope(vs, 1, 10)
+    assert len(scope) == 6, "batch was deleted before its replacement was stored"
+    assert all(not m.get("consolidated") for _t, m in scope)

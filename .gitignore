@@ -32,3 +32,4 @@ models_config.json
 **/.omg/
 session.log
 logs/
+llama_bin_backup_*/

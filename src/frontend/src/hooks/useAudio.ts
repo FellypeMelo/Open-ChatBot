@@ -3,7 +3,6 @@ import { useCallback, useRef } from 'react';
 export const useAudio = () => {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const ambientSourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const ambientGainRef = useRef<GainNode | null>(null);
   const currentLocationRef = useRef<string>('');
 
   const resumeAudio = useCallback(async () => {
@@ -53,7 +52,6 @@ export const useAudio = () => {
       }
       ambientSourceRef.current = null;
     }
-    ambientGainRef.current = null;
     currentLocationRef.current = '';
   }, []);
 
@@ -124,8 +122,6 @@ export const useAudio = () => {
 
       noiseNode.start();
       ambientSourceRef.current = noiseNode;
-      ambientGainRef.current = gainNode;
-      console.log(`Synthesizing ambient sound atmosphere for location: ${location}`);
     } catch (e) {
       console.warn('Ambient playback failed', e);
     }

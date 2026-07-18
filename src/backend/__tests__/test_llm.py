@@ -1,5 +1,4 @@
 import pytest
-import sys
 import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException
@@ -109,30 +108,27 @@ async def test_llama_client_embed_pytest_mode():
 
 @pytest.mark.asyncio
 async def test_llama_client_embed_production_mode():
-    """Patching sys.modules to test the actual LangChain embedding logic."""
+    """With settings.TESTING off, embed() runs the real LangChain path."""
     client = LlamaClient()
     client.embedding_url = "http://localhost:8080"
 
-    original_pytest = sys.modules.pop("pytest", None)
-    try:
-        with patch("src.backend.core.engine.llm.OpenAIEmbeddings") as mock_openai_emb:
-            mock_emb_instance = MagicMock()
-            mock_openai_emb.return_value = mock_emb_instance
-            mock_emb_instance.aembed_query = AsyncMock(return_value=[0.5] * 128)
+    with (
+        patch.object(settings, "TESTING", False),
+        patch.object(settings, "E2E_TESTING", False),
+        patch("src.backend.core.engine.llm.OpenAIEmbeddings") as mock_openai_emb,
+    ):
+        mock_emb_instance = MagicMock()
+        mock_openai_emb.return_value = mock_emb_instance
+        mock_emb_instance.aembed_query = AsyncMock(return_value=[0.5] * 128)
 
-            result = await client.embed("real embedding text")
-            assert result == [0.5] * 128
-            mock_emb_instance.aembed_query.assert_called_once_with(
-                "real embedding text"
-            )
+        result = await client.embed("real embedding text")
+        assert result == [0.5] * 128
+        mock_emb_instance.aembed_query.assert_called_once_with("real embedding text")
 
-            # Test exception branch
-            mock_emb_instance.aembed_query.side_effect = RuntimeError("Emb fail")
-            fail_result = await client.embed("fail text")
-            assert fail_result is None
-    finally:
-        if original_pytest is not None:
-            sys.modules["pytest"] = original_pytest
+        # Test exception branch
+        mock_emb_instance.aembed_query.side_effect = RuntimeError("Emb fail")
+        fail_result = await client.embed("fail text")
+        assert fail_result is None
     await client.close()
 
 

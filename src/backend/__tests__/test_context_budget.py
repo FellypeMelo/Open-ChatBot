@@ -70,6 +70,26 @@ async def test_get_budget_shape_and_history_budget():
 
 
 @pytest.mark.asyncio
+async def test_history_budget_capped_at_window_on_large_context():
+    # EPIC Phase 4: with ~40k of room at 48k context, raw history is bounded to
+    # the effective window so a 4B doesn't drown in the middle.
+    calc = ContextBudgetCalculator(context_size=49152)
+    budget = await calc.get_budget()
+    assert budget["history_budget"] == settings.HISTORY_WINDOW_TOKENS
+
+
+def test_allocations_reserve_anchor_and_realistic_card():
+    """Phase 0: the card reserve is no longer the tiny 300 (which under-counted a
+    real card), and the recency anchor is reserved so fixed_cost matches what
+    build_prompt actually emits."""
+    calc = ContextBudgetCalculator(context_size=49152)
+    assert "anchor" in calc.allocations
+    assert calc.allocations["anchor"] == settings.ANCHOR_TOKENS
+    assert calc.allocations["character_def"] >= 1500
+    assert calc.allocations["mes_example"] >= 1000
+
+
+@pytest.mark.asyncio
 async def test_count_tokens_empty_string_returns_zero_without_http_call():
     """An empty string short-circuits and never touches the network."""
     calc = ContextBudgetCalculator(context_size=8192)

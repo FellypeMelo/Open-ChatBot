@@ -323,6 +323,11 @@ def test_settings_endpoints_failures(client):
         response = client.post("/settings/start/embedding")
         assert response.status_code == 500
 
+        # Test restart-all when a server fails to start -> 500 (contract parity
+        # with /start/inference and /start/embedding, which both 500 on failure).
+        response = client.post("/settings/restart-all")
+        assert response.status_code == 500
+
 
 def test_user_endpoints_no_user_exist(client, db_session):
     # Ensure no users exist in database

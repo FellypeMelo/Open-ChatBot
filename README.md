@@ -16,7 +16,7 @@ A solução é dividida em serviços desacoplados de alta performance:
 graph TD
     A[React SPA / Frontend] -->|HTTP / JSON| B[FastAPI Backend]
     B -->|SQLAlchemy / ORM| C[(SQLite / chatbot.db)]
-    B -->|ChromaDB / VectorStore| D[Persistent Vector Cache]
+    B -->|turbovec / VectorStore| D[Persistent Vector Cache]
     B -->|Subprocess Engine| E[Llama Inference Server]
     B -->|Subprocess Engine| F[Llama Embedding Server]
 ```
@@ -89,3 +89,23 @@ chmod +x run.sh
 ```
 
 *Nota: O fluxo automatizado executa `pnpm build` no diretório [src/frontend](src/frontend) e expõe a build estática via FastAPI sob `/static`.*
+
+### Migrações de schema
+
+O `init_db()` constrói/atualiza o schema no startup e o marca (`stamp`) na revisão
+Alembic atual. Mudanças de schema são versionadas via Alembic
+(`src/backend/db/migrations/`); ao atualizar o código, rode você mesmo:
+
+```bash
+venv/Scripts/python.exe -m alembic upgrade head
+```
+
+---
+
+## 📚 Documentação
+
+*   **[docs/architecture.md](docs/architecture.md)** — fluxos big-picture (turn flow, ciclo de memória, reflexão).
+*   **[docs/data-model-er.md](docs/data-model-er.md)** — modelo Entidade-Relacionamento + decisões de schema.
+*   **[docs/testing.md](docs/testing.md)** — como rodar testes, isolamento, e adicionar features com segurança.
+*   **[docs/card-authoring-epic.md](docs/card-authoring-epic.md)** — como escrever uma card E.P.I.C. (persona, cena, tiques, exemplos) que faz um modelo pequeno brilhar.
+*   **[CLAUDE.md](CLAUDE.md)** — guia de comandos e arquitetura para contribuidores/agentes.

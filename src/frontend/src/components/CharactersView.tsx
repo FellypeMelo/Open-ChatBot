@@ -1,17 +1,5 @@
 import React, { useState } from 'react'
-
-interface Tag {
-  id: number
-  label: string
-}
-
-interface Character {
-  id: number
-  name: string
-  description: string
-  tags: Tag[]
-  avatar_url?: string
-}
+import type { Character } from '../services/api'
 
 interface CharactersViewProps {
   characters: Character[]
@@ -70,16 +58,16 @@ const CharactersView: React.FC<CharactersViewProps> = ({
         
         {/* Header Section */}
         <header className="mb-lg flex flex-col gap-md">
-          <div className="flex items-center justify-between gap-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-sm">
             <div className="flex flex-col gap-1">
               <span className="font-label-sm text-[10px] uppercase tracking-[0.2em] text-[#71717A]">
                 NARRATIVE ENGINE
               </span>
-              <h1 className="font-sans text-3xl font-extrabold tracking-tight text-white leading-none">
+              <h1 className="font-sans text-2xl sm:text-3xl font-extrabold tracking-tight text-white leading-none">
                 Character Core
               </h1>
             </div>
-            <div className="flex gap-sm">
+            <div className="flex flex-wrap gap-sm">
               <input 
                 type="file" 
                 accept="image/png" 
@@ -157,8 +145,8 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                           </div>
                         </div>
 
-                        {/* Actions menu (fades in on hover) */}
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                        {/* Actions menu (always visible on touch; hover-reveal on desktop) */}
+                        <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                           <button
                             aria-label="Edit"
                             onClick={(e) => {

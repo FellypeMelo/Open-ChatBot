@@ -239,14 +239,9 @@ def test_multiple_keys_matches_on_later_key(db_session):
     assert result == [entry.content]
 
 
-def test_secondary_keys_currently_have_no_effect(db_session):
-    """Documents current (likely unintended) behavior: LorebookEntry.secondary_keys
-    is defined on the model but scan_and_extract() never reads it anywhere. An
-    entry configured with a secondary key that is absent from the scanned text
-    still fires purely off the primary `keys` match. If AND-gating on
-    secondary keys is ever implemented, this test should be updated to assert
-    the new (gated) behavior.
-    """
+def test_secondary_keys_and_gate_the_entry(db_session):
+    """LB-01 selective logic: when an entry has secondary_keys, it fires only if
+    a primary AND a secondary key both match the scanned text."""
     entry = _make_entry(
         db_session,
         keys=["potion"],
@@ -256,19 +251,18 @@ def test_secondary_keys_currently_have_no_effect(db_session):
     )
     scanner = LorebookScanner(db_session)
 
-    # "healing" (the secondary key) is intentionally absent from the text.
-    result = scanner.scan_and_extract("I drink a potion.", character_id=1)
+    # Primary only ("healing" secondary absent) -> gated out.
+    assert scanner.scan_and_extract("I drink a potion.", character_id=1) == []
 
-    assert result == [entry.content]
+    # Primary + secondary both present -> fires.
+    assert scanner.scan_and_extract("I drink a healing potion.", character_id=1) == [
+        entry.content
+    ]
 
 
-def test_cooldown_turns_currently_have_no_effect(db_session):
-    """Documents current (likely unintended) behavior: LorebookEntry.cooldown_turns
-    is defined on the model but scan_and_extract() never tracks turn state or
-    suppresses re-triggering. Calling scan_and_extract repeatedly with the
-    same matching text fires the entry every time, even with a nonzero
-    cooldown_turns configured.
-    """
+def test_cooldown_is_a_noop_without_turn_state(db_session):
+    # Backward-compat: called without turn_index/cooldowns the scanner is
+    # stateless and fires every time, regardless of cooldown_turns.
     entry = _make_entry(
         db_session,
         keys=["torch"],
@@ -277,9 +271,40 @@ def test_cooldown_turns_currently_have_no_effect(db_session):
         cooldown_turns=5,
     )
     scanner = LorebookScanner(db_session)
+    assert scanner.scan_and_extract("I light a torch.", character_id=1) == [
+        entry.content
+    ]
+    assert scanner.scan_and_extract("I light a torch.", character_id=1) == [
+        entry.content
+    ]
 
-    first = scanner.scan_and_extract("I light a torch.", character_id=1)
-    second = scanner.scan_and_extract("I light a torch.", character_id=1)
 
-    assert first == [entry.content]
-    assert second == [entry.content]
+def test_cooldown_suppresses_refire_within_window(db_session):
+    # LB-01: with a turn index and a cooldown map, an entry that fired is
+    # suppressed until cooldown_turns have elapsed, then fires again.
+    entry = _make_entry(
+        db_session,
+        keys=["torch"],
+        content="Torch lore.",
+        is_global=True,
+        cooldown_turns=3,
+    )
+    scanner = LorebookScanner(db_session)
+    cds: dict = {}
+
+    # Turn 1: fires and records.
+    assert scanner.scan_and_extract(
+        "a torch", character_id=1, turn_index=1, cooldowns=cds
+    ) == [entry.content]
+    assert str(entry.id) in cds
+
+    # Turn 2 (within the 3-turn cooldown): suppressed.
+    assert (
+        scanner.scan_and_extract("a torch", character_id=1, turn_index=2, cooldowns=cds)
+        == []
+    )
+
+    # Turn 4 (>= 1 + 3): cooldown elapsed, fires again.
+    assert scanner.scan_and_extract(
+        "a torch", character_id=1, turn_index=4, cooldowns=cds
+    ) == [entry.content]

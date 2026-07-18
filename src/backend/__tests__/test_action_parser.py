@@ -1,5 +1,5 @@
 from src.backend.db.models import AgentState
-from src.backend.api.chat import parse_actions_to_state
+from src.backend.core.engine.state_transitions import parse_actions_to_state
 
 
 def test_parse_location():
@@ -7,6 +7,15 @@ def test_parse_location():
     ai_response = "I'm bored here. **walks into the Kitchen** and looks for a snack."
     parse_actions_to_state(ai_response, state)
     assert state.location == "Kitchen"
+
+
+def test_parse_location_preserves_multiword_casing():
+    # .capitalize() would mangle this to "Grand ballroom"; the label's own
+    # casing must be preserved.
+    state = AgentState(character_id=1, location="Lobby")
+    ai_response = "She smiles and **enters the Grand Ballroom** with grace."
+    parse_actions_to_state(ai_response, state)
+    assert state.location == "Grand Ballroom"
 
 
 def test_parse_clothes():

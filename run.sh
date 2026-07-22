@@ -21,7 +21,7 @@ trap "kill 0" EXIT
 
 # Start Llama Consolidated Inference + Embedding Server (Port 8080)
 echo "Starting Llama Consolidated Server..."
-./llama_bin/llama-server -m models/model.gguf --port 8080 --cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --embedding --pooling mean --cache-ram 2048 --kv-unified -ngl 99 -c 4096 --flash-attn auto &
+./llama_bin/llama-server -m models/model.gguf --port 8080 --cache-type-k q8_0 --cache-type-v turbo3 --parallel 1 --embedding --pooling mean --cache-ram 2048 --kv-unified -ngl 99 -c 49152 --flash-attn auto &
 
 # Health Check Function
 wait_for_server() {
@@ -48,19 +48,36 @@ wait_for_server 8080 "Consolidated Server"
 echo "Giving model extra time to warm up..."
 sleep 5
 
-# Parse arguments
+# Parse arguments. Default host is LAN-reachable (0.0.0.0) so phones/tablets
+# on the same Wi-Fi can connect. Pass "local" to bind localhost only.
 DEBUG_MODE=false
+HOST="0.0.0.0"
 for arg in "$@"; do
     if [ "$arg" == "--debug" ]; then
         DEBUG_MODE=true
     fi
+    if [ "$arg" == "local" ] || [ "$arg" == "--local" ]; then
+        HOST="127.0.0.1"
+    fi
 done
+
+# LAN mode: expose to local network and print the phone-reachable URL.
+if [ "$HOST" == "0.0.0.0" ]; then
+    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -z "$LAN_IP" ] && LAN_IP=$(ipconfig getifaddr en0 2>/dev/null)
+    echo "============================================================"
+    echo " LAN mode ON. On your phone (same Wi-Fi) open:"
+    echo "     http://${LAN_IP}:8000"
+    echo " The app has NO login: anyone on this network can use it."
+    echo " Only enable LAN mode on networks you trust."
+    echo "============================================================"
+fi
 
 # Start FastAPI Backend
 echo "Starting Open-ChatBot Backend..."
 if [ "$DEBUG_MODE" = true ]; then
     echo "DEBUG MODE ENABLED: Full detailed logs and latency tracking active."
-    DEBUG_LATENCY=True python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000 --log-level debug
+    DEBUG_LATENCY=True python -m uvicorn src.backend.main:app --host "$HOST" --port 8000 --log-level debug
 else
-    python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000
+    python -m uvicorn src.backend.main:app --host "$HOST" --port 8000
 fi

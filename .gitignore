@@ -6,6 +6,8 @@
 .env
 *.db
 chroma_db/
+e2e_chroma_db/
+test_chroma_db/
 .pytest_cache/
 .coverage
 htmlcov/

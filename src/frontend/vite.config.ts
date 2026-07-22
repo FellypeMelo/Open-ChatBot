@@ -10,6 +10,9 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // Bind to all interfaces so the dev server is reachable from other
+    // devices on the LAN (e.g. a phone). Vite prints the Network: URL.
+    host: true,
     proxy: {
       '/chat': 'http://localhost:8000',
       '/characters': 'http://localhost:8000',

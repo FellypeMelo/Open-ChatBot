@@ -1,6 +1,8 @@
 # Mobile UX / UI Improvement Plan
 
-> **⚠️ PARTIALLY STALE.** R2 ("message actions are `opacity-0 group-hover`, unreachable on touch") is **already fixed** in `ChatView.tsx` — now `opacity-100 md:opacity-0 md:group-hover:opacity-100`, same fix as the icon/touch-target standardization commit. The rest of the root causes (stats HUD size, font CDN, touch target size, safe-area insets) have not been re-verified — check file:line before acting.
+> **⚠️ RE-VERIFIED 2026-07-22 (21/21 items checked, 0 unverifiable).** **Mostly done**: 13 resolved (R1 collapsible stats HUD, R2, R3 fonts/icons self-hosted, R4/P1.3 touch targets, R7 safe-area/no-overflow, R8 serif font bundled, P0.1-P0.3, P1.4/P1.5, P2.3 sticky header), 3 partial (P1.1 header restructure only hid a couple elements, P1.2 type-size bump only reached the stats row, P2.1 press-state uses `active:scale-95` not the suggested `0.98`).
+>
+> **Still open**: R5/P0.4 — the full-screen animated `backdrop-filter` blur overlay has no `md:`/`prefers-reduced-motion` gate; R6 — most labels/journal/drawer text is still flat 8-10px with no mobile bump; P2.2 — native `window.confirm()`/`confirm()` still used at 6 call sites (App.tsx, ChatView.tsx, LorebookView.tsx), no in-app dialog exists; P2.4 — the Interact/Gift drawer has no `max-h`/scroll cap, can overflow off-screen on a short viewport.
 
 **Scope:** Make Open-ChatBot usable and clean on phones (LAN access via `http://<pc-ip>:8000`).
 **Design read:** This is *product UI* (chat + live stats HUD), not a landing page. Apply mobile-discipline, touch-target, contrast, and perf rules; ignore marketing-page patterns.

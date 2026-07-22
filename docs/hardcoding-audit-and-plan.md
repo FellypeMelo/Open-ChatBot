@@ -1,6 +1,8 @@
 # Hardcoding Audit & Remediation Plan
 
-> **⚠️ POINT-IN-TIME SNAPSHOT — not re-verified.** No known contradiction with current code, but this list has not been re-checked item by item since it was written. Confirm each finding against the live file:line before acting on it; some may already be fixed or have drifted further.
+> **⚠️ RE-VERIFIED 2026-07-22 (44/44 rows checked, 0 unverifiable).** 16 resolved, 18 still present exactly as described, 10 changed (same class of problem, code moved/values drifted). The LAN-access commit (`93a6294`) did NOT fix any of these rows — the font/icon CDN fixes trace to an earlier, separate commit (`9e2cbd1`). Most genuine fixes came from unrelated config.py/runner.py/SettingsModal.tsx consolidation work.
+>
+> **Still present, worth doing**: `run.sh`/`run.bat`/`.env.example` each reference a different placeholder model filename than what's actually on disk (models/model.gguf vs models/your-model.gguf vs the real Qwen3 file); oneAPI paths hardcoded to a specific version/absolute path in 3 places; every port (8000/8080/8010/5173) still a bare literal duplicated across `vite.config.ts` (9x), both playwright configs, run scripts, and `e2e.yml`; `llm.py:165` still returns a constant `[0.1]*2560` embedding under test; frontend `ACTIONS`/`GIFTS` arrays still duplicate the backend's `ACTIONS_CONFIG` independently.
 
 Deep sweep of the codebase for hardcoded values that should be config/env/constants. 44 findings, 13 actively broken/mismatched. Ordered broken-first, then severity. Each item has a config-driven fix and a TDD test.
 

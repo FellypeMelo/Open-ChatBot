@@ -146,10 +146,6 @@ function App() {
   const activeChatIdRef = useRef<number | null>(null)
   useEffect(() => { selectedCharIdRef.current = selectedCharId }, [selectedCharId])
   useEffect(() => { activeChatIdRef.current = activeChatId }, [activeChatId])
-  // Latest messages, read synchronously from async reconcile paths that must
-  // NOT capture a stale closure (see reconcileInterruptedStream).
-  const messagesRef = useRef<MessageNode[]>([])
-  useEffect(() => { messagesRef.current = messages }, [messages])
 
   // Aborts any in-flight stream and immediately resets its state. Called
   // whenever the app is about to swap out `messages` for a different
@@ -494,6 +490,12 @@ function App() {
     const controller = new AbortController()
     streamAbortRef.current = controller
     let timedOut = false
+    // True once the response headers arrive. Past that point the backend has
+    // already run _prepare_chat_turn and COMMITTED the user message, so a later
+    // failure must NOT offer a full-resend retry (it would create a duplicate
+    // user turn under the same parent). Only a pre-header failure is safe to
+    // replay wholesale.
+    let headersReceived = false
     let idleTimer: ReturnType<typeof setTimeout> | undefined
     const resetIdleTimer = () => {
       clearTimeout(idleTimer)
@@ -516,6 +518,7 @@ function App() {
     resetIdleTimer()
     try {
       const response = await start(controller.signal)
+      headersReceived = true
       // Headers are here -> the backend's pre-stream work (RAG embedding,
       // prompt build) is done. Give the FIRST token its own full idle budget
       // rather than whatever was left after that work, so a slow local model
@@ -540,15 +543,24 @@ function App() {
         // NOT done for the retryable connection-lost branch below, which must
         // keep the temp placeholder so its onRetry can re-drive this same turn.
         void reconcileInterruptedStream(charId, chatId)
+      } else if (headersReceived) {
+        // Connection dropped AFTER headers, i.e. mid-body. The backend already
+        // committed the user turn (and persists whatever partial streamed on
+        // teardown), so a full-resend retry would duplicate the user turn under
+        // the same parent (a "2/2" swiper on the user bubble + an orphaned
+        // partial). Instead reconcile the real ids in and let the user hit
+        // Regenerate on the now-persisted turn to finish the reply.
+        showToast('Connection lost mid-reply. Reconnect, then Regenerate to continue.', 'error')
+        void reconcileInterruptedStream(charId, chatId)
       } else {
-        // Retries the exact same turn: `start` is the same signal-taking
-        // closure runStream was originally called with, so this re-issues
-        // the identical request (same content/parentId/action) for the same
-        // `messageId` placeholder -- never re-appends the user message or
-        // re-sends anything already in flight. `charId`/`chatId` are threaded
-        // through unchanged too, so a late completion after the user has
-        // switched away is recognized as stale (see handleStreamResponse)
-        // instead of overwriting whatever character/chat is now on screen.
+        // Dropped BEFORE headers -> the backend never accepted this turn (no
+        // user message committed), so replaying the whole send is safe and
+        // won't duplicate anything. `start` is the same signal-taking closure
+        // runStream was originally called with, so Retry re-issues the
+        // identical request for the same `messageId` placeholder. `charId`/
+        // `chatId` are threaded through unchanged so a late completion after
+        // the user switched away is recognized as stale (see
+        // handleStreamResponse) instead of overwriting the current view.
         showToast('Lost connection to AI.', 'error', {
           persistent: true,
           onRetry: () => { void runStream(messageId, charId, chatId, start) }
@@ -630,7 +642,6 @@ function App() {
     // adopt its history (`target` = full local count); if nothing streamed, the
     // server legitimately has no assistant node, so adopt one node short.
     const hadPartial = streamedLenRef.current > 0
-    const target = messagesRef.current.length
     for (let attempt = 0; attempt < 5; attempt++) {
       let data: MessageNode[]
       try {
@@ -643,13 +654,20 @@ function App() {
       // optimistic nodes (runs fire-and-forget, so a new send can race it).
       if (charId !== selectedCharIdRef.current || chatIdOrNull !== activeChatIdRef.current) return
       if (streamAbortRef.current) return
-      // Nothing streamed -> nothing to protect, adopt immediately. Otherwise
-      // wait until the server history includes the persisted partial (its node
-      // count has caught up) so we never briefly wipe the on-screen partial.
-      if (!hadPartial || data.length >= target) {
-        setMessages(data)
-        return
-      }
+      // Decide against the LATEST committed messages via the functional updater
+      // (a ref would lag one commit behind the optimistic append). Nothing
+      // streamed -> nothing to protect, adopt immediately. Otherwise only adopt
+      // once the server history has caught up to (>=) the on-screen node count,
+      // so we never briefly wipe the partial the user just watched stream.
+      let adopted = false
+      setMessages((prev) => {
+        if (!hadPartial || data.length >= prev.length) {
+          adopted = true
+          return data
+        }
+        return prev
+      })
+      if (adopted) return
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
     // Backend never caught up within the window (partial persist genuinely
@@ -978,9 +996,12 @@ function App() {
           {/* Mobile Top Header. Collapses to zero height in immersive reading
               mode (scrolled down into a chat) so the transcript owns the screen;
               restored on a deliberate upward scroll. */}
-          <header className={`md:hidden flex items-center justify-between px-md bg-[#0A0A0B]/90 backdrop-blur z-30 shrink-0 overflow-hidden transition-all duration-300 ${
-            immersive ? 'max-h-0 py-0 opacity-0 pointer-events-none border-b-0' : 'max-h-16 py-sm border-b border-white/5'
-          }`}>
+          <header
+            inert={immersive}
+            className={`md:hidden flex items-center justify-between px-md bg-[#0A0A0B]/90 backdrop-blur z-30 shrink-0 overflow-hidden transition-all duration-300 ${
+              immersive ? 'max-h-0 py-0 opacity-0 pointer-events-none border-b-0' : 'max-h-16 py-sm border-b border-white/5'
+            }`}
+          >
             <button
               onClick={() => setIsSidebarOpen(true)}
               aria-label="Open menu"

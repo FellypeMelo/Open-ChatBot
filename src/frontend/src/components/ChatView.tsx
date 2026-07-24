@@ -398,10 +398,13 @@ const ChatView: React.FC<ChatViewProps> = ({
       
       {/* Floating HUD Header */}
       <header
-        className={`bg-[#0A0A0B]/80 backdrop-blur-md border-white/5 flex-none z-10 w-full overflow-hidden transition-all duration-300 ${
-          hudCollapsed ? 'max-h-0 -translate-y-1 pointer-events-none border-b-0' : 'max-h-[80vh] border-b'
+        inert={hudCollapsed && isMobile}
+        className={`bg-[#0A0A0B]/80 backdrop-blur-md border-white/5 flex-none z-10 w-full transition-all duration-300 ${
+          hudCollapsed && isMobile
+            ? 'max-h-0 overflow-hidden -translate-y-1 pointer-events-none border-b-0'
+            : 'max-h-[80vh] overflow-y-auto border-b'
         }`}
-        style={{ opacity: hudCollapsed ? 0 : textOpacity }}
+        style={{ opacity: hudCollapsed && isMobile ? 0 : textOpacity }}
       >
         <div className="max-w-[850px] mx-auto w-full px-md md:px-lg py-xs md:py-sm flex flex-col gap-1.5 md:gap-2">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-xs sm:gap-none">

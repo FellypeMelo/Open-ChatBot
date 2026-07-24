@@ -26,6 +26,7 @@ const TABS = [
 const MobileTabBar: React.FC<MobileTabBarProps> = ({ currentView, setView, hidden = false }) => (
   <nav
     aria-label="Primary"
+    inert={hidden}
     className={`fixed bottom-0 inset-x-0 z-40 flex items-stretch bg-[#0A0A0B]/95 backdrop-blur-md border-t border-white/10 pb-[env(safe-area-inset-bottom)] transition-transform duration-300 ${
       hidden ? 'translate-y-full pointer-events-none' : 'translate-y-0'
     }`}

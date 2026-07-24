@@ -1402,6 +1402,63 @@ describe('App', () => {
     expect(screen.getAllByText('Hi Luna')).toHaveLength(1)
   })
 
+  it('a mid-body connection drop (after headers) does NOT offer a full-resend retry, to avoid duplicating the already-committed user turn', async () => {
+    // Regression: past the response headers the backend has already committed
+    // the user message, so replaying the whole send would create a second user
+    // turn under the same parent. This path must reconcile + prompt Regenerate
+    // instead of showing the resend-Retry toast.
+    let streamAttempts = 0
+    const persistedTurn = [
+      { id: 50, parent_id: null, role: 'user', content: 'Hi Luna', variant_index: 0 },
+      { id: 51, parent_id: 50, role: 'assistant', content: 'half a repl', variant_index: 0 },
+    ]
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        streamAttempts += 1
+        // Headers arrive (resolves), one token is actually DELIVERED (enqueued
+        // on the first pull so it isn't discarded), then the body errors on the
+        // next pull -- a dropped connection AFTER the server accepted the turn.
+        let pulls = 0
+        const stream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulls += 1
+            if (pulls === 1) {
+              controller.enqueue(new TextEncoder().encode('data: {"token": "half a repl"}\n\n'))
+            } else {
+              controller.error(new Error('network drop mid-body'))
+            }
+          },
+        })
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      // The backend persisted the user turn + partial reply before/during the
+      // drop, so the reconcile finds a real-id turn to adopt.
+      if (u.startsWith('/history/')) return mockResponse(streamAttempts >= 1 ? persistedTurn : [])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    // Mid-reply message, NOT the resend-Retry toast, and no Retry control.
+    expect(await screen.findByText(/Connection lost mid-reply/)).toBeInTheDocument()
+    expect(screen.queryByText('Lost connection to AI.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    // Exactly one stream attempt (no auto-replay) and one user bubble (no dup).
+    expect(streamAttempts).toBe(1)
+    expect(screen.getAllByText('Hi Luna')).toHaveLength(1)
+  })
+
   it('surfaces a mid-stream data.error SSE event as a toast and stops the stream', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)

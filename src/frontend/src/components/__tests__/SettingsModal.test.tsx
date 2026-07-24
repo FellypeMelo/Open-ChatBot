@@ -402,8 +402,14 @@ describe('SettingsModal', () => {
       expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
     })
 
+    // The status text ("Inference Engine: STOPPED") and the config-populated
+    // args field resolve from separate async loads, so waiting on the status
+    // doesn't guarantee the field is filled yet -- wait on the field's own
+    // loaded value (re-querying) before editing, or this races empty (CI flake).
+    await waitFor(() =>
+      expect(screen.getByLabelText('Additional CLI Arguments')).toHaveValue('--cache-type-k q8_0')
+    )
     const argsInput = screen.getByLabelText('Additional CLI Arguments') as HTMLInputElement
-    expect(argsInput).toHaveValue('--cache-type-k q8_0')
     fireEvent.change(argsInput, { target: { value: '--foo bar' } })
     expect(argsInput).toHaveValue('--foo bar')
   })

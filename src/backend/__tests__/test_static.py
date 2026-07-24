@@ -37,8 +37,7 @@ def test_assets_mount_is_cached_immutably():
         response = client.get("/assets/__cache_header_probe__.txt")
         assert response.status_code == 200
         assert (
-            response.headers["cache-control"]
-            == "public, max-age=31536000, immutable"
+            response.headers["cache-control"] == "public, max-age=31536000, immutable"
         )
     finally:
         probe.unlink(missing_ok=True)
@@ -55,7 +54,10 @@ def test_avatars_mount_is_not_marked_immutable():
     try:
         response = client.get("/avatars/__cache_header_probe__.txt")
         assert response.status_code == 200
-        assert response.headers.get("cache-control") != "public, max-age=31536000, immutable"
+        assert (
+            response.headers.get("cache-control")
+            != "public, max-age=31536000, immutable"
+        )
     finally:
         probe.unlink(missing_ok=True)
 

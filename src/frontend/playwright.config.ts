@@ -69,7 +69,7 @@ export default defineConfig({
   /* Run your local dev server before starting the tests */
   webServer: [
     {
-      command: 'cd ../.. && node -e "const fs=require(\'fs\'); try{ fs.unlinkSync(\'e2e_test.db\'); }catch(e){}" && venv\\Scripts\\python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000',
+      command: 'cd ../.. && node -e "const fs=require(\'fs\'); try{ fs.unlinkSync(\'e2e_test.db\'); }catch(e){}" && python -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000',
       port: 8000,
       timeout: 120 * 1000,
       // Always spin up a fresh, E2E_TESTING=1 backend -- never reuse whatever

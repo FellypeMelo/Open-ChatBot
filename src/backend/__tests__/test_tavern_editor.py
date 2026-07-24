@@ -249,7 +249,9 @@ def test_upload_avatar_small_image_is_not_upscaled(
         assert saved.size == (src_width, src_height)
 
 
-def test_upload_avatar_applies_exif_orientation(client, db_session, monkeypatch, tmp_path):
+def test_upload_avatar_applies_exif_orientation(
+    client, db_session, monkeypatch, tmp_path
+):
     """A portrait phone photo stored with a non-1 EXIF Orientation tag (the
     common case for camera uploads) must be baked into the pixel data before
     being re-saved as PNG, since PNG has no EXIF-orientation convention and

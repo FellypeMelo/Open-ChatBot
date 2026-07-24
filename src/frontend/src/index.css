@@ -118,6 +118,21 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Touch ergonomics: drop the ~300ms double-tap delay on interactive controls.
+   Deliberately NOT applied to scrollable text/message content, so pinch-zoom
+   keeps working there. */
+button,
+a,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+input[type="checkbox"],
+input[type="radio"],
+select {
+  touch-action: manipulation;
+}
+
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

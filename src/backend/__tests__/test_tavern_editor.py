@@ -1,7 +1,30 @@
+from io import BytesIO
+
 import pytest
+from PIL import Image
 from unittest.mock import patch, AsyncMock, MagicMock
 from src.backend.db.models import Character
 from src.backend.core.orchestration.bridge import Brain
+from src.backend.api.characters import AVATAR_MAX_DIMENSION
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    """Build an in-memory solid-color PNG of the given size for avatar-upload
+    resize tests."""
+    buf = BytesIO()
+    Image.new("RGB", (width, height), color=(120, 40, 200)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _jpeg_bytes_with_orientation(width: int, height: int, orientation: int) -> bytes:
+    """Build an in-memory JPEG with the given EXIF Orientation tag (0x0112),
+    for avatar-upload EXIF-transpose tests."""
+    buf = BytesIO()
+    img = Image.new("RGB", (width, height), color=(10, 200, 90))
+    exif = img.getexif()
+    exif[0x0112] = orientation
+    img.save(buf, format="JPEG", exif=exif)
+    return buf.getvalue()
 
 
 def test_tokenize_endpoint(client):
@@ -149,6 +172,10 @@ async def test_prompt_construction_with_expanded_fields():
 
 
 def test_upload_avatar_endpoint(client, db_session, monkeypatch, tmp_path):
+    """Undecodable "PNG" bytes (no real image data behind the magic number)
+    fall back to being written as-is rather than failing the upload -- the
+    endpoint never validated image content before the resize step, and that
+    behavior is preserved."""
     monkeypatch.chdir(tmp_path)
 
     char = Character(name="AvatarChar", description="No avatar yet")
@@ -166,3 +193,170 @@ def test_upload_avatar_endpoint(client, db_session, monkeypatch, tmp_path):
     # Verify avatar saved to disk
     avatar_file = tmp_path / "static" / "avatars" / f"{char.id}.png"
     assert avatar_file.exists()
+
+
+def test_upload_avatar_oversized_image_is_downscaled(
+    client, db_session, monkeypatch, tmp_path
+):
+    """An oversized upload is downscaled to fit within AVATAR_MAX_DIMENSION on
+    its longest side, with aspect ratio preserved."""
+    monkeypatch.chdir(tmp_path)
+
+    char = Character(name="BigAvatarChar", description="Uploads a huge avatar")
+    db_session.add(char)
+    db_session.commit()
+
+    src_width, src_height = 2000, 1200  # well above AVATAR_MAX_DIMENSION, 5:3 ratio
+    response = client.post(
+        f"/characters/{char.id}/avatar",
+        files={"file": ("big.png", _png_bytes(src_width, src_height), "image/png")},
+    )
+    assert response.status_code == 200
+
+    avatar_file = tmp_path / "static" / "avatars" / f"{char.id}.png"
+    assert avatar_file.exists()
+
+    with Image.open(avatar_file) as saved:
+        saved_width, saved_height = saved.size
+
+    assert max(saved_width, saved_height) <= AVATAR_MAX_DIMENSION
+    assert saved_width < src_width
+    assert saved_height < src_height
+    # Aspect ratio preserved (allow a rounding pixel of slack).
+    assert abs(saved_width / saved_height - src_width / src_height) < 0.01
+
+
+def test_upload_avatar_small_image_is_not_upscaled(
+    client, db_session, monkeypatch, tmp_path
+):
+    """A source image already smaller than AVATAR_MAX_DIMENSION is stored
+    unchanged, never enlarged."""
+    monkeypatch.chdir(tmp_path)
+
+    char = Character(name="TinyAvatarChar", description="Uploads a tiny avatar")
+    db_session.add(char)
+    db_session.commit()
+
+    src_width, src_height = 50, 30
+    response = client.post(
+        f"/characters/{char.id}/avatar",
+        files={"file": ("tiny.png", _png_bytes(src_width, src_height), "image/png")},
+    )
+    assert response.status_code == 200
+
+    avatar_file = tmp_path / "static" / "avatars" / f"{char.id}.png"
+    with Image.open(avatar_file) as saved:
+        assert saved.size == (src_width, src_height)
+
+
+def test_upload_avatar_applies_exif_orientation(client, db_session, monkeypatch, tmp_path):
+    """A portrait phone photo stored with a non-1 EXIF Orientation tag (the
+    common case for camera uploads) must be baked into the pixel data before
+    being re-saved as PNG, since PNG has no EXIF-orientation convention and
+    nothing downstream would otherwise apply it -- a naive re-save would
+    leave every rotated phone photo sideways or upside down."""
+    monkeypatch.chdir(tmp_path)
+
+    char = Character(name="RotatedAvatarChar", description="Uploads a rotated avatar")
+    db_session.add(char)
+    db_session.commit()
+
+    # Orientation 6 = "rotate 90 CW to display correctly": the raw sensor
+    # data for a visually-portrait photo is stored landscape (200x100).
+    raw_width, raw_height = 200, 100
+    response = client.post(
+        f"/characters/{char.id}/avatar",
+        files={
+            "file": (
+                "rotated.jpg",
+                _jpeg_bytes_with_orientation(raw_width, raw_height, 6),
+                "image/jpeg",
+            )
+        },
+    )
+    assert response.status_code == 200
+
+    avatar_file = tmp_path / "static" / "avatars" / f"{char.id}.png"
+    with Image.open(avatar_file) as saved:
+        saved_width, saved_height = saved.size
+
+    # exif_transpose() must correct the orientation before saving, so the
+    # stored PNG is visually portrait (taller than wide), not the raw
+    # sensor-orientation landscape dimensions.
+    assert saved_height > saved_width
+
+
+def test_upload_avatar_rejects_image_over_pixel_cap(
+    client, db_session, monkeypatch, tmp_path
+):
+    """An image whose declared pixel count exceeds AVATAR_MAX_SOURCE_PIXELS
+    is rejected outright (413) rather than being decoded/resized -- and,
+    critically, rather than falling through _save_avatar_image's
+    undecodable-bytes fallback and being written to disk unresized. The cap
+    is monkeypatched low so a cheap, ordinarily-fine-sized PNG exercises the
+    same rejection path a genuine decompression-bomb-scale upload would."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("src.backend.api.characters.AVATAR_MAX_SOURCE_PIXELS", 1_000)
+
+    char = Character(name="BombAvatarChar", description="Uploads an oversized avatar")
+    db_session.add(char)
+    db_session.commit()
+
+    response = client.post(
+        f"/characters/{char.id}/avatar",
+        files={"file": ("big.png", _png_bytes(64, 64), "image/png")},  # 4096 > 1000
+    )
+
+    assert response.status_code == 413
+    assert "exceed" in response.json()["detail"]
+
+    avatar_file = tmp_path / "static" / "avatars" / f"{char.id}.png"
+    assert not avatar_file.exists()
+
+
+def test_upload_avatar_rejects_pillow_decompression_bomb(
+    client, db_session, monkeypatch, tmp_path
+):
+    """A genuine PIL.Image.DecompressionBombError raised from inside
+    Image.open() (Pillow's own crafted-input guard) must be surfaced as a
+    413 and must NOT fall through to _save_avatar_image's broad
+    except-fallback, which would otherwise write the still-undecoded
+    original bytes to disk unresized -- exactly the input the resize
+    feature exists to catch. Pillow's MAX_IMAGE_PIXELS is monkeypatched low
+    so an ordinarily-tiny PNG triggers the real DecompressionBombError path
+    cheaply, without constructing an actual multi-hundred-megapixel image."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+    char = Character(name="RealBombAvatarChar", description="Uploads a real bomb")
+    db_session.add(char)
+    db_session.commit()
+
+    # 50x50 = 2500 px > 2 * MAX_IMAGE_PIXELS (200) -> Image.open() itself
+    # raises DecompressionBombError.
+    response = client.post(
+        f"/characters/{char.id}/avatar",
+        files={"file": ("bomb.png", _png_bytes(50, 50), "image/png")},
+    )
+
+    assert response.status_code == 413
+
+    avatar_file = tmp_path / "static" / "avatars" / f"{char.id}.png"
+    assert not avatar_file.exists()
+
+
+def test_import_png_rejects_image_over_pixel_cap(client, db_session, monkeypatch):
+    """The pixel-count guard on the card's embedded image runs before the
+    card is parsed and before any Character row is committed, so a
+    pathological card is rejected without leaving an orphaned row behind."""
+    monkeypatch.setattr("src.backend.api.characters.AVATAR_MAX_SOURCE_PIXELS", 1_000)
+
+    before_count = db_session.query(Character).count()
+
+    response = client.post(
+        "/characters/import-png",
+        files={"file": ("bomb.png", _png_bytes(64, 64), "image/png")},  # 4096 > 1000
+    )
+
+    assert response.status_code == 413
+    assert db_session.query(Character).count() == before_count

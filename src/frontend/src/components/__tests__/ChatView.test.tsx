@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 import ChatView from '../ChatView'
 import * as api from '../../services/api'
 import type { MessageNode } from '../../hooks/useMessageTree'
@@ -154,10 +154,20 @@ describe('ChatView', () => {
     expect(screen.getByText('arrow_upward').closest('button')).toBeDisabled()
   })
 
-  it('disables the send button while loading', () => {
+  it('replaces the send button with a Stop control while loading', () => {
     render(<ChatView {...defaultProps} activeChar={baseCharacter} input="Hi" isLoading />)
 
-    expect(screen.getByText('arrow_upward').closest('button')).toBeDisabled()
+    expect(screen.queryByText('arrow_upward')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
+  })
+
+  it('calls onCancelStream when the Stop control is clicked while loading', () => {
+    const onCancelStream = vi.fn()
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} input="Hi" isLoading onCancelStream={onCancelStream} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop generating' }))
+
+    expect(onCancelStream).toHaveBeenCalledTimes(1)
   })
 
   it('sends on Enter key without shift', () => {
@@ -307,28 +317,41 @@ describe('ChatView', () => {
     expect(onEditMessage).toHaveBeenCalledWith(2, 'Updated reply')
   })
 
-  // ---- Deleting messages ----
-
-  it('deletes a user message when confirmed', () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('sizes the user-message edit textarea at 16px on mobile to prevent iOS Safari auto-zoom, compact on desktop', () => {
     render(<ChatView {...defaultProps} activeChar={baseCharacter} messages={[userMsg]} />)
 
-    fireEvent.click(screen.getByTitle('Delete'))
+    fireEvent.click(screen.getByTitle('Edit'))
+    const textarea = screen.getByDisplayValue('Hello world')
 
-    expect(onDeleteMessage).toHaveBeenCalledWith(1)
+    expect(textarea.className).toContain('text-base')
+    expect(textarea.className).toContain('md:text-sm')
   })
 
-  it('does not delete a user message when confirmation is cancelled', () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
+  // ---- Deleting messages ----
+
+  it('deletes a user message when confirmed', async () => {
     render(<ChatView {...defaultProps} activeChar={baseCharacter} messages={[userMsg]} />)
 
     fireEvent.click(screen.getByTitle('Delete'))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText('Delete this message?')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
+    await waitFor(() => expect(onDeleteMessage).toHaveBeenCalledWith(1))
+  })
+
+  it('does not delete a user message when confirmation is cancelled', async () => {
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} messages={[userMsg]} />)
+
+    fireEvent.click(screen.getByTitle('Delete'))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
     expect(onDeleteMessage).not.toHaveBeenCalled()
   })
 
-  it('deletes an assistant message when confirmed', () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('deletes an assistant message when confirmed', async () => {
     const messages: MessageNode[] = [
       userMsg,
       { id: 2, parent_id: 1, role: 'assistant', content: 'Reply text', variant_index: 0 }
@@ -336,8 +359,10 @@ describe('ChatView', () => {
     render(<ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} />)
 
     fireEvent.click(screen.getByText('Delete'))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
-    expect(onDeleteMessage).toHaveBeenCalledWith(2)
+    await waitFor(() => expect(onDeleteMessage).toHaveBeenCalledWith(2))
   })
 
   it('does not render delete controls when onDeleteMessage is not provided', () => {
@@ -393,6 +418,34 @@ describe('ChatView', () => {
     expect(screen.queryByText('Copied')).not.toBeInTheDocument()
   })
 
+  it('falls back to execCommand copy when navigator.clipboard is unavailable (plain-http LAN origin)', () => {
+    const originalClipboard = window.navigator.clipboard
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: undefined,
+      configurable: true
+    })
+    const execCommand = vi.fn().mockReturnValue(true)
+    document.execCommand = execCommand
+
+    const messages: MessageNode[] = [
+      userMsg,
+      { id: 2, parent_id: 1, role: 'assistant', content: 'Reply text', variant_index: 0, request_id: 'req-abc-123' }
+    ]
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} />)
+
+    try {
+      fireEvent.click(screen.getByTitle('Copy Request ID'))
+
+      expect(execCommand).toHaveBeenCalledWith('copy')
+      expect(screen.getByText('Copied')).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window.navigator, 'clipboard', {
+        value: originalClipboard,
+        configurable: true
+      })
+    }
+  })
+
   // ---- Action & gift drawer ----
 
   it('opens the interact drawer and triggers an action', () => {
@@ -429,6 +482,30 @@ describe('ChatView', () => {
     fireEvent.click(screen.getByTitle('Close Drawer'))
 
     expect(screen.queryByText('Hug')).not.toBeInTheDocument()
+  })
+
+  it('closes the drawer when tapping the outside backdrop', () => {
+    const { container } = render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
+
+    fireEvent.click(screen.getByTitle('Interact & Gift'))
+    expect(screen.getByText('Hug')).toBeInTheDocument()
+
+    const backdrop = container.querySelector('.bg-black\\/40') as HTMLElement
+    expect(backdrop).toBeTruthy()
+    fireEvent.click(backdrop)
+
+    expect(screen.queryByText('Hug')).not.toBeInTheDocument()
+  })
+
+  it('caps the interact drawer height and gives it its own scroll region so it cannot overflow a short mobile viewport', () => {
+    const { container } = render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
+
+    fireEvent.click(screen.getByTitle('Interact & Gift'))
+    const panel = container.querySelector('.slide-in-from-bottom-4') as HTMLElement
+
+    expect(panel).toBeTruthy()
+    expect(panel.className).toContain('max-h-[70dvh]')
+    expect(panel.className).toContain('overflow-y-auto')
   })
 
   // ---- Stat bars ----
@@ -491,6 +568,41 @@ describe('ChatView', () => {
 
     fireEvent.click(screen.getAllByText('+')[2])
     expect(onUpdateState).toHaveBeenCalledWith(1, { stats: { relationship_score: 15 } })
+  })
+
+  it('sizes the +/- stat steppers to the 44px mobile touch-target minimum, compact on desktop', () => {
+    render(<ChatView {...defaultProps} activeChar={withStats({ happiness: 50 })} />)
+
+    const plusButtons = screen.getAllByText('+')
+    const minusButtons = screen.getAllByText('-')
+
+    for (const btn of [...plusButtons, ...minusButtons]) {
+      expect(btn.className).toContain('min-w-11')
+      expect(btn.className).toContain('min-h-11')
+      expect(btn.className).toContain('md:min-w-0')
+      expect(btn.className).toContain('md:min-h-0')
+    }
+  })
+
+  it('sizes the Sleep/Feed stat buttons to the 44px mobile touch-target minimum, compact on desktop', () => {
+    render(<ChatView {...defaultProps} activeChar={withStats({ is_sleeping: false, hunger: 20 })} />)
+
+    const sleepBtn = screen.getByText('Sleep')
+    const feedBtn = screen.getByText('Feed')
+
+    for (const btn of [sleepBtn, feedBtn]) {
+      expect(btn.className).toContain('min-w-11')
+      expect(btn.className).toContain('min-h-11')
+      expect(btn.className).toContain('md:min-w-0')
+      expect(btn.className).toContain('md:min-h-0')
+    }
+  })
+
+  it('stacks stat rows in a single mobile column so the larger 44px steppers have room and never collide with the label', () => {
+    const { container } = render(<ChatView {...defaultProps} activeChar={withStats()} />)
+
+    const statsGrid = container.querySelector('.grid-cols-1.md\\:grid-cols-5') as HTMLElement
+    expect(statsGrid).toBeTruthy()
   })
 
   // ---- Journal tab ----
@@ -622,5 +734,255 @@ describe('ChatView', () => {
     })
 
     expect(screen.getByText('Hi')).toBeInTheDocument()
+  })
+
+  it('streams from the dedicated streamingContent prop, ignoring the (unchanged) message content', () => {
+    vi.useFakeTimers()
+
+    const messages: MessageNode[] = [
+      userMsg,
+      // App.tsx no longer writes streamed tokens into `messages` -- this
+      // placeholder's content stays stale/empty for the whole turn.
+      { id: 2, parent_id: 1, role: 'assistant', content: 'stale', variant_index: 0 }
+    ]
+    render(
+      <ChatView
+        {...defaultProps}
+        activeChar={baseCharacter}
+        messages={messages}
+        isLoading
+        streamingContent="Fresh streamed text"
+      />
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+
+    expect(screen.getByText('Fresh streamed text')).toBeInTheDocument()
+    expect(screen.queryByText('stale')).not.toBeInTheDocument()
+  })
+
+  it('picks up a growing streamingContent value across rerenders without needing the messages array to change', () => {
+    vi.useFakeTimers()
+
+    const messages: MessageNode[] = [
+      userMsg,
+      { id: 2, parent_id: 1, role: 'assistant', content: '', variant_index: 0 }
+    ]
+    const { rerender } = render(
+      <ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} isLoading streamingContent="" />
+    )
+
+    // Same `messages` array reference on every rerender -- only
+    // streamingContent grows, exactly as App.tsx now drives it per token.
+    ;['H', 'He', 'Hel', 'Hell', 'Hello'].forEach((content) => {
+      rerender(
+        <ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} isLoading streamingContent={content} />
+      )
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+
+    expect(screen.getByText('Hello')).toBeInTheDocument()
+  })
+
+  it('does not leak the live stream onto an older sibling variant swapped in mid-stream (regression)', () => {
+    vi.useFakeTimers()
+
+    // Regenerate produces a sibling (id 3) alongside the old, already-
+    // finished reply (id 2) under the same parent. streamingMessageId
+    // identifies id 3 as the one actually streaming -- App.tsx always wires
+    // this through once a turn starts.
+    const messages: MessageNode[] = [
+      userMsg,
+      { id: 2, parent_id: 1, role: 'assistant', content: 'Old final reply', variant_index: 0 },
+      { id: 3, parent_id: 1, role: 'assistant', content: '', variant_index: 1 }
+    ]
+    render(
+      <ChatView
+        {...defaultProps}
+        activeChar={baseCharacter}
+        messages={messages}
+        isLoading
+        streamingContent="Incoming new"
+        streamingMessageId={3}
+      />
+    )
+
+    // Defaults to the latest variant (id 3), which is actively streaming.
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(screen.getByText('Incoming new')).toBeInTheDocument()
+    expect(screen.getByText('2 / 2')).toBeInTheDocument()
+
+    // Swipe to the older sibling while id 3 is still streaming. The swipe
+    // controls have no isLoading guard by design -- the fix is that the old
+    // sibling must render its OWN static content, never the live stream.
+    fireEvent.click(screen.getByText('chevron_left'))
+
+    expect(screen.getByText('Old final reply')).toBeInTheDocument()
+    expect(screen.queryByText('Incoming new')).not.toBeInTheDocument()
+
+    // Still true after more of the stream drains while looking away --
+    // nothing about viewing the old sibling should leak in later either.
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(screen.getByText('Old final reply')).toBeInTheDocument()
+    expect(screen.queryByText('Incoming new')).not.toBeInTheDocument()
+  })
+
+  it('uses instant scroll while the typewriter is actively draining and smooth scroll once it settles', () => {
+    vi.useFakeTimers()
+    const scrollMock = vi.mocked(window.HTMLElement.prototype.scrollIntoView)
+
+    const messages: MessageNode[] = [
+      userMsg,
+      { id: 2, parent_id: 1, role: 'assistant', content: 'Hi there', variant_index: 0 }
+    ]
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} isLoading />)
+
+    // Mounting with isLoading enqueues the content immediately, so the
+    // typewriter is already draining by the time effects settle.
+    expect(scrollMock).toHaveBeenLastCalledWith({ behavior: 'auto' })
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(scrollMock).toHaveBeenLastCalledWith({ behavior: 'smooth' })
+  })
+
+  // ---- Mobile text sizing (R6) ----
+
+  it('bumps small header/footer/journal label text to a readable mobile size with a compact md: override', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const character = withStats()
+    character.state = { ...character.state!, location: 'Garden', clothes: 'Sundress' }
+    const messages: MessageNode[] = [
+      userMsg,
+      { id: 2, parent_id: 1, role: 'assistant', content: 'Reply text', variant_index: 0, request_id: 'req-111-abc' }
+    ]
+
+    render(<ChatView {...defaultProps} activeChar={character} messages={messages} />)
+
+    const locationPill = screen.getByText('GARDEN • SUNDRESS')
+    expect(locationPill.className).toContain('text-[11px]')
+    expect(locationPill.className).toContain('md:text-[9px]')
+
+    const storyLogTab = screen.getByText('Story Log')
+    expect(storyLogTab.className).toContain('text-[11px]')
+    expect(storyLogTab.className).toContain('md:text-[10px]')
+
+    const reqBadge = screen.getByText(/^REQ: /)
+    expect(reqBadge.className).toContain('text-[11px]')
+    expect(reqBadge.className).toContain('md:text-[9px]')
+
+    const promptAction = screen.getByText('PROMPT ACTION')
+    expect(promptAction.className).toContain('text-[11px]')
+    expect(promptAction.className).toContain('md:text-[9px]')
+  })
+
+  it('bumps the Narrative Ingest divider and journal-tab entry-count badge text for mobile readability', async () => {
+    const entries: JournalEntry[] = [
+      {
+        id: 1,
+        timestamp: '2026-01-01T10:00:00Z',
+        content: 'A reflective entry',
+        summary: '',
+        mood_at_time: 'happy',
+        relationship_score: 80,
+        energy_level: 70
+      }
+    ]
+    vi.mocked(api.fetchJournal).mockResolvedValue(entries)
+
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
+
+    const divider = screen.getByText('Narrative Ingest')
+    expect(divider.className).toContain('text-[10px]')
+    expect(divider.className).toContain('md:text-[8px]')
+
+    fireEvent.click(screen.getByText('Private Journal'))
+
+    await waitFor(() => {
+      expect(screen.getByText('1')).toBeInTheDocument()
+    })
+    const badge = screen.getByText('1')
+    expect(badge.className).toContain('text-[10px]')
+    expect(badge.className).toContain('md:text-[8px]')
+  })
+
+  // ---- Mobile keyboard occlusion (visualViewport fallback) ----
+
+  it('does not throw when window.visualViewport is unavailable (jsdom default, and older browsers)', () => {
+    expect(window.visualViewport).toBeUndefined()
+
+    expect(() => render(<ChatView {...defaultProps} activeChar={baseCharacter} />)).not.toThrow()
+  })
+
+  it('scrolls the focused composer back into view when the visual viewport shrinks significantly (keyboard opens)', () => {
+    const listeners: Record<string, () => void> = {}
+    const fakeViewport = {
+      height: 800,
+      addEventListener: vi.fn((event: string, cb: () => void) => {
+        listeners[event] = cb
+      }),
+      removeEventListener: vi.fn()
+    }
+    Object.defineProperty(window, 'visualViewport', { value: fakeViewport, configurable: true })
+
+    try {
+      const { unmount } = render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
+      const textarea = screen.getByPlaceholderText('Write a prompt for Aria...') as HTMLTextAreaElement
+      const scrollMock = vi.mocked(window.HTMLElement.prototype.scrollIntoView)
+      scrollMock.mockClear()
+      textarea.focus()
+
+      fakeViewport.height = 500
+      act(() => {
+        listeners.resize()
+      })
+
+      expect(scrollMock).toHaveBeenCalledWith({ block: 'nearest' })
+
+      unmount()
+      expect(fakeViewport.removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function))
+    } finally {
+      Object.defineProperty(window, 'visualViewport', { value: undefined, configurable: true })
+    }
+  })
+
+  it('does not scroll the composer on a minor visual-viewport change (no keyboard, e.g. address bar chrome)', () => {
+    const listeners: Record<string, () => void> = {}
+    const fakeViewport = {
+      height: 800,
+      addEventListener: vi.fn((event: string, cb: () => void) => {
+        listeners[event] = cb
+      }),
+      removeEventListener: vi.fn()
+    }
+    Object.defineProperty(window, 'visualViewport', { value: fakeViewport, configurable: true })
+
+    try {
+      render(<ChatView {...defaultProps} activeChar={baseCharacter} />)
+      const textarea = screen.getByPlaceholderText('Write a prompt for Aria...') as HTMLTextAreaElement
+      const scrollMock = vi.mocked(window.HTMLElement.prototype.scrollIntoView)
+      scrollMock.mockClear()
+      textarea.focus()
+
+      fakeViewport.height = 770
+      act(() => {
+        listeners.resize()
+      })
+
+      expect(scrollMock).not.toHaveBeenCalledWith({ block: 'nearest' })
+    } finally {
+      Object.defineProperty(window, 'visualViewport', { value: undefined, configurable: true })
+    }
   })
 })

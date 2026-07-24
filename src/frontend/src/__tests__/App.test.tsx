@@ -1,6 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 import App from '../App'
+import * as messageTreeModule from '../hooks/useMessageTree'
+
+// Wraps the real useMessageTree with a spy so tests can assert on how many
+// times its memoized `activePath` was actually recomputed (a NEW reference)
+// versus how many times ChatView simply re-rendered -- the crux of the
+// per-token streaming decoupling below. Delegates to the real implementation
+// throughout, so this is transparent to every other test in this file.
+vi.mock('../hooks/useMessageTree', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../hooks/useMessageTree')>()
+  return { ...actual, useMessageTree: vi.fn(actual.useMessageTree) }
+})
 
 // Mock fetch
 vi.stubGlobal('fetch', vi.fn())
@@ -31,7 +42,6 @@ describe('App', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(fetch).mockImplementation((url) => {
       if (url === '/users/me') {
         return mockResponse(mockUser)
@@ -607,17 +617,18 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Luna')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText('Delete character?')).toBeInTheDocument()
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     })
 
-    expect(window.confirm).toHaveBeenCalled()
     expect(await screen.findByText('Character deleted.')).toBeInTheDocument()
     expect(screen.queryByText('Luna')).not.toBeInTheDocument()
   })
 
   it('does not delete a character when the confirmation dialog is dismissed', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     const deleteSpy = vi.fn()
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)
@@ -636,9 +647,12 @@ describe('App', () => {
     await screen.findAllByText('Luna')
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
     expect(deleteSpy).not.toHaveBeenCalled()
     expect(screen.getAllByText('Luna').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('shows an error toast when character deletion fails', async () => {
@@ -655,8 +669,10 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Luna')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog')
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     })
 
     expect(await screen.findByText('Failed to delete character.')).toBeInTheDocument()
@@ -903,11 +919,12 @@ describe('App', () => {
       return mockResponse({})
     })
 
+    fireEvent.click(screen.getByTitle('Delete'))
+    const dialog = await screen.findByRole('alertdialog')
     await act(async () => {
-      fireEvent.click(screen.getByTitle('Delete'))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     })
 
-    expect(window.confirm).toHaveBeenCalled()
     await waitFor(() => expect(screen.queryByText('Hi Luna')).not.toBeInTheDocument())
   })
 
@@ -941,8 +958,10 @@ describe('App', () => {
       return mockResponse({})
     })
 
+    fireEvent.click(screen.getByTitle('Delete'))
+    const dialog = await screen.findByRole('alertdialog')
     await act(async () => {
-      fireEvent.click(screen.getByTitle('Delete'))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
     })
 
     expect(await screen.findByText('Failed to delete message.')).toBeInTheDocument()
@@ -1011,16 +1030,16 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
     await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
+    fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
+    const dialog = await screen.findByRole('alertdialog')
     await act(async () => {
-      fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Clear' }))
     })
 
-    expect(window.confirm).toHaveBeenCalled()
     expect(await screen.findByText('Conversation cleared.')).toBeInTheDocument()
   })
 
   it('does not clear the chat when the confirmation dialog is dismissed', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     const clearSpy = vi.fn()
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)
@@ -1041,6 +1060,8 @@ describe('App', () => {
     await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
     fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
     expect(clearSpy).not.toHaveBeenCalled()
   })
@@ -1061,8 +1082,10 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
     await screen.findByPlaceholderText(/Write a prompt for Luna/)
 
+    fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
+    const dialog = await screen.findByRole('alertdialog')
     await act(async () => {
-      fireEvent.click(screen.getByTitle("Reset: delete this character's entire history"))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Clear' }))
     })
 
     expect(await screen.findByText('Failed to clear conversation history.')).toBeInTheDocument()
@@ -1096,7 +1119,7 @@ describe('App', () => {
 
     expect(newChatSpy).toHaveBeenCalled()
     // Non-destructive: no confirmation dialog for starting a new chat.
-    expect(window.confirm).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     expect(await screen.findByText('Started a new chat.')).toBeInTheDocument()
   })
 
@@ -1194,5 +1217,596 @@ describe('App', () => {
 
     fireEvent.click(screen.getByText('Cancel'))
     await waitFor(() => expect(screen.queryByText('User Profile')).not.toBeInTheDocument())
+  })
+
+  it('deletes a chat session after confirming via the dialog', async () => {
+    const deleteChatSpy = vi.fn()
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/1' && options?.method === 'DELETE') {
+        deleteChatSpy()
+        return mockResponse({})
+      }
+      if (u === '/chats/1') {
+        return mockResponse([
+          { id: 1, title: 'Chat A', is_archived: false, is_active: true, message_count: 2 },
+          { id: 2, title: 'Chat B', is_archived: false, is_active: false, message_count: 0 }
+        ])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    await screen.findByPlaceholderText(/Write a prompt for Luna/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete this chat session' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText('Delete chat session?')).toBeInTheDocument()
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    })
+
+    expect(deleteChatSpy).toHaveBeenCalled()
+    expect(await screen.findByText('Chat deleted.')).toBeInTheDocument()
+  })
+
+  it('shows a toast when the browser goes offline and comes back online', async () => {
+    render(<App />)
+    await screen.findAllByText('Luna')
+
+    await act(async () => {
+      window.dispatchEvent(new Event('offline'))
+    })
+    expect(await screen.findByText('You are offline. Reconnect to continue chatting.')).toBeInTheDocument()
+
+    // The offline toast is persistent -- confirm it survives well past the
+    // normal auto-dismiss window instead of vanishing on its own.
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(screen.getByText('You are offline. Reconnect to continue chatting.')).toBeInTheDocument()
+
+    await act(async () => {
+      window.dispatchEvent(new Event('online'))
+    })
+    expect(await screen.findByText('Back online.')).toBeInTheDocument()
+    // The single-toast state means the online toast replaces the persistent
+    // offline one outright -- no orphaned toast left stacked behind it.
+    expect(screen.queryByText('You are offline. Reconnect to continue chatting.')).not.toBeInTheDocument()
+  })
+
+  it('keeps the connection-lost toast visible past the normal auto-dismiss window (persistent), and Dismiss clears it', async () => {
+    vi.mocked(fetch).mockImplementation((url) => {
+      if (url === '/chat/stream') return Promise.reject(new Error('Network error'))
+      if (url === '/users/me') return mockResponse(mockUser)
+      if (url === '/characters/') return mockResponse(mockCharacters)
+      if (url === '/tags/') return mockResponse([])
+      if (String(url).startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+    expect(await screen.findByText('Lost connection to AI.')).toBeInTheDocument()
+
+    // Matches App.tsx's TOAST_DURATION_MS -- a persistent toast must not
+    // auto-dismiss even after this much time elapses.
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(screen.getByText('Lost connection to AI.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText('Lost connection to AI.')).not.toBeInTheDocument()
+  })
+
+  it('still auto-dismisses a normal (non-persistent) toast after TOAST_DURATION_MS elapses (regression)', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/characters/1' && options?.method === 'DELETE') return mockResponse({})
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = await screen.findByRole('alertdialog')
+
+    // Fake timers must be active before the confirm click so the toast's own
+    // setTimeout (registered synchronously once the delete call resolves) is
+    // captured by them -- see the idle-timeout test above for the same
+    // constraint.
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+      })
+      expect(screen.getByText('Character deleted.')).toBeInTheDocument()
+
+      // Matches App.tsx's TOAST_DURATION_MS.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(screen.queryByText('Character deleted.')).not.toBeInTheDocument()
+  })
+
+  it('clicking Retry on the connection-lost toast re-attempts the same turn (no duplicate send) and dismisses the toast', async () => {
+    let attempts = 0
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        attempts += 1
+        if (attempts === 1) return Promise.reject(new Error('Network error'))
+        return streamResponse(['data: {"token": "Recovered"}\n\n', 'data: {"done": true}\n\n'])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    expect(await screen.findByText('Lost connection to AI.')).toBeInTheDocument()
+    expect(attempts).toBe(1)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    })
+
+    expect(await screen.findByText(/Recovered/)).toBeInTheDocument()
+    expect(screen.queryByText('Lost connection to AI.')).not.toBeInTheDocument()
+    expect(attempts).toBe(2)
+    // The retry re-sent the failed request, not the user's turn -- exactly
+    // one "Hi Luna" bubble, never two.
+    expect(screen.getAllByText('Hi Luna')).toHaveLength(1)
+  })
+
+  it('surfaces a mid-stream data.error SSE event as a toast and stops the stream', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        return streamResponse(['data: {"error": "Model crashed"}\n\n'])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    expect(await screen.findByText('Model crashed')).toBeInTheDocument()
+    // isLoading cleared -- the Stop control reverts back to Send (now
+    // disabled only because the composer was optimistically emptied on send).
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop generating' })).not.toBeInTheDocument())
+    expect(screen.getByText('arrow_upward')).toBeInTheDocument()
+  })
+
+  it('cancels an in-flight stream via the Stop button and shows a stopped toast', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // A stream that never enqueues or closes -- simulates a hung connection.
+        const stream = new ReadableStream<Uint8Array>({ start() {} })
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    const stopBtn = await screen.findByRole('button', { name: 'Stop generating' })
+    await act(async () => {
+      fireEvent.click(stopBtn)
+    })
+
+    expect(await screen.findByText('Generation stopped.')).toBeInTheDocument()
+    expect(await screen.findByText('arrow_upward')).toBeInTheDocument()
+  })
+
+  it('aborts a stalled stream after the idle timeout and shows a timeout toast', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // A stream that never enqueues or closes -- simulates a hung connection.
+        const stream = new ReadableStream<Uint8Array>({ start() {} })
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+
+    // Fake timers must be installed before the send so the idle-timeout's
+    // setTimeout (registered synchronously inside runStream) is captured by
+    // them -- testing-library's findBy*/waitFor helpers poll via real timers
+    // in this project's setup, so they're avoided entirely from here on.
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+      })
+
+      // Matches App.tsx's STREAM_IDLE_TIMEOUT_MS -- no token for this long
+      // aborts the stream automatically.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(45000)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(await screen.findByText('Response timed out. Check your connection.')).toBeInTheDocument()
+  })
+
+  it('keeps the message tree referentially stable across every SSE token, rebuilding it only at turn boundaries', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // Five separate token frames -- streamed one at a time, exactly like
+        // a real backend would emit them.
+        return streamResponse([
+          'data: {"token": "H"}\n\n',
+          'data: {"token": "e"}\n\n',
+          'data: {"token": "l"}\n\n',
+          'data: {"token": "l"}\n\n',
+          'data: {"token": "o"}\n\n',
+          'data: {"done": true}\n\n'
+        ])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+
+    const spy = vi.mocked(messageTreeModule.useMessageTree)
+    spy.mockClear()
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+    await waitFor(() => expect(screen.queryByText(/Hello/)).not.toBeNull())
+
+    // Sanity: the spy is actually wired up and useMessageTree really ran.
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(1)
+
+    const activePathRefs = new Set(spy.mock.results.map((r) => r.value.activePath))
+    // The turn touches `messages` at most twice (the optimistic append, then
+    // the single commit on `done`) regardless of how many tokens streamed --
+    // never once per token. Before this fix, every token produced a new
+    // `messages` reference, so this would have scaled with the 5 tokens above.
+    expect(activePathRefs.size).toBeLessThanOrEqual(2)
+  })
+
+  it('persists partial assistant content when the stream errors mid-generation, instead of leaving the bubble empty', async () => {
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        return streamResponse([
+          'data: {"token": "Partial reply before the crash"}\n\n',
+          'data: {"error": "Model crashed"}\n\n'
+        ])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    expect(await screen.findByText('Model crashed')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText(/Partial reply before the crash/)).not.toBeNull())
+  })
+
+  it('does not leak an abandoned stream into a different character switched to mid-stream (regression)', async () => {
+    const charA = mockCharacters[0] // Luna
+    const charB = { id: 2, name: 'Nova', description: 'Another AI', tags: [] }
+    const novaHistory = [
+      { id: 201, parent_id: null, role: 'user', content: 'Hi Nova', variant_index: 0 },
+      { id: 202, parent_id: 201, role: 'assistant', content: 'Hello there, I am Nova.', variant_index: 0 }
+    ]
+
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // A stream that emits one token then hangs forever -- simulates
+        // Luna's generation being abandoned mid-turn by the character switch.
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"token": "Hello "}\n\n'))
+          }
+        })
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse([charA, charB])
+      if (u === '/tags/') return mockResponse([])
+      if (u === '/history/2') return mockResponse(novaHistory)
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    await screen.findAllByText('Nova')
+
+    // Start a turn with Luna and let its first token stream in.
+    const chatButtons = screen.getAllByRole('button', { name: 'Chat' })
+    fireEvent.click(chatButtons[0])
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+    await waitFor(() => expect(screen.queryByText(/Hello/)).not.toBeNull(), { timeout: 5000 })
+
+    // Switch to Nova, who already has her own finished conversation, while
+    // Luna's stream is still open (never sent `done`).
+    fireEvent.click(screen.getByRole('button', { name: /Characters/ }))
+    await screen.findAllByText('Luna')
+    const chatButtonsAgain = screen.getAllByRole('button', { name: 'Chat' })
+    await act(async () => {
+      fireEvent.click(chatButtonsAgain[1]) // Nova
+    })
+    await screen.findByPlaceholderText(/Write a prompt for Nova/)
+
+    // Nova's own, already-persisted reply must be shown -- never Luna's
+    // leaked/abandoned stream text.
+    expect(await screen.findByText('Hello there, I am Nova.')).toBeInTheDocument()
+
+    // The composer must not be stuck in the loading/"Stop" state for Nova --
+    // the switch aborts Luna's orphaned stream instead of waiting out its
+    // idle timeout.
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).not.toBeInTheDocument()
+    expect(screen.getByText('arrow_upward')).toBeInTheDocument()
+  })
+
+  it('clears the persistent connection-lost/Retry toast when switching to a different character (regression: a stale Retry could otherwise overwrite the newly-viewed character\'s history)', async () => {
+    const charA = mockCharacters[0] // Luna
+    const charB = { id: 2, name: 'Nova', description: 'Another AI', tags: [] }
+    const novaHistory = [
+      { id: 301, parent_id: null, role: 'user', content: 'Hi Nova', variant_index: 0 },
+      { id: 302, parent_id: 301, role: 'assistant', content: 'Hello there, I am Nova.', variant_index: 0 }
+    ]
+
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        return Promise.reject(new Error('Network error'))
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse([charA, charB])
+      if (u === '/tags/') return mockResponse([])
+      if (u === '/history/2') return mockResponse(novaHistory)
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    await screen.findAllByText('Nova')
+
+    // Fail a turn with Luna -> persistent "Lost connection" toast with Retry.
+    const chatButtons = screen.getAllByRole('button', { name: 'Chat' })
+    fireEvent.click(chatButtons[0])
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+    expect(await screen.findByText('Lost connection to AI.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+
+    // Switch to Nova, who has her own already-persisted conversation.
+    fireEvent.click(screen.getByRole('button', { name: /Characters/ }))
+    await screen.findAllByText('Luna')
+    const chatButtonsAgain = screen.getAllByRole('button', { name: 'Chat' })
+    await act(async () => {
+      fireEvent.click(chatButtonsAgain[1]) // Nova
+    })
+    await screen.findByPlaceholderText(/Write a prompt for Nova/)
+    expect(await screen.findByText('Hello there, I am Nova.')).toBeInTheDocument()
+
+    // The stale toast -- and, crucially, its Retry control bound to Luna's
+    // failed turn -- must not survive the switch. Left alive, clicking it
+    // would (pre-fix) silently overwrite Nova's just-rendered history with
+    // Luna's once the retried stream completed, violating the
+    // per-(character_id, chat_id) scoping invariant.
+    expect(screen.queryByText('Lost connection to AI.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  })
+
+  it('does not let a slower, earlier chat-history fetch clobber a newer chat switch once it finally resolves (regression: fetchHistory applied setMessages unconditionally, without re-checking the character/chat is still the one on screen)', async () => {
+    const charA = mockCharacters[0] // Luna, id 1
+    const chatSessions = [
+      { id: 10, title: 'Chat A', is_archived: false, is_active: true, message_count: 1 },
+      { id: 20, title: 'Chat B', is_archived: false, is_active: false, message_count: 1 }
+    ]
+    const chatAHistory = [
+      { id: 401, parent_id: null, role: 'user', content: 'Message in chat A', variant_index: 0 }
+    ]
+    const chatBHistory = [
+      { id: 501, parent_id: null, role: 'user', content: 'Message in chat B', variant_index: 0 }
+    ]
+
+    // Chat A's history is deliberately held open so it resolves AFTER chat B's,
+    // even though it was requested first (the exact ordering a fast double
+    // chat-switch, or plain network jitter, can produce).
+    let resolveChatAHistory: () => void = () => {}
+    const chatAGate = new Promise<void>((resolve) => { resolveChatAHistory = resolve })
+
+    vi.mocked(fetch).mockImplementation((url) => {
+      const u = String(url)
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse([charA])
+      if (u === '/tags/') return mockResponse([])
+      if (u === '/chats/1') return mockResponse(chatSessions)
+      if (u === '/history/1?chat_id=10') {
+        return chatAGate.then(() => ({ ok: true, json: () => Promise.resolve(chatAHistory) } as unknown as Response))
+      }
+      if (u === '/history/1?chat_id=20') return mockResponse(chatBHistory)
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+
+    // Enter the chat view for Luna -- this fires the character-switch effect,
+    // which loads her chats (active = chat A, id 10) and kicks off chat A's
+    // (deliberately slow) history fetch.
+    const chatButtons = screen.getAllByRole('button', { name: 'Chat' })
+    fireEvent.click(chatButtons[0])
+
+    // The session picker is populated by loadChats, independent of the still-
+    // pending history fetch, so it's available immediately.
+    const picker = await screen.findByTitle('Switch chat session')
+
+    // Switch to chat B before chat A's history has resolved. Chat B's own
+    // history fetch resolves immediately.
+    await act(async () => {
+      fireEvent.change(picker, { target: { value: '20' } })
+    })
+    expect(await screen.findByText('Message in chat B')).toBeInTheDocument()
+
+    // Now let chat A's slow, now-stale fetch finally resolve.
+    await act(async () => {
+      resolveChatAHistory()
+      await chatAGate
+    })
+
+    // Chat A's history must not have clobbered chat B's -- the user is still
+    // looking at chat B, per the per-(character_id, chat_id) scoping invariant.
+    expect(screen.queryByText('Message in chat A')).not.toBeInTheDocument()
+    expect(screen.getByText('Message in chat B')).toBeInTheDocument()
+  })
+
+  it('clears a leftover persistent connection-lost toast when a new turn is started (regression: a stale Retry could otherwise fire concurrently with a later, unrelated send)', async () => {
+    let attempts = 0
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        attempts += 1
+        if (attempts === 1) return Promise.reject(new Error('Network error'))
+        return streamResponse(['data: {"token": "Second reply"}\n\n', 'data: {"done": true}\n\n'])
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+
+    fireEvent.change(input, { target: { value: 'First' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+    expect(await screen.findByText('Lost connection to AI.')).toBeInTheDocument()
+
+    // Without dismissing or retrying, send a second, unrelated message --
+    // allowed because isLoading was reset to false in the failed attempt's
+    // `finally`.
+    fireEvent.change(input, { target: { value: 'Second' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    // The leftover toast from the first failure -- and its now-superseded
+    // Retry control -- must not survive into the new turn: left alive, it
+    // could fire concurrently with the second (real) stream and clobber the
+    // shared streamAbortRef/streamingContent/isLoading state.
+    expect(screen.queryByText('Lost connection to AI.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    expect(await screen.findByText(/Second reply/)).toBeInTheDocument()
   })
 })

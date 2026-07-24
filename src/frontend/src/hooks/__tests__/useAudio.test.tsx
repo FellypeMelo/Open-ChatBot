@@ -154,6 +154,19 @@ describe('useAudio', () => {
     expect(mockOscillator.stop).toHaveBeenCalled();
   });
 
+  it('should skip every other tick to halve oscillator churn during fast typewriter playback', () => {
+    const { result } = renderHook(() => useAudio());
+
+    // 1st call plays (oscillator #1), 2nd is skipped, 3rd plays (oscillator #2).
+    act(() => {
+      result.current.playTypewriterClick();
+      result.current.playTypewriterClick();
+      result.current.playTypewriterClick();
+    });
+
+    expect(mockAudioContextInstance.createOscillator).toHaveBeenCalledTimes(2);
+  });
+
   it('should play and synthesize ambient noise based on location', () => {
     const { result } = renderHook(() => useAudio());
 

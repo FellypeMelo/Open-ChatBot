@@ -1,14 +1,34 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import Icon from './Icon'
 import IconButton from './IconButton'
-import MessageRenderer from './MessageRenderer'
+import MessageRow from './MessageRow'
 import { useMessageTree } from '../hooks/useMessageTree'
 import type { MessageNode } from '../hooks/useMessageTree'
 import { useTokenQueue } from '../hooks/useTokenQueue'
 import { useAtmosphere } from '../hooks/useAtmosphere'
 import { useAudio } from '../hooks/useAudio'
+import { useConfirm } from '../hooks/useConfirm'
 import { fetchJournal } from '../services/api'
 import type { JournalEntry, Character, ChatSession } from '../services/api'
+
+// Best-effort clipboard fallback for contexts where navigator.clipboard is
+// unavailable (e.g. the app served over plain http://<lan-ip> is a
+// non-secure origin, so the Clipboard API is undefined on mobile browsers).
+const fallbackCopyToClipboard = (text: string) => {
+  try {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+  } catch {
+    // Clipboard genuinely unavailable -- the request id is still visible in the UI.
+  }
+}
 
 const ACTIONS = [
   { id: 'hug', name: 'Hug', icon: 'favorite', effect: 'HAPPINESS +5 • SOCIAL +10 • RELATION +2' },
@@ -27,34 +47,6 @@ const GIFTS = [
   { id: 'necklace', name: 'Necklace', icon: 'diamond', effect: 'HAPPINESS +15 • SOCIAL +10 • RELATION +8' }
 ]
 
-// Inline editor shared by the user-prompt and assistant-reply message editors --
-// same textarea + Cancel/Save row, differing only in the textarea's type styling.
-const MessageEditor: React.FC<{
-  value: string
-  onChange: (v: string) => void
-  onCancel: () => void
-  onSave: () => void
-  textareaClassName: string
-  wrapperClassName?: string
-}> = ({ value, onChange, onCancel, onSave, textareaClassName, wrapperClassName = 'w-full flex flex-col gap-2' }) => (
-  <div className={wrapperClassName}>
-    <textarea
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className={textareaClassName}
-      autoFocus
-    />
-    <div className="flex gap-2 self-end">
-      <button onClick={onCancel} className="px-3 py-1 text-xs font-mono text-zinc-400 hover:text-white">
-        CANCEL
-      </button>
-      <button onClick={onSave} className="px-3 py-1 bg-white text-black text-xs font-bold rounded">
-        SAVE
-      </button>
-    </div>
-  </div>
-)
-
 // Stat gauge shell: label row + progress bar. The right-hand value and controls
 // vary per stat, so each caller passes them as children.
 const StatBar: React.FC<{
@@ -64,9 +56,9 @@ const StatBar: React.FC<{
   children: React.ReactNode
 }> = ({ label, percent, barClass = 'bg-white', children }) => (
   <div className="flex flex-col gap-1">
-    <div className="flex items-center justify-between font-mono text-[9px] text-[#71717A]">
+    <div className="flex items-center justify-between gap-2 font-mono text-[11px] md:text-[9px] text-[#71717A]">
       <span>{label}</span>
-      <div className="flex items-center gap-1.5">{children}</div>
+      <div className="flex items-center gap-1.5 shrink-0">{children}</div>
     </div>
     <div className="h-1 bg-white/5 rounded-full overflow-hidden">
       <div className={`h-full ${barClass} transition-all duration-500`} style={{ width: `${percent}%` }} />
@@ -75,18 +67,20 @@ const StatBar: React.FC<{
 )
 
 // Shared styling for the compact stat controls (+/- steppers and Sleep/Feed).
-// Comfortable tap size on mobile (~34px), compact on desktop, with a pressed
-// state so a thumb gets feedback. Replaces the old ~16px text-[8px] targets.
+// Meets the 44px mobile touch-target minimum, compact on desktop, with a
+// pressed state so a thumb gets feedback. Replaces the old ~16px text-[8px] targets.
 const STAT_CONTROL_CLASS =
   'inline-flex items-center justify-center bg-white/5 border border-white/10 rounded ' +
-  'min-w-[34px] min-h-[30px] md:min-w-0 md:min-h-0 md:px-1 md:py-0.5 ' +
+  'min-w-11 min-h-11 md:min-w-0 md:min-h-0 md:px-1 md:py-0.5 ' +
   'text-xs md:text-[9px] leading-none font-mono hover:bg-white/10 text-[#A1A1AA] hover:text-white ' +
   'transition-colors cursor-pointer select-none touch-manipulation active:scale-95 ' +
   'disabled:opacity-20 disabled:pointer-events-none'
 
 // The identical minus/plus pair used by happiness / social / relationship.
+// A slightly wider gap than the control's own internal spacing so two
+// full-size 44px targets don't read as a single fused hit area on mobile.
 const AdjustButtons: React.FC<{ onDecrement: () => void; onIncrement: () => void }> = ({ onDecrement, onIncrement }) => (
-  <div className="flex gap-1">
+  <div className="flex gap-1.5">
     <button type="button" onClick={onDecrement} className={STAT_CONTROL_CLASS} aria-label="Decrease">
       -
     </button>
@@ -99,11 +93,27 @@ const AdjustButtons: React.FC<{ onDecrement: () => void; onIncrement: () => void
 interface ChatViewProps {
   activeChar: Character | null
   messages: MessageNode[]
+  // The in-flight assistant reply's accumulated text, owned by the parent
+  // OUTSIDE the `messages` array so a token never forces a `messages` array
+  // reference change (see App.tsx). When absent, falls back to reading the
+  // streaming node's content straight off `messages` (used by callers/tests
+  // that drive ChatView directly without this dedicated channel).
+  streamingContent?: string | null
+  // The id of the assistant placeholder `streamingContent` belongs to. Only
+  // the message whose id matches this is ever treated as "currently
+  // streaming" -- this is what stops a sibling-variant swap (or a
+  // character/chat switch) mid-stream from making an unrelated, already-
+  // finished message display someone else's in-flight text. When omitted
+  // (e.g. tests driving ChatView directly), falls back to the legacy
+  // positional behavior of treating whichever node is last in the active
+  // path as the stream target.
+  streamingMessageId?: number | null
   input: string
   setInput: (val: string) => void
   onSend: (parentId?: number) => void
   onRegenerate: (parentId: number) => void
   isLoading: boolean
+  onCancelStream?: () => void
   onUpdateState: (charId: number, stateUpdate: Record<string, unknown>) => Promise<void>
   onClearChat: () => void
   onSendAction: (actionId: string, parentId?: number) => Promise<void>
@@ -120,11 +130,14 @@ interface ChatViewProps {
 const ChatView: React.FC<ChatViewProps> = ({
   activeChar,
   messages,
+  streamingContent,
+  streamingMessageId,
   input,
   setInput,
   onSend,
   onRegenerate,
   isLoading,
+  onCancelStream,
   onUpdateState,
   onClearChat,
   onSendAction,
@@ -146,6 +159,7 @@ const ChatView: React.FC<ChatViewProps> = ({
   const { playTypewriterClick, resumeAudio, playAmbient, stopAmbient } = useAudio()
   const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20, playTypewriterClick)
   const { blurAmount, textOpacity } = useAtmosphere(displayedContent)
+  const { confirm, dialog } = useConfirm()
   const prevContentLength = useRef(0)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [currentTab, setCurrentTab] = useState<'chat' | 'journal'>('chat')
@@ -193,11 +207,15 @@ const ChatView: React.FC<ChatViewProps> = ({
     }
   }, [activeChar, playAmbient, stopAmbient])
 
+  // 'auto' while the typewriter is actively draining tokens (fires up to
+  // ~50x/sec during streaming, so a smooth-scroll animation per tick reads as
+  // jank/rubber-banding); 'smooth' for user-initiated moments (send, tab
+  // switch, once streaming settles).
   const scrollToBottom = useCallback((force = false) => {
     if (force || isAtBottom) {
-      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      chatEndRef.current?.scrollIntoView({ behavior: isDraining ? 'auto' : 'smooth' })
     }
-  }, [isAtBottom])
+  }, [isAtBottom, isDraining])
 
   const handleScroll = (e: React.UIEvent<HTMLElement>) => {
     const el = e.currentTarget
@@ -220,6 +238,28 @@ const ChatView: React.FC<ChatViewProps> = ({
     el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`
   }, [input])
 
+  // Fallback keyboard-occlusion fix for browsers that don't yet honor the
+  // `interactive-widget=resizes-content` viewport hint (index.html): when the
+  // on-screen keyboard opens, visualViewport shrinks -- if the composer is
+  // what's focused at that moment, nudge it back into view so the user can
+  // see what they're typing. Feature-detected: a no-op (no listener attached)
+  // wherever window.visualViewport doesn't exist.
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    let lastHeight = viewport.height
+    const handleViewportResize = () => {
+      const currentHeight = viewport.height
+      const shrunk = lastHeight - currentHeight > 150
+      lastHeight = currentHeight
+      if (shrunk && document.activeElement === composerRef.current) {
+        composerRef.current?.scrollIntoView({ block: 'nearest' })
+      }
+    }
+    viewport.addEventListener('resize', handleViewportResize)
+    return () => viewport.removeEventListener('resize', handleViewportResize)
+  }, [])
+
   useEffect(() => {
     if (isLoading) {
       reset()
@@ -230,13 +270,23 @@ const ChatView: React.FC<ChatViewProps> = ({
   useEffect(() => {
     if (isLoading && activePath.length > 0) {
       const lastMsg = activePath[activePath.length - 1]
-      if (lastMsg.role === 'assistant' && lastMsg.content.length > prevContentLength.current) {
-        const delta = lastMsg.content.substring(prevContentLength.current)
-        enqueue(delta)
-        prevContentLength.current = lastMsg.content.length
+      // Only feed the queue for the exact node this stream belongs to (see
+      // streamingMessageId's prop doc) -- otherwise, swiping to a different,
+      // already-finished sibling mid-stream would misread its static content
+      // as a fresh delta to type out.
+      const isStreamTarget = streamingMessageId === undefined || streamingMessageId === lastMsg.id
+      if (lastMsg.role === 'assistant' && isStreamTarget) {
+        // Prefer the dedicated streaming channel (App.tsx) over re-reading
+        // `messages`, which no longer gets a token-by-token content update.
+        const source = streamingContent ?? lastMsg.content
+        if (source.length > prevContentLength.current) {
+          const delta = source.substring(prevContentLength.current)
+          enqueue(delta)
+          prevContentLength.current = source.length
+        }
       }
     }
-  }, [activePath, isLoading, enqueue])
+  }, [activePath, isLoading, enqueue, streamingContent, streamingMessageId])
 
   const handleRegenerate = (node: MessageNode) => {
     if (isLoading || node.parent_id === null) return
@@ -260,7 +310,11 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   const handleCopyID = (id: string) => {
     if (!id) return
-    navigator.clipboard.writeText(id)
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(id).catch(() => fallbackCopyToClipboard(id))
+    } else {
+      fallbackCopyToClipboard(id)
+    }
     setCopiedId(id)
     setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1500)
   }
@@ -274,14 +328,20 @@ const ChatView: React.FC<ChatViewProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#050505] overflow-hidden relative">
-      {/* Background vignette & blur gradients */}
-      <div 
-        className="absolute inset-0 pointer-events-none z-0 transition-all duration-700 ease-in-out"
-        style={{ 
+      {/* Background vignette & blur gradients. The animated backdrop-filter
+          blur is desktop-only and motion-safe: full-screen blur is one of
+          the most GPU-expensive mobile operations and repaints on every
+          scroll/atmosphere change for near-zero visual payoff on a phone, so
+          small screens and prefers-reduced-motion get a cheap static
+          gradient instead. Desktop with no motion preference is unchanged. */}
+      <div
+        className="hidden md:motion-safe:block absolute inset-0 pointer-events-none z-0 transition-all duration-700 ease-in-out"
+        style={{
           backdropFilter: `blur(${blurAmount}px)`,
           WebkitBackdropFilter: `blur(${blurAmount}px)`,
         }}
       />
+      <div className="absolute inset-0 pointer-events-none z-0 bg-gradient-to-b from-white/[0.03] via-transparent to-transparent md:motion-safe:hidden" />
       <div className="absolute inset-0 pointer-events-none z-0 bg-gradient-to-b from-transparent via-transparent to-background/60" />
       
       {/* Floating HUD Header */}
@@ -289,7 +349,7 @@ const ChatView: React.FC<ChatViewProps> = ({
         <div className="max-w-[850px] mx-auto w-full px-md md:px-lg py-sm flex flex-col gap-2">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-xs sm:gap-none">
             <div className="flex flex-col">
-              <span className="hidden sm:block font-label-sm text-[9px] uppercase tracking-[0.25em] text-[#71717A]">
+              <span className="hidden sm:block font-label-sm text-[11px] md:text-[9px] uppercase tracking-[0.25em] text-[#71717A]">
                 ACTIVE NARRATIVE UNIT
               </span>
               <h1 className="font-sans text-xl font-extrabold text-white tracking-tight leading-none mt-0.5">
@@ -298,7 +358,7 @@ const ChatView: React.FC<ChatViewProps> = ({
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 select-none mt-xs sm:mt-0">
               {activeChar?.state && (activeChar.state?.location || activeChar.state?.clothes) && (
-                <span className="font-mono text-[9px] text-[#A1A1AA] bg-white/5 border border-white/10 px-2 py-0.5 rounded-full truncate max-w-[200px] sm:max-w-none">
+                <span className="font-mono text-[11px] md:text-[9px] text-[#A1A1AA] bg-white/5 border border-white/10 px-2 py-0.5 rounded-full truncate max-w-[200px] sm:max-w-none">
                   {(activeChar.state?.location || '').toUpperCase()} • {(activeChar.state?.clothes || '').toUpperCase()}
                 </span>
               )}
@@ -388,7 +448,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <Icon name={statsExpanded ? 'expand_less' : 'expand_more'} size="xs" />
               </span>
             </button>
-            <div className={`${statsExpanded ? 'grid' : 'hidden'} md:grid grid-cols-2 md:grid-cols-5 gap-md border-t border-white/5 pt-2`}>
+            <div className={`${statsExpanded ? 'grid' : 'hidden'} md:grid grid-cols-1 md:grid-cols-5 gap-md border-t border-white/5 pt-2`}>
               <StatBar label="ENERGY" percent={activeChar?.state?.stats?.energy}>
                 <span className="text-white">{activeChar?.state?.stats?.energy}%</span>
                 <button
@@ -444,7 +504,7 @@ const ChatView: React.FC<ChatViewProps> = ({
             <button
               type="button"
               onClick={() => setCurrentTab('chat')}
-              className={`font-mono text-[10px] uppercase tracking-wider py-1 px-2 border-b-2 transition-all cursor-pointer ${
+              className={`font-mono text-[11px] md:text-[10px] uppercase tracking-wider py-1 px-2 border-b-2 transition-all cursor-pointer ${
                 currentTab === 'chat'
                   ? 'border-white text-white font-bold'
                   : 'border-transparent text-zinc-500 hover:text-zinc-300'
@@ -455,7 +515,7 @@ const ChatView: React.FC<ChatViewProps> = ({
             <button
               type="button"
               onClick={() => setCurrentTab('journal')}
-              className={`font-mono text-[10px] uppercase tracking-wider py-1 px-2 border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`font-mono text-[11px] md:text-[10px] uppercase tracking-wider py-1 px-2 border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
                 currentTab === 'journal'
                   ? 'border-white text-white font-bold'
                   : 'border-transparent text-zinc-500 hover:text-zinc-300'
@@ -463,7 +523,7 @@ const ChatView: React.FC<ChatViewProps> = ({
             >
               <span>Private Journal</span>
               {journalEntries.length > 0 && (
-                <span className="bg-zinc-800 text-zinc-300 text-[8px] px-1.5 py-0.5 rounded font-sans font-bold leading-none">
+                <span className="bg-zinc-800 text-zinc-300 text-[10px] md:text-[8px] px-1.5 py-0.5 rounded font-sans font-bold leading-none">
                   {journalEntries.length}
                 </span>
               )}
@@ -484,7 +544,7 @@ const ChatView: React.FC<ChatViewProps> = ({
               {/* History divider */}
               <div className="w-full flex items-center justify-center gap-sm py-2 opacity-30 select-none">
                 <div className="h-px bg-white/10 flex-1" />
-                <span className="font-mono text-[8px] uppercase tracking-[0.3em] text-[#71717A]">
+                <span className="font-mono text-[10px] md:text-[8px] uppercase tracking-[0.3em] text-[#71717A]">
                   Narrative Ingest
                 </span>
                 <div className="h-px bg-white/10 flex-1" />
@@ -502,180 +562,52 @@ const ChatView: React.FC<ChatViewProps> = ({
                 const hasSiblings = siblings.length > 1
                 const currentIndex = siblings.findIndex(s => s.id === msg.id)
                 const isLastMessage = i === activePath.length - 1
-                const isStreaming = isLastMessage && msg.role === 'assistant' && (isLoading || isDraining)
-
-                if (msg.role === 'user') {
-                  const isEditing = editingMessageId === msg.id
-                  return (
-                    <div key={msg.id} className="w-full flex flex-col items-start mt-6 mb-6 group">
-                      <div className="flex items-center justify-between w-full mb-2">
-                        <div className="flex items-center gap-2 select-none">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#34D399]/40" />
-                          <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-[#34D399]/70">
-                            PROMPT ACTION
-                          </span>
-                        </div>
-                        
-                        {!isEditing && (
-                          <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                            <IconButton
-                              icon="edit"
-                              label="Edit"
-                              size="sm"
-                              onClick={() => {
-                                setEditingMessageId(msg.id)
-                                setEditContent(msg.content)
-                              }}
-                              className="text-[#71717A] hover:text-white"
-                            />
-                            {onDeleteMessage && (
-                              <IconButton
-                                icon="delete"
-                                label="Delete"
-                                size="sm"
-                                onClick={() => {
-                                  if(confirm('Delete this message and everything after it?')) onDeleteMessage(msg.id)
-                                }}
-                                className="text-[#71717A] hover:text-red-400"
-                              />
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      
-                      {isEditing ? (
-                        <MessageEditor
-                          value={editContent}
-                          onChange={setEditContent}
-                          onCancel={() => setEditingMessageId(null)}
-                          onSave={() => {
-                            if (onEditMessage) onEditMessage(msg.id, editContent)
-                            setEditingMessageId(null)
-                          }}
-                          textareaClassName="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-sans text-sm resize-y min-h-[80px]"
-                        />
-                      ) : (
-                        <div className="w-full border-l-2 border-white/10 pl-5 py-1 text-zinc-400 font-sans text-sm leading-relaxed whitespace-pre-wrap">
-                          {msg.content}
-                        </div>
-                      )}
-                    </div>
-                  )
-                }
+                // Identity-scoped: only the node this stream actually belongs
+                // to (see streamingMessageId) can ever render the live/typewriter
+                // text, regardless of which node happens to be last.
+                const isStreamTarget = streamingMessageId === undefined || streamingMessageId === msg.id
+                const isStreaming = isLastMessage && msg.role === 'assistant' && isStreamTarget && (isLoading || isDraining)
+                const isEditing = editingMessageId === msg.id
+                const isCopied = !!msg.request_id && copiedId === msg.request_id
 
                 return (
-                  <div 
-                    key={msg.id} 
-                    className="flex flex-col gap-2 w-full group mt-6 mb-8 relative border-t border-white/5 pt-6 first:border-t-0 first:pt-0"
-                  >
-                    {/* Character Header Info */}
-                    <div className="flex items-center justify-between mb-1 select-none">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-white/50">
-                          {activeChar?.name || 'Narrator'}
-                        </span>
-                        {isStreaming && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        )}
-                      </div>
-
-                      {/* Variant Navigation switcher */}
-                      {hasSiblings && (
-                        <div className="flex items-center gap-0.5 px-1 rounded-full bg-white/5 border border-white/10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                          <IconButton
-                            icon="chevron_left"
-                            label="Previous variant"
-                            size="sm"
-                            onClick={() => prevVariant(msg.id)}
-                            disabled={currentIndex === 0}
-                            className="text-[#71717A] hover:text-white"
-                          />
-                          <span className="font-mono text-[11px] text-[#71717A] tabular-nums px-0.5">
-                            {currentIndex + 1} / {siblings.length}
-                          </span>
-                          <IconButton
-                            icon="chevron_right"
-                            label="Next variant"
-                            size="sm"
-                            onClick={() => nextVariant(msg.id)}
-                            disabled={currentIndex === siblings.length - 1}
-                            className="text-[#71717A] hover:text-white"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Message Body (No bubble, flows directly on background) */}
-                    {editingMessageId === msg.id ? (
-                      <MessageEditor
-                        value={editContent}
-                        onChange={setEditContent}
-                        onCancel={() => setEditingMessageId(null)}
-                        onSave={() => {
-                          if (onEditMessage) onEditMessage(msg.id, editContent)
-                          setEditingMessageId(null)
-                        }}
-                        textareaClassName="w-full bg-[#09090B] border border-white/20 focus:border-white/40 outline-none rounded p-3 text-zinc-300 font-serif text-[17px] leading-[1.8] resize-y min-h-[120px]"
-                        wrapperClassName="w-full flex flex-col gap-2 mt-2"
-                      />
-                    ) : (
-                      <div className="font-serif text-[17px] text-zinc-200 leading-[1.8] antialiased select-text">
-                        <MessageRenderer content={isStreaming ? displayedContent : msg.content} />
-                      </div>
-                    )}
-
-                    {/* Controls Footer. Icon-only on mobile (labels hidden but
-                        kept in the DOM), icon + label from md up. */}
-                    <div className="flex flex-wrap gap-x-1 gap-y-1 mt-3 items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                      <button
-                        onClick={() => handleRegenerate(msg)}
-                        aria-label="Regenerate response"
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95"
-                      >
-                        <Icon name="refresh" size="sm" />
-                        <span className="hidden md:inline">Regenerate</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingMessageId(msg.id)
-                          setEditContent(msg.content)
-                        }}
-                        aria-label="Edit response"
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95"
-                      >
-                        <Icon name="edit" size="sm" />
-                        <span className="hidden md:inline">Edit</span>
-                      </button>
-                      {onDeleteMessage && (
-                        <button
-                          onClick={() => {
-                            if(confirm('Delete this message and everything after it?')) onDeleteMessage(msg.id)
-                          }}
-                          aria-label="Delete response"
-                          className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-red-400 transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95"
-                        >
-                          <Icon name="delete" size="sm" />
-                          <span className="hidden md:inline">Delete</span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleCopyID(msg.request_id || '')}
-                        disabled={!msg.request_id}
-                        className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-[#71717A] hover:text-white transition-colors cursor-pointer min-h-11 md:min-h-0 px-1.5 touch-manipulation active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[#71717A]"
-                        title={msg.request_id ? 'Copy Request ID' : 'Request ID not available yet'}
-                      >
-                        <Icon name={msg.request_id && copiedId === msg.request_id ? 'check' : 'content_copy'} size="sm" />
-                        <span className="hidden md:inline">
-                          {msg.request_id && copiedId === msg.request_id ? 'Copied' : 'Copy ID'}
-                        </span>
-                      </button>
-                      {msg.request_id && (
-                        <span className="font-mono text-[9px] text-[#71717A]/30 ml-auto uppercase tracking-wider select-none">
-                          REQ: {msg.request_id.split('-')[0]}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  <MessageRow
+                    key={msg.id}
+                    msg={msg}
+                    characterName={activeChar?.name || 'Narrator'}
+                    isEditing={isEditing}
+                    editContent={editContent}
+                    isStreaming={isStreaming}
+                    displayedContent={displayedContent}
+                    isLoading={isLoading}
+                    isCopied={isCopied}
+                    hasSiblings={hasSiblings}
+                    currentIndex={currentIndex}
+                    siblingsLength={siblings.length}
+                    onEditStart={() => {
+                      setEditingMessageId(msg.id)
+                      setEditContent(msg.content)
+                    }}
+                    onEditChange={setEditContent}
+                    onEditCancel={() => setEditingMessageId(null)}
+                    onEditSave={() => {
+                      if (onEditMessage) onEditMessage(msg.id, editContent)
+                      setEditingMessageId(null)
+                    }}
+                    onDelete={onDeleteMessage ? async () => {
+                      const ok = await confirm({
+                        title: 'Delete this message?',
+                        message: 'This will also delete everything after it. This cannot be undone.',
+                        confirmLabel: 'Delete',
+                        danger: true,
+                      })
+                      if (ok) onDeleteMessage(msg.id)
+                    } : undefined}
+                    onRegenerate={() => handleRegenerate(msg)}
+                    onCopyId={() => handleCopyID(msg.request_id || '')}
+                    onPrevVariant={() => prevVariant(msg.id)}
+                    onNextVariant={() => nextVariant(msg.id)}
+                  />
                 )
               })}
 
@@ -697,7 +629,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                 <div className="flex flex-col items-center justify-center py-24 opacity-20 select-none">
                   <Icon name="auto_stories" size="xl" className="mb-3" />
                   <p className="font-sans text-xs tracking-widest uppercase font-medium">No journal entries yet.</p>
-                  <p className="font-sans text-[10px] text-center max-w-[280px] mt-2 leading-relaxed">
+                  <p className="font-sans text-[11px] md:text-[10px] text-center max-w-[280px] mt-2 leading-relaxed">
                     As you chat and interact, {activeChar?.name || 'the character'} will write down first-person reflections in this private log.
                   </p>
                 </div>
@@ -718,7 +650,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                         <div className="absolute -left-[5.5px] top-[6px] w-2.5 h-2.5 rounded-full bg-zinc-700 border border-zinc-950" />
                         
                         {/* Header line */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-zinc-500 select-none">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] md:text-[10px] font-mono text-zinc-500 select-none">
                           <span>{formattedDate.toUpperCase()}</span>
                           <div className="flex gap-2">
                             <span>MOOD: {entry.mood_at_time ? entry.mood_at_time.toUpperCase() : 'NEUTRAL'}</span>
@@ -750,9 +682,18 @@ const ChatView: React.FC<ChatViewProps> = ({
         style={{ opacity: textOpacity }}
       >
         <div className="max-w-[850px] mx-auto relative flex flex-col gap-2">
+          {/* Tap-outside backdrop: standard bottom-sheet dismissal, consistent
+              with the mobile sidebar's backdrop-click-to-close in App.tsx. */}
+          {isDrawerOpen && activeChar && (
+            <div
+              onClick={() => setIsDrawerOpen(false)}
+              aria-hidden="true"
+              className="fixed inset-0 z-[15] bg-black/40"
+            />
+          )}
           {/* Interact Drawer Panel */}
           {isDrawerOpen && activeChar && (
-            <div className="bg-[#0A0A0B]/90 backdrop-blur-md border border-white/10 rounded-2xl p-4 shadow-2xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-4 z-20">
+            <div className="bg-[#0A0A0B]/90 backdrop-blur-md border border-white/10 rounded-2xl p-4 shadow-2xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-4 z-20 max-h-[70dvh] overflow-y-auto">
               {/* Drawer Header */}
               <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-3 select-none">
                 <div className="flex gap-4">
@@ -845,23 +786,35 @@ const ChatView: React.FC<ChatViewProps> = ({
               disabled={isLoading || !activeChar}
             />
             <div className="flex gap-1 ml-2">
-              <IconButton
-                icon="arrow_upward"
-                label="Send"
-                size="sm"
-                onClick={handleSend}
-                disabled={isLoading || !input.trim()}
-                className="bg-white text-black hover:bg-[#E4E4E7] disabled:opacity-30 shadow-lg self-end mb-0.5"
-              />
+              {isLoading ? (
+                <IconButton
+                  icon="stop"
+                  label="Stop generating"
+                  size="sm"
+                  onClick={onCancelStream}
+                  className="bg-red-600 text-white hover:bg-red-500 shadow-lg self-end mb-0.5"
+                />
+              ) : (
+                <IconButton
+                  icon="arrow_upward"
+                  label="Send"
+                  size="sm"
+                  onClick={handleSend}
+                  disabled={!input.trim()}
+                  className="bg-white text-black hover:bg-[#E4E4E7] disabled:opacity-30 shadow-lg self-end mb-0.5"
+                />
+              )}
             </div>
           </div>
           <div className="text-center">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-[#71717A]">
+            <span className="font-mono text-[11px] md:text-[9px] uppercase tracking-wider text-[#71717A]">
               Shift + Enter for multi-line. Direct stream enabled.
             </span>
           </div>
         </div>
       </div>
+
+      {dialog}
     </div>
   )
 }

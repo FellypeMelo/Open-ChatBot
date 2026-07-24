@@ -17,7 +17,6 @@ describe('LorebookView', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
     vi.mocked(api.fetchLore).mockResolvedValue(mockLoreEntries);
     vi.mocked(api.createLore).mockResolvedValue({ id: 3, keyword: 'Magic Ring', content: 'Allows invisibility', character_id: null, is_global: true });
     vi.mocked(api.deleteLore).mockResolvedValue(true);
@@ -97,7 +96,7 @@ describe('LorebookView', () => {
     });
   });
 
-  it('should delete a lore entry when delete button is clicked and confirmed', async () => {
+  it('should show a confirm dialog and delete the entry once confirmed', async () => {
     render(<LorebookView />);
 
     await waitFor(() => {
@@ -107,11 +106,37 @@ describe('LorebookView', () => {
     const deleteButtons = screen.getAllByRole('button');
     // The delete button is the icon button next to entries
     const deleteButton = deleteButtons.find(btn => btn.querySelector('span')?.textContent === 'delete');
-    
-    if (deleteButton) {
-      fireEvent.click(deleteButton);
-      expect(window.confirm).toHaveBeenCalled();
+    expect(deleteButton).toBeDefined();
+
+    fireEvent.click(deleteButton as HTMLElement);
+    expect(api.deleteLore).not.toHaveBeenCalled();
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete this entry?' });
+    expect(dialog).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => {
       expect(api.deleteLore).toHaveBeenCalledWith(1);
-    }
+    });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('should not delete the entry when the confirm dialog is cancelled', async () => {
+    render(<LorebookView />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Silver Dragon')).toBeInTheDocument();
+    });
+
+    const deleteButtons = screen.getAllByRole('button');
+    const deleteButton = deleteButtons.find(btn => btn.querySelector('span')?.textContent === 'delete');
+    fireEvent.click(deleteButton as HTMLElement);
+
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(api.deleteLore).not.toHaveBeenCalled();
   });
 });

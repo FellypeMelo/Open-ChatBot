@@ -72,6 +72,21 @@ describe('CharactersView', () => {
     expect(mockSetSelectedCharId).toHaveBeenCalledWith(1);
   });
 
+  it('should render the avatar image with explicit dimensions and lazy-loading hints', () => {
+    const charactersWithAvatar = [
+      { ...mockCharacters[0], avatar_url: '/avatars/1.png' },
+      mockCharacters[1],
+    ];
+    render(<CharactersView {...defaultProps} characters={charactersWithAvatar} />);
+
+    const avatarImg = screen.getByAltText('Sherlock Holmes') as HTMLImageElement;
+    expect(avatarImg).toHaveAttribute('src', '/avatars/1.png');
+    expect(avatarImg).toHaveAttribute('width', '40');
+    expect(avatarImg).toHaveAttribute('height', '40');
+    expect(avatarImg).toHaveAttribute('loading', 'lazy');
+    expect(avatarImg).toHaveAttribute('decoding', 'async');
+  });
+
   it('should highlight selected character card', () => {
     render(<CharactersView {...defaultProps} selectedCharId={1} />);
     

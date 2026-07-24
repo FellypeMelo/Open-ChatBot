@@ -1,13 +1,20 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
+from fastapi.responses import PlainTextResponse
 from src.backend.main import app, lifespan
 from src.backend.core.config import settings
 
 
 def test_static_routes(monkeypatch):
-    # Test favicon and catch-all frontend routes
-    mock_file_response = MagicMock(return_value="FileResponseMock")
+    # Test favicon and catch-all frontend routes. FileResponse is mocked
+    # with a real lightweight Response (not a bare string) because the
+    # catch-all route now mutates `response.headers` on whatever
+    # FileResponse returns (Cache-Control), which a plain string can't do.
+    def fake_file_response(*args, **kwargs):
+        return PlainTextResponse("FileResponseMock")
+
+    mock_file_response = MagicMock(side_effect=fake_file_response)
     monkeypatch.setattr("src.backend.main.FileResponse", mock_file_response)
 
     client = TestClient(app)

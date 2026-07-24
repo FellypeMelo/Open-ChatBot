@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 
 from src.backend.db.database import Base, get_db
@@ -572,6 +573,122 @@ def test_chat_stream_empty_reply_yields_done_without_persisting(client, db_sessi
         .all()
     )
     assert assistant_messages == []
+
+
+# ---------------------------------------------------------------------------
+# Abnormal stream end (reload-mid-stream-reconciliation): a mid-generation
+# LLM error or a client disconnect (Stop button / idle-timeout abort -- both
+# abort client-side and are indistinguishable to the backend) must still
+# persist whatever text streamed in before the failure, through the exact
+# same `_persist_assistant_reply` path a clean completion uses. Without this,
+# the user's own prompt is saved (it's written before generation starts) but
+# the assistant's half is gone forever the moment the tab reloads, since
+# fetchHistory only ever reads from the DB.
+# ---------------------------------------------------------------------------
+
+
+def test_chat_stream_mid_generation_error_persists_partial_reply(
+    client, db_session, monkeypatch
+):
+    char = Character(id=521, name="MidErrorChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=521)
+    db_session.add(state)
+    db_session.commit()
+
+    # The abnormal-end fallback opens its own SessionLocal() (same as the
+    # happy path) to persist the partial reply -- point that at this test's
+    # isolated session instead of the real chatbot.db engine.
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    with patch(
+        "src.backend.core.engine.llm.LlamaClient.complete_stream"
+    ) as mock_stream:
+
+        async def mock_iter(prompt, url=None, model=None, preset=None):
+            yield "*She pauses mid-sentence* "
+            yield "I was just about to say"
+            # llama-server drops mid-reply (e.g. crashed/OOM) -- complete_stream
+            # itself wraps this in HTTPException in production; a plain
+            # exception exercises the same `except Exception` path in chat.py.
+            raise RuntimeError("llama-server connection reset")
+
+        mock_stream.side_effect = mock_iter
+
+        resp = client.post("/chat/stream", json={"character_id": 521, "message": "hi"})
+        content = b"".join(resp.iter_bytes())
+
+    assert resp.status_code == 200
+    assert b"error" in content
+    assert b"llama-server connection reset" in content
+
+    # A completely fresh fetch through the real history endpoint -- exactly
+    # what the frontend's fetchHistory does on a page reload -- must show the
+    # partial reply. Not a raw query against the same in-memory session: this
+    # proves it was actually committed, not just flushed/pending.
+    history_resp = client.get("/history/521")
+    assert history_resp.status_code == 200
+    history = history_resp.json()
+    assistant_messages = [m for m in history if m["role"] == "assistant"]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["content"] == (
+        "*She pauses mid-sentence* I was just about to say"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_client_disconnect_persists_partial_reply(
+    db_session, monkeypatch
+):
+    """Covers the other two abnormal-end cases: a Stop-button click or an
+    idle-timeout, both of which abort the fetch client-side. The backend only
+    ever observes that as this generator being closed/abandoned mid-stream --
+    never as an `Exception` chat.py's own `except` clause could catch. Drives
+    chat_stream directly (a synchronous TestClient always fully drains a
+    stream, so it can't model a client hanging up partway through) and closes
+    its `StreamingResponse.body_iterator` -- the exact `generate()` async
+    generator returned by the route, per Starlette's StreamingResponse -- to
+    reproduce the GeneratorExit that closing/abandoning a suspended async
+    generator throws into it, exactly what a real disconnect eventually
+    triggers here."""
+    char = Character(id=522, name="DisconnectChar", description="Desc")
+    db_session.add(char)
+    db_session.commit()
+    state = AgentState(character_id=522)
+    db_session.add(state)
+    db_session.commit()
+
+    monkeypatch.setattr(chat_module, "SessionLocal", lambda: db_session)
+
+    async def mock_iter(prompt, url=None, model=None, preset=None):
+        yield "Wait, "
+        yield "don't go"
+        # Never reached -- the test closes the generator before a third
+        # token is requested, mirroring a real mid-generation abort.
+        yield " -- I still have more to say."
+
+    with patch(
+        "src.backend.core.engine.llm.LlamaClient.complete_stream",
+        side_effect=mock_iter,
+    ):
+        request = chat_module.ChatRequest(character_id=522, message="hi")
+        response = await chat_module.chat_stream(request, BackgroundTasks(), db_session)
+        body_iter = response.body_iterator
+        first = await body_iter.__anext__()
+        second = await body_iter.__anext__()
+        assert "Wait" in first
+        assert "don't go" in second
+
+        await body_iter.aclose()
+
+    # A completely fresh, separate fetch through the real history endpoint
+    # function (not the same generator, not any in-memory frontend state) --
+    # exactly what a page reload does -- must show the partial reply.
+    history = await chat_module.get_chat_history(522, None, db_session)
+    assistant_messages = [m for m in history if m["role"] == "assistant"]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["content"] == "Wait, don't go"
 
 
 # ---------------------------------------------------------------------------

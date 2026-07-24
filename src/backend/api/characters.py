@@ -25,7 +25,102 @@ MAX_IMPORT_PNG_BYTES = (
     5 * 1024 * 1024
 )  # character-card PNGs are a few KB of text; 5MB is generous
 
+# Longest side (px) a stored avatar is downscaled to on upload. The character
+# grid renders avatars at only 40x40 (CharactersView.tsx), but the Create/Edit
+# Character modal's own preview renders the *stored* avatar_url up to a 200px
+# desktop column (aspect-square) and, stacked full-width below the md
+# breakpoint on mobile, up to roughly 350-400px -- so 512 gives the largest
+# real on-screen use comfortable headroom for ~2x/3x pixel-density screens
+# without keeping the up-to-5MB full-resolution original on disk.
+AVATAR_MAX_DIMENSION = 512
+
+# Upper bound on a source image's declared pixel count (width * height)
+# accepted for avatar processing, checked from the header alone -- before
+# Pillow decodes any pixel data -- so a crafted upload never gets the chance
+# to be fully decoded server-side. 50 megapixels is generous for any real
+# photo (a 48MP phone high-res shot is ~48,000,000) while sitting well below
+# Pillow's own DecompressionBombWarning threshold (~89M pixels, which it
+# only warns on, not blocks) and far below its hard DecompressionBombError
+# threshold (~179M pixels). Without this pre-check, a pixel count between
+# those two Pillow thresholds decodes fully (real memory cost, no error to
+# even catch), and a pixel count above the hard threshold raises
+# DecompressionBombError from inside Image.open() itself, which
+# _save_avatar_image's broad except-fallback below would otherwise swallow
+# and write the still-undecoded original to disk completely unresized --
+# exactly the input the resize feature exists to catch.
+AVATAR_MAX_SOURCE_PIXELS = 50_000_000
+
 router = APIRouter()
+
+
+def _reject_oversized_avatar(content: bytes) -> None:
+    """Raise 413 if `content` is an image whose declared dimensions exceed
+    AVATAR_MAX_SOURCE_PIXELS. Must run before any DB writes and before
+    _save_avatar_image's decode step, so a pathological upload is rejected
+    outright instead of being fully decoded or written to disk unresized.
+
+    Bytes that aren't a decodable image at all are left alone here --
+    _save_avatar_image's existing raw-bytes fallback is what handles those,
+    and there's no pixel count to bound in that case."""
+    from io import BytesIO
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(content)) as img:
+            width, height = img.size
+    except Image.DecompressionBombError:
+        raise HTTPException(
+            status_code=413,
+            detail="Image exceeds the maximum allowed pixel dimensions",
+        )
+    except Exception:
+        return
+
+    if width * height > AVATAR_MAX_SOURCE_PIXELS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Image dimensions ({width}x{height}) exceed the "
+                f"{AVATAR_MAX_SOURCE_PIXELS // 1_000_000}-megapixel limit"
+            ),
+        )
+
+
+def _save_avatar_image(path: str, content: bytes) -> None:
+    """Downscale an uploaded avatar to fit within AVATAR_MAX_DIMENSION x
+    AVATAR_MAX_DIMENSION (longest side, aspect ratio preserved, never
+    upscaled -- Image.thumbnail() is a no-op when the source is already
+    smaller) and store it as an optimized PNG, matching the .png convention
+    already used for every avatar file on disk.
+
+    Callers must run content through _reject_oversized_avatar() first.
+
+    If the upload isn't a decodable image, we fall back to writing the raw
+    bytes unchanged (the endpoint historically had no image-content
+    validation, only a size cap -- this keeps that behavior rather than
+    turning a previously-successful upload into a hard failure)."""
+    try:
+        from io import BytesIO
+        from PIL import Image, ImageOps
+
+        with Image.open(BytesIO(content)) as img:
+            img.load()  # force full decode now, so truncated/bogus data raises here
+            # Bake the EXIF orientation tag into the pixel data before the tag
+            # is discarded by the PNG re-save below -- otherwise a portrait
+            # phone-camera photo (the majority avatar source) renders sideways
+            # or upside down, since PNG has no EXIF-orientation convention and
+            # nothing downstream applies it.
+            img = ImageOps.exif_transpose(img)
+            if img.mode == "CMYK":
+                img = img.convert("RGB")
+            img.thumbnail((AVATAR_MAX_DIMENSION, AVATAR_MAX_DIMENSION), Image.LANCZOS)
+            img.save(path, format="PNG", optimize=True)
+        return
+    except Exception:
+        pass
+
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 class DescriptionRequest(BaseModel):
@@ -142,6 +237,10 @@ async def create_character(char: CharacterUpsert, db: Session = Depends(get_db))
 @router.post("/import-png", response_model=CharacterResponse)
 async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)):
     content = await _read_upload_within_limit(file, "Character card")
+    # Reject a pixel-dimension bomb before any DB row is created, not just
+    # before the resize step -- so a pathological card never leaves an
+    # orphaned Character row behind.
+    _reject_oversized_avatar(content)
     card = _parse_card_or_422(content)
 
     description = card.data.description
@@ -170,12 +269,11 @@ async def import_png(file: UploadFile = File(...), db: Session = Depends(get_db)
     db.commit()
     db.refresh(new_char)
 
-    # Save the original image
+    # Save the card's embedded image as the character's avatar (downscaled).
     import os
 
     os.makedirs("static/avatars", exist_ok=True)
-    with open(f"static/avatars/{new_char.id}.png", "wb") as f:
-        f.write(content)
+    _save_avatar_image(f"static/avatars/{new_char.id}.png", content)
 
     # Initialize state and seed the opening greeting into a first chat so the
     # imported card's intro shows immediately (SEC-02).
@@ -422,12 +520,12 @@ async def upload_character_avatar(
 ):
     char = get_or_404(db, Character, char_id, "Character")
     content = await _read_upload_within_limit(file, "Avatar image")
+    _reject_oversized_avatar(content)
 
     import os
 
     os.makedirs("static/avatars", exist_ok=True)
-    with open(f"static/avatars/{char.id}.png", "wb") as f:
-        f.write(content)
+    _save_avatar_image(f"static/avatars/{char.id}.png", content)
 
     # No DB row is modified here (the avatar is a file on disk), so there is
     # nothing to commit.

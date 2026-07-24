@@ -18,3 +18,16 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+// Register the PWA service worker for offline shell resilience. Guarded so
+// it is a no-op in dev/test: `vite-plugin-pwa` only emits a service worker
+// on a real `vite build` (import.meta.env.PROD), and the `serviceWorker`
+// feature check keeps this inert under Vitest's jsdom environment (which
+// has no navigator.serviceWorker) and in any browser without SW support.
+// The dynamic import means 'virtual:pwa-register' is never resolved at all
+// outside this branch, so it costs nothing in dev/test.
+if (import.meta.env.PROD && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  import('virtual:pwa-register').then(({ registerSW }) => {
+    registerSW({ immediate: true })
+  })
+}

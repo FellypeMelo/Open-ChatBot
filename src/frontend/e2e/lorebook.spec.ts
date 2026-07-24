@@ -20,9 +20,9 @@ test.describe('Lorebook Management E2E', () => {
     await page.fill('input[placeholder="Search lore..."]', 'E2E-Lore');
     await expect(page.locator('text=E2E-Lore')).toBeVisible();
 
-    // Delete the entry
-    page.on('dialog', dialog => dialog.accept());
+    // Delete the entry (in-app ConfirmDialog, not a native browser dialog)
     await page.click('button:has-text("delete")');
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
 
     // Verify deletion
     await expect(page.locator('text=E2E-Lore')).not.toBeVisible();

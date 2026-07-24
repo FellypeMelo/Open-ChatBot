@@ -127,7 +127,15 @@ const CharactersView: React.FC<CharactersViewProps> = ({
                           {/* Avatar icon */}
                           <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center font-mono text-xs text-[#A1A1AA] font-bold shadow-inner relative overflow-hidden">
                             {character.avatar_url ? (
-                              <img src={character.avatar_url} alt={character.name} className="w-full h-full object-cover" />
+                              <img
+                                src={character.avatar_url}
+                                alt={character.name}
+                                width={40}
+                                height={40}
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full h-full object-cover"
+                              />
                             ) : (
                               character.name.substring(0, 2).toUpperCase()
                             )}

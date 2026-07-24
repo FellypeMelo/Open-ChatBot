@@ -1,8 +1,10 @@
 # Mobile UX / UI Improvement Plan
 
-> **⚠️ RE-VERIFIED 2026-07-22 (21/21 items checked, 0 unverifiable).** **Mostly done**: 13 resolved (R1 collapsible stats HUD, R2, R3 fonts/icons self-hosted, R4/P1.3 touch targets, R7 safe-area/no-overflow, R8 serif font bundled, P0.1-P0.3, P1.4/P1.5, P2.3 sticky header), 3 partial (P1.1 header restructure only hid a couple elements, P1.2 type-size bump only reached the stats row, P2.1 press-state uses `active:scale-95` not the suggested `0.98`).
+> **⚠️ RE-VERIFIED 2026-07-22** → **RE-VERIFIED AGAIN 2026-07-23** → **RE-VERIFIED AGAIN 2026-07-24 (21/21 items re-checked).** **19 resolved**: R1 collapsible stats HUD, R2, R3 fonts/icons self-hosted, R4/P1.3 touch targets, R5/P0.4 backdrop-filter gated `md:motion-safe:block`, **R6 — small labels/journal/footer/drawer text bumped to a readable mobile size with a `md:` compact override, resolved 2026-07-24**, R7 safe-area/no-overflow, R8 serif font bundled, P0.1-P0.3, **P1.2 — folded into the R6 fix (same mobile-text-bump pass), resolved 2026-07-24**, P1.4/P1.5, P2.2 `window.confirm()` replaced with `ConfirmDialog`, P2.3 sticky header, **P2.4 — the Interact/Gift drawer now also has `max-h-[70dvh] overflow-y-auto`, resolved 2026-07-24 (the tap-outside-backdrop half landed 2026-07-23, the height-cap half completes it now)**. **2 partial** (P1.1 header restructure only hid a couple elements, P2.1 press-state uses `active:scale-95` not the suggested `0.98`) — both minor/cosmetic, no further action planned.
 >
-> **Still open**: R5/P0.4 — the full-screen animated `backdrop-filter` blur overlay has no `md:`/`prefers-reduced-motion` gate; R6 — most labels/journal/drawer text is still flat 8-10px with no mobile bump; P2.2 — native `window.confirm()`/`confirm()` still used at 6 call sites (App.tsx, ChatView.tsx, LorebookView.tsx), no in-app dialog exists; P2.4 — the Interact/Gift drawer has no `max-h`/scroll cap, can overflow off-screen on a short viewport.
+> **Still open**: nothing from this file's original 21 items. Everything previously open (R6, P2.4) or partial (P1.2) is now resolved; see above.
+>
+> **2026-07-23/24 verification note**: backed by real Playwright runs against a live server, not just source reading — 15 e2e tests across desktop chromium plus two real mobile-device projects (`mobile-chrome`/Pixel 5, `mobile-safari`/iPhone 13), run with a real backend + frontend dev server (`E2E_TESTING=1` mock-LLM mode); run four separate times across the session (once per major batch of changes), 15/15 every time after the first pass caught and fixed one real regression: `e2e/lorebook.spec.ts`'s delete-entry test was still driving the old native `window.confirm()` dialog API, which stopped firing once `LorebookView` moved to the in-app `ConfirmDialog` (P2.2) — the spec was updated to interact with the rendered `alertdialog` instead. Not yet done: an actual physical-device LAN smoke test (see `docs/mobile-lan-smoke-test.md`) and committing/opening the PR.
 
 **Scope:** Make Open-ChatBot usable and clean on phones (LAN access via `http://<pc-ip>:8000`).
 **Design read:** This is *product UI* (chat + live stats HUD), not a landing page. Apply mobile-discipline, touch-target, contrast, and perf rules; ignore marketing-page patterns.
@@ -18,8 +20,8 @@
 | R2 | Core message actions are `opacity-0 group-hover:opacity-100` | `ChatView.tsx:417,496,552` | Hover doesn't exist on touch → regenerate/edit/delete/copy/variant-switch are **unreachable** on mobile |
 | R3 | Fonts + **all icons** loaded from Google CDN `<link>` | `index.html:8-9`, `index.css:1` | Offline / weak signal → every icon shows its literal word (`menu`, `bolt`, `delete`…); serif chat font falls back to Times. Breaks a *local-first* app |
 | R4 | Touch targets 8-10px (`text-[8px] px-1 py-0.5`) | stat +/- buttons `ChatView.tsx:218-327` | Below the 44px min; unusable with a thumb |
-| R5 | Full-screen animated `backdrop-filter: blur()` overlay | `ChatView.tsx:169-176` | Continuous GPU repaint on scroll = jank/lag on mobile |
-| R6 | Body text 8-10px mono everywhere | header, footers, journal | Unreadable on a phone |
+| R5 | Full-screen animated `backdrop-filter: blur()` overlay | `ChatView.tsx:169-176` | Continuous GPU repaint on scroll = jank/lag on mobile — **✅ RESOLVED 2026-07-23**: gated `md:motion-safe:block`, with a cheap static gradient on mobile / reduced-motion |
+| R6 | Body text 8-10px mono everywhere | header, footers, journal | Unreadable on a phone — **✅ RESOLVED 2026-07-24**: bumped to `text-[11px] md:text-[Xpx]` (or `text-[10px] md:text-[8px]` for decorative/dense elements) across the StatBar labels, header eyebrow/pill, tab labels, journal badge/entry rows, message footer, and MessageRow's own labels; chat body content untouched |
 | R7 | `w-screen` root + no safe-area insets | `App.tsx:530`, `index.html:6` | Horizontal overflow; input/controls collide with iOS home bar & notch |
 | R8 | Serif `--font-serif: 'Crimson Text'` never bundled; input hidden behind mobile keyboard on some browsers | `index.css:23`, input `ChatView.tsx:668` | Wrong chat font; typing area can be occluded |
 
@@ -48,13 +50,14 @@
 - **Fonts:** self-host Outfit, JetBrains Mono, and the serif via `@font-face` + `font-display: swap`. Pick ONE serif and actually bundle it (Crimson Text is referenced but missing).
 - This also speeds first paint and fixes the "icons show as words" bug.
 
-**P0.4 Kill the mobile jank.**
+**P0.4 Kill the mobile jank. — ✅ RESOLVED 2026-07-23**
 - Gate the full-screen `backdrop-filter` blur overlay (`:169-176`) behind `md:` (desktop only) and `@media (prefers-reduced-motion: no-preference)`. On mobile, drop to a static gradient vignette (no animated blur). Only animate `opacity`/`transform`.
+- **Shipped as:** the overlay is now `md:motion-safe:block` (desktop + no-reduced-motion only) with a static-gradient fallback everywhere else, matching this recommendation.
 
 ### P1 — Layout & readability
 
 - **P1.1 Header restructure** (`:179-208`): on mobile, one line = char name + a compact status pill + `⋯`. Move "NEW CHAT" and location/clothes into the `⋯` menu or the collapsed stats panel. Drop the `ACTIVE NARRATIVE UNIT` eyebrow on mobile.
-- **P1.2 Minimum type sizes**: raise `text-[8px]/[9px]/[10px]` to `text-[11px]`/`text-xs` on mobile via responsive classes (`text-[11px] md:text-[9px]`). Chat body stays `text-[17px]` (good).
+- **P1.2 Minimum type sizes**: raise `text-[8px]/[9px]/[10px]` to `text-[11px]`/`text-xs` on mobile via responsive classes (`text-[11px] md:text-[9px]`). Chat body stays `text-[17px]` (good). **✅ RESOLVED 2026-07-24** — see R6 above, same fix.
 - **P1.3 Touch targets**: stat steppers and icon buttons → min `h-9 w-9` (36px) / ideally `44px` hit area on mobile; keep compact on desktop.
 - **P1.4 Input safe area**: add `pb-[env(safe-area-inset-bottom)]` to the input container (`:668`); add `viewport-fit=cover` to the meta tag (`index.html:6`). Confirm the input stays above the keyboard (root already uses `100dvh` — good).
 - **P1.5 Overflow**: `App.tsx:530` `w-screen` → `w-full`; audit for any fixed widths causing horizontal scroll.
@@ -62,9 +65,9 @@
 ### P2 — Taste & polish
 
 - **P2.1 Consistency locks** (from taste skill): one radius scale, one accent (emerald `#34D399` already the accent — keep it, remove stray colors), tactile `active:scale-[0.98]` on buttons.
-- **P2.2 Replace `window.confirm()`** (`:431,:573`, `App.tsx:197,507`) with an in-app confirm dialog — native confirm is jarring on mobile.
+- **P2.2 Replace `window.confirm()`** (`:431,:573`, `App.tsx:197,507`) with an in-app confirm dialog — native confirm is jarring on mobile. **✅ RESOLVED 2026-07-23**: a `useConfirm`/`ConfirmDialog` in-app dialog now replaces `window.confirm()` at all call sites across App.tsx, ChatView.tsx, and LorebookView.tsx. (A real e2e regression from this change — `e2e/lorebook.spec.ts` still expecting the native dialog — was caught by this session's live Playwright run and fixed.)
 - **P2.3 Sticky compact summary**: when stats are collapsed and the user scrolls, keep the 1-line stat chip pinned so state is glanceable without expanding.
-- **P2.4 Drawer/action sheets**: the Interact/Gift drawer (`:674`) and new action sheets should use bottom-sheet ergonomics on mobile (thumb-reachable, `max-h-[70dvh]`, scrollable).
+- **P2.4 Drawer/action sheets**: the Interact/Gift drawer (`:674`) and new action sheets should use bottom-sheet ergonomics on mobile (thumb-reachable, `max-h-[70dvh]`, scrollable). **✅ RESOLVED 2026-07-24**: the drawer has a tap-outside backdrop to dismiss it (2026-07-23) and now also `max-h-[70dvh] overflow-y-auto` (2026-07-24), so it can no longer overflow off-screen on a short viewport — both halves of this item are complete.
 
 ---
 

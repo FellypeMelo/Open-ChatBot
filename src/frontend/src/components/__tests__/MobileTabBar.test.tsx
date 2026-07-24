@@ -25,4 +25,15 @@ describe('MobileTabBar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Tags/ }))
     expect(setView).toHaveBeenCalledWith('archives')
   })
+
+  it('stays on-screen by default and slides off-screen when hidden (immersive reading)', () => {
+    const { rerender } = render(<MobileTabBar currentView="chat" setView={vi.fn()} />)
+    const nav = screen.getByRole('navigation', { name: 'Primary' })
+    expect(nav.className).toContain('translate-y-0')
+    expect(nav.className).not.toContain('translate-y-full')
+
+    rerender(<MobileTabBar currentView="chat" setView={vi.fn()} hidden />)
+    expect(nav.className).toContain('translate-y-full')
+    expect(nav.className).toContain('pointer-events-none')
+  })
 })

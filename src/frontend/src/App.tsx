@@ -42,7 +42,12 @@ const TOAST_DURATION_MS = 3000
 // No token for this long during a stream -> treat the connection as dead and
 // abort. Generous and reset on every token (not a hard total cap) so a slow
 // first-token on a cold/loaded model isn't mistaken for a dropped Wi-Fi link.
-const STREAM_IDLE_TIMEOUT_MS = 45000
+// Sized for a slow self-hosted llama-server on modest hardware (CPU/iGPU),
+// where the first token after a cold prompt can legitimately take well over a
+// minute. The timer is ALSO reset the moment the response headers arrive (see
+// runStream), so slow backend pre-work -- RAG embedding, prompt assembly --
+// never eats into this first-token budget.
+const STREAM_IDLE_TIMEOUT_MS = 120000
 
 // Thrown from inside the SSE event handler when the backend's `error_stream`/
 // mid-generation error event fires, so runStream's catch can distinguish a
@@ -83,6 +88,10 @@ function App() {
   const [currentView, setCurrentView] = useState<View>('characters')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const isMobile = useIsMobile()
+  // Mobile immersive reading: driven by ChatView's scroll direction. When true
+  // the app top bar and bottom tab bar collapse so the transcript owns nearly
+  // the whole phone screen; restored on a deliberate upward scroll.
+  const [immersive, setImmersive] = useState(false)
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [characters, setCharacters] = useState<Character[]>([])
@@ -101,6 +110,12 @@ function App() {
   // Holds the in-flight stream's AbortController so a Stop action or an idle
   // timeout can cancel it; cleared once the stream settles.
   const streamAbortRef = useRef<AbortController | null>(null)
+  // Length of the assistant reply streamed so far this turn, updated
+  // synchronously per token. Read by reconcileInterruptedStream (which runs in
+  // the abort path, before React has flushed the committed partial into
+  // `messages`) to know whether the interrupted turn left a non-empty partial
+  // that the server must have persisted before we swap its history in.
+  const streamedLenRef = useRef(0)
   // The in-flight assistant reply's accumulated text, updated once per SSE
   // token. Kept OUTSIDE `messages` so a token never triggers a new `messages`
   // array reference -- ChatView's useMessageTree would otherwise rebuild its
@@ -131,6 +146,10 @@ function App() {
   const activeChatIdRef = useRef<number | null>(null)
   useEffect(() => { selectedCharIdRef.current = selectedCharId }, [selectedCharId])
   useEffect(() => { activeChatIdRef.current = activeChatId }, [activeChatId])
+  // Latest messages, read synchronously from async reconcile paths that must
+  // NOT capture a stale closure (see reconcileInterruptedStream).
+  const messagesRef = useRef<MessageNode[]>([])
+  useEffect(() => { messagesRef.current = messages }, [messages])
 
   // Aborts any in-flight stream and immediately resets its state. Called
   // whenever the app is about to swap out `messages` for a different
@@ -321,6 +340,13 @@ function App() {
     }
   }, [selectedCharId, fetchHistory, loadChats]) // Re-run when character changes
 
+  // Immersive mode is a chat-only, mobile-only affordance; never let it stay
+  // latched after navigating away or resizing up to desktop. Reset during
+  // render (not an effect) so the bars are already restored on that frame.
+  if (immersive && (currentView !== 'chat' || !isMobile)) {
+    setImmersive(false)
+  }
+
   const updateUser = async (name: string, gender: string, persona: string, appearance: string) => {
     try {
       const data = await api.updateUser(name, gender, persona, appearance)
@@ -486,18 +512,34 @@ function App() {
     setIsLoading(true)
     setStreamingContent('')
     setStreamingMessageId(messageId)
+    streamedLenRef.current = 0
     resetIdleTimer()
     try {
       const response = await start(controller.signal)
+      // Headers are here -> the backend's pre-stream work (RAG embedding,
+      // prompt build) is done. Give the FIRST token its own full idle budget
+      // rather than whatever was left after that work, so a slow local model
+      // isn't falsely timed out before it emits anything.
+      resetIdleTimer()
       await handleStreamResponse(messageId, charId, chatId, response, controller.signal, resetIdleTimer)
     } catch (err) {
       if (err instanceof StreamError) {
         showToast(err.message || 'The AI reported an error.', 'error')
+        // Terminal interrupt: reconcile temp ids -> real ids without wiping the
+        // partial the user just saw. Fire-and-forget so the Stop->Send button
+        // reverts immediately (isLoading clears in `finally`); it self-guards
+        // against a new turn started meanwhile (see reconcileInterruptedStream).
+        void reconcileInterruptedStream(charId, chatId)
       } else if (controller.signal.aborted) {
         showToast(
           timedOut ? 'Response timed out. Check your connection.' : 'Generation stopped.',
           timedOut ? 'error' : 'success'
         )
+        // Stop button / idle timeout: both terminal (no retry). Reconcile the
+        // real ids in, race-safe against the backend's teardown partial-save.
+        // NOT done for the retryable connection-lost branch below, which must
+        // keep the temp placeholder so its onRetry can re-drive this same turn.
+        void reconcileInterruptedStream(charId, chatId)
       } else {
         // Retries the exact same turn: `start` is the same signal-taking
         // closure runStream was originally called with, so this re-issues
@@ -563,6 +605,57 @@ function App() {
     // must be applied, not treated as a stale/incomplete background read.
     if (charId !== selectedCharIdRef.current || (chatId ?? null) !== activeChatIdRef.current) return
     setMessages(history)
+  }
+
+  // Reconcile the optimistic temp-id nodes to the backend's real ids after an
+  // INTERRUPTED stream (Stop / idle-timeout / mid-stream error). The backend
+  // persists the user turn + whatever partial reply streamed, but that partial
+  // save happens during the server's request teardown, which can land just
+  // AFTER our first refetch would. A naive immediate refetch therefore races
+  // it and briefly REPLACES the on-screen turn with a server history that
+  // doesn't have the assistant reply yet -- i.e. the partial the user just
+  // watched stream visibly vanishes. That was the "cancel is broken" bug.
+  //
+  // So: if we're showing a non-empty partial, poll until the server history has
+  // caught up to (>=) what we're showing before swapping it in; otherwise apply
+  // immediately (nothing to protect). Identity-guarded on every await so a
+  // character/chat switch mid-reconcile can't clobber the new view.
+  const reconcileInterruptedStream = async (charId: number, chatId: number | undefined) => {
+    const chatIdOrNull = chatId ?? null
+    // Node COUNT is reliable here even though message CONTENT isn't yet flushed
+    // to `messages`: the optimistic user+assistant nodes were appended (and the
+    // ref updated) before the stream started; the partial only MUTATED an
+    // existing node's content, never changed the count. If we streamed a
+    // non-empty partial, the server must include that assistant node before we
+    // adopt its history (`target` = full local count); if nothing streamed, the
+    // server legitimately has no assistant node, so adopt one node short.
+    const hadPartial = streamedLenRef.current > 0
+    const target = messagesRef.current.length
+    for (let attempt = 0; attempt < 5; attempt++) {
+      let data: MessageNode[]
+      try {
+        data = await api.fetchHistory(charId, chatId)
+      } catch {
+        return
+      }
+      // Bail if the view moved on OR a fresh turn is already streaming --
+      // applying this now-stale server history would clobber the new turn's
+      // optimistic nodes (runs fire-and-forget, so a new send can race it).
+      if (charId !== selectedCharIdRef.current || chatIdOrNull !== activeChatIdRef.current) return
+      if (streamAbortRef.current) return
+      // Nothing streamed -> nothing to protect, adopt immediately. Otherwise
+      // wait until the server history includes the persisted partial (its node
+      // count has caught up) so we never briefly wipe the on-screen partial.
+      if (!hadPartial || data.length >= target) {
+        setMessages(data)
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    // Backend never caught up within the window (partial persist genuinely
+    // failed or was skipped): keep the local partial on screen rather than
+    // wiping it to an empty server history. Its temp id self-heals on the next
+    // successful turn's reconcile -- losing the visible partial is worse.
   }
 
   const handleSend = async (explicitParentId?: number) => {
@@ -679,6 +772,7 @@ function App() {
       if (data.token) {
         onToken?.()
         fullContent += data.token
+        streamedLenRef.current = fullContent.length
         // Dedicated streaming state, NOT the messages array -- see
         // streamingContent's declaration for why.
         setStreamingContent(fullContent)
@@ -878,11 +972,15 @@ function App() {
         />
 
         <main
-          className="flex-1 h-full overflow-hidden flex flex-col min-w-0"
-          style={isMobile ? { paddingBottom: 'calc(3.5rem + env(safe-area-inset-bottom))' } : undefined}
+          className="flex-1 h-full overflow-hidden flex flex-col min-w-0 transition-[padding] duration-300"
+          style={isMobile ? { paddingBottom: immersive ? 'env(safe-area-inset-bottom)' : 'calc(3.5rem + env(safe-area-inset-bottom))' } : undefined}
         >
-          {/* Mobile Top Header */}
-          <header className="md:hidden flex items-center justify-between px-md py-sm bg-[#0A0A0B]/90 backdrop-blur border-b border-white/5 z-30 shrink-0">
+          {/* Mobile Top Header. Collapses to zero height in immersive reading
+              mode (scrolled down into a chat) so the transcript owns the screen;
+              restored on a deliberate upward scroll. */}
+          <header className={`md:hidden flex items-center justify-between px-md bg-[#0A0A0B]/90 backdrop-blur z-30 shrink-0 overflow-hidden transition-all duration-300 ${
+            immersive ? 'max-h-0 py-0 opacity-0 pointer-events-none border-b-0' : 'max-h-16 py-sm border-b border-white/5'
+          }`}>
             <button
               onClick={() => setIsSidebarOpen(true)}
               aria-label="Open menu"
@@ -947,6 +1045,7 @@ function App() {
               onNewChat={handleNewChat}
               onSelectChat={handleSelectChat}
               onDeleteChat={handleDeleteChat}
+              onImmersiveChange={setImmersive}
             />
           )}
 
@@ -977,6 +1076,7 @@ function App() {
           <MobileTabBar
             currentView={currentView}
             setView={(v) => setCurrentView(v as View)}
+            hidden={immersive}
           />
         )}
 

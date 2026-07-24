@@ -687,6 +687,69 @@ describe('ChatView', () => {
     expect(screen.getByText('Hi there')).toBeInTheDocument()
   })
 
+  it('collapses the HUD on downward scroll, ignores small upward nudges, and re-expands on a deliberate upward scroll (mobile)', async () => {
+    // Force useIsMobile's mobile branch (setup.ts defaults matchMedia to no-match).
+    const realMatchMedia = window.matchMedia
+    window.matchMedia = ((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+    const onImmersiveChange = vi.fn()
+    try {
+      const messages: MessageNode[] = [
+        userMsg,
+        { id: 2, parent_id: 1, role: 'assistant', content: 'Hi there', variant_index: 0 },
+      ]
+      const { container } = render(
+        <ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} onImmersiveChange={onImmersiveChange} />
+      )
+      const main = container.querySelector('main') as HTMLElement
+      const scrollTo = (value: number) => {
+        Object.defineProperty(main, 'scrollTop', { value, configurable: true })
+        fireEvent.scroll(main)
+      }
+
+      // Scroll down -> HUD collapses (immersive on).
+      scrollTo(300)
+      await waitFor(() => expect(onImmersiveChange).toHaveBeenLastCalledWith(true))
+
+      // Small upward nudges (15px + 15px, well under the 140px reveal
+      // threshold) must NOT bring it back -- this was the twitchy behavior.
+      onImmersiveChange.mockClear()
+      scrollTo(285)
+      scrollTo(270)
+      expect(onImmersiveChange).not.toHaveBeenCalledWith(false)
+
+      // A deliberate upward scroll past the threshold re-expands it.
+      scrollTo(110)
+      await waitFor(() => expect(onImmersiveChange).toHaveBeenLastCalledWith(false))
+    } finally {
+      window.matchMedia = realMatchMedia
+    }
+  })
+
+  it('keeps the HUD pinned on desktop regardless of scroll direction', () => {
+    const onImmersiveChange = vi.fn()
+    const messages: MessageNode[] = [
+      userMsg,
+      { id: 2, parent_id: 1, role: 'assistant', content: 'Hi there', variant_index: 0 },
+    ]
+    const { container } = render(
+      <ChatView {...defaultProps} activeChar={baseCharacter} messages={messages} onImmersiveChange={onImmersiveChange} />
+    )
+    const main = container.querySelector('main') as HTMLElement
+    Object.defineProperty(main, 'scrollTop', { value: 500, configurable: true })
+    fireEvent.scroll(main)
+    // Desktop (matchMedia no-match) never collapses -- only the initial false.
+    expect(onImmersiveChange).not.toHaveBeenCalledWith(true)
+  })
+
   it('shows the location/clothes badge when present on the character state', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const character = withStats()

@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react'
 import Icon from './Icon'
 import IconButton from './IconButton'
 import MessageRow from './MessageRow'
+import { useIsMobile } from '../hooks/useIsMobile'
 import { useMessageTree } from '../hooks/useMessageTree'
 import type { MessageNode } from '../hooks/useMessageTree'
 import { useTokenQueue } from '../hooks/useTokenQueue'
@@ -125,6 +126,10 @@ interface ChatViewProps {
   onNewChat?: (greetingIndex?: number) => void
   onSelectChat?: (chatId: number) => void
   onDeleteChat?: (chatId: number) => void
+  // Mobile immersive reading: fired `true` when the HUD collapses (scrolling
+  // down into the transcript) and `false` when it returns, so the parent can
+  // hide the app top bar + bottom tab bar in sync. No-op on desktop.
+  onImmersiveChange?: (immersive: boolean) => void
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
@@ -148,13 +153,22 @@ const ChatView: React.FC<ChatViewProps> = ({
   greetings = [],
   onNewChat,
   onSelectChat,
-  onDeleteChat
+  onDeleteChat,
+  onImmersiveChange
 }) => {
   // Which opening greeting seeds the next "New Chat" (only relevant when the
   // character has more than one greeting).
   const [greetingChoice, setGreetingChoice] = useState(0)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const isMobile = useIsMobile()
+  // Mobile immersive reading: the HUD collapses when scrolling down into the
+  // transcript so the story owns the screen. It comes back only on a
+  // DELIBERATE upward scroll (accumulated past a threshold) or near the very
+  // top -- a tiny nudge up must NOT re-expand it (that was the twitchy feel).
+  const [hudCollapsed, setHudCollapsed] = useState(false)
+  const lastScrollTopRef = useRef(0)
+  const upAccumRef = useRef(0)
   const { activePath, nextVariant, prevVariant, getSiblings } = useMessageTree(messages)
   const { playTypewriterClick, resumeAudio, playAmbient, stopAmbient } = useAudio()
   const { displayedContent, enqueue, reset, isDraining } = useTokenQueue(20, playTypewriterClick)
@@ -222,6 +236,44 @@ const ChatView: React.FC<ChatViewProps> = ({
     const offset = 100
     const atBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + offset
     setIsAtBottom(atBottom)
+
+    // Immersive reading (mobile only). Hysteresis so it doesn't flip on jitter:
+    //  - near the top -> always expanded (and reset the up-scroll accumulator),
+    //  - scrolling down past a small margin -> collapse, clearing the accumulator
+    //    so a later reveal needs a fresh deliberate up-swipe,
+    //  - scrolling up -> accumulate the distance and only re-expand once it
+    //    passes UP_REVEAL_PX; small upward nudges never cross it.
+    if (!isMobile) return
+    const TOP_ZONE_PX = 56
+    const UP_REVEAL_PX = 140
+    const st = el.scrollTop
+    const delta = st - lastScrollTopRef.current
+    lastScrollTopRef.current = st
+    if (st < TOP_ZONE_PX) {
+      upAccumRef.current = 0
+      setHudCollapsed(false)
+    } else if (delta > 4) {
+      upAccumRef.current = 0
+      setHudCollapsed(true)
+    } else if (delta < 0) {
+      upAccumRef.current += -delta
+      if (upAccumRef.current > UP_REVEAL_PX) setHudCollapsed(false)
+    }
+  }
+
+  // Tell the parent so it can hide the app top bar + bottom tab bar in sync.
+  useEffect(() => {
+    onImmersiveChange?.(hudCollapsed)
+  }, [hudCollapsed, onImmersiveChange])
+
+  // Never leave the HUD stuck collapsed across a context change (new character,
+  // or flipping to the Journal tab). Render-time reset (React's documented
+  // "adjust state on prop change" pattern), so it applies before paint.
+  const contextKey = `${activeChar?.id ?? ''}:${currentTab}`
+  const [hudContextKey, setHudContextKey] = useState(contextKey)
+  if (contextKey !== hudContextKey) {
+    setHudContextKey(contextKey)
+    if (hudCollapsed) setHudCollapsed(false)
   }
 
   useEffect(() => {
@@ -345,14 +397,19 @@ const ChatView: React.FC<ChatViewProps> = ({
       <div className="absolute inset-0 pointer-events-none z-0 bg-gradient-to-b from-transparent via-transparent to-background/60" />
       
       {/* Floating HUD Header */}
-      <header className="bg-[#0A0A0B]/80 backdrop-blur-md border-b border-white/5 flex-none z-10 w-full transition-opacity duration-500" style={{ opacity: textOpacity }}>
-        <div className="max-w-[850px] mx-auto w-full px-md md:px-lg py-sm flex flex-col gap-2">
+      <header
+        className={`bg-[#0A0A0B]/80 backdrop-blur-md border-white/5 flex-none z-10 w-full overflow-hidden transition-all duration-300 ${
+          hudCollapsed ? 'max-h-0 -translate-y-1 pointer-events-none border-b-0' : 'max-h-[80vh] border-b'
+        }`}
+        style={{ opacity: hudCollapsed ? 0 : textOpacity }}
+      >
+        <div className="max-w-[850px] mx-auto w-full px-md md:px-lg py-xs md:py-sm flex flex-col gap-1.5 md:gap-2">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-xs sm:gap-none">
             <div className="flex flex-col">
               <span className="hidden sm:block font-label-sm text-[11px] md:text-[9px] uppercase tracking-[0.25em] text-[#71717A]">
                 ACTIVE NARRATIVE UNIT
               </span>
-              <h1 className="font-sans text-xl font-extrabold text-white tracking-tight leading-none mt-0.5">
+              <h1 className="font-sans text-base md:text-xl font-extrabold text-white tracking-tight leading-none mt-0.5">
                 {activeChar?.name || 'Narrative Core'}
               </h1>
             </div>
@@ -500,7 +557,7 @@ const ChatView: React.FC<ChatViewProps> = ({
           )}
 
           {/* Tab Selector */}
-          <div className="flex border-t border-white/5 pt-2 mt-2 gap-4 select-none">
+          <div className="flex border-t border-white/5 pt-1.5 mt-1.5 md:pt-2 md:mt-2 gap-4 select-none">
             <button
               type="button"
               onClick={() => setCurrentTab('chat')}
@@ -538,11 +595,13 @@ const ChatView: React.FC<ChatViewProps> = ({
         className="flex-1 overflow-y-auto w-full flex flex-col items-center custom-scrollbar z-[1] transition-opacity duration-500"
         style={{ opacity: textOpacity }}
       >
-        <div className="w-full max-w-[850px] px-md md:px-lg py-lg flex flex-col gap-md">
+        <div className="w-full max-w-[850px] px-md md:px-lg py-sm md:py-lg flex flex-col gap-md">
           {currentTab === 'chat' ? (
             <>
-              {/* History divider */}
-              <div className="w-full flex items-center justify-center gap-sm py-2 opacity-30 select-none">
+              {/* History divider. Hidden on mobile: it's decorative and the
+                  transcript should own the phone viewport (~80%), so every
+                  non-essential row of chrome above the first message is cut. */}
+              <div className="hidden md:flex w-full items-center justify-center gap-sm py-2 opacity-30 select-none">
                 <div className="h-px bg-white/10 flex-1" />
                 <span className="font-mono text-[10px] md:text-[8px] uppercase tracking-[0.3em] text-[#71717A]">
                   Narrative Ingest
@@ -806,7 +865,9 @@ const ChatView: React.FC<ChatViewProps> = ({
               )}
             </div>
           </div>
-          <div className="text-center">
+          {/* Desktop-only helper: on a phone there's no Shift+Enter and the
+              line just steals vertical space from the transcript. */}
+          <div className="hidden md:block text-center">
             <span className="font-mono text-[11px] md:text-[9px] uppercase tracking-wider text-[#71717A]">
               Shift + Enter for multi-line. Direct stream enabled.
             </span>

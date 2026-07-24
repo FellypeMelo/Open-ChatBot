@@ -1464,6 +1464,114 @@ describe('App', () => {
     expect(await screen.findByText('arrow_upward')).toBeInTheDocument()
   })
 
+  it('refetches history after a stopped stream so optimistic temp ids reconcile to the real persisted turn', async () => {
+    // Regression: stopping mid-stream used to leave the turn's optimistic
+    // user+assistant nodes carrying temporary client ids while the backend
+    // persisted the partial reply under REAL ids. A later edit/delete/
+    // regenerate then 404'd on the temp id, wedging the chat. The Stop path
+    // must refetch history to swap the temp nodes for the real persisted turn.
+    let historyCalls = 0
+    const persistedTurn = [
+      { id: 33, parent_id: null, role: 'user', content: 'Hi Luna', variant_index: 0 },
+      { id: 34, parent_id: 33, role: 'assistant', content: 'Persisted partial reply', variant_index: 0 },
+    ]
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        const stream = new ReadableStream<Uint8Array>({ start() {} }) // hung
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) {
+        historyCalls += 1
+        // Empty on the initial load; the backend's real persisted turn once
+        // the stopped stream triggers the reconciling refetch.
+        return mockResponse(historyCalls === 1 ? [] : persistedTurn)
+      }
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    const stopBtn = await screen.findByRole('button', { name: 'Stop generating' })
+    await act(async () => {
+      fireEvent.click(stopBtn)
+    })
+
+    // The stopped turn triggers a second /history/ read whose real-id nodes
+    // replace the optimistic temp-id placeholders.
+    await waitFor(() => expect(historyCalls).toBeGreaterThanOrEqual(2))
+    expect(await screen.findByText('Persisted partial reply')).toBeInTheDocument()
+  })
+
+  it('never wipes a streamed partial on Stop while the backend is still persisting it (race-safe reconcile)', async () => {
+    // Regression for the "cancel is broken" report: an immediate refetch on
+    // Stop could win the race against the backend's teardown partial-save and
+    // briefly REPLACE the turn with a history missing the assistant reply --
+    // the partial the user just watched stream visibly vanished. The reconcile
+    // must wait for the server to catch up before adopting it.
+    let historyCalls = 0
+    const persisted = [
+      { id: 40, parent_id: null, role: 'user', content: 'Hi Luna', variant_index: 0 },
+      { id: 41, parent_id: 40, role: 'assistant', content: 'Streamed partial', variant_index: 0 },
+    ]
+    vi.mocked(fetch).mockImplementation((url, options) => {
+      const u = String(url)
+      if (u === '/chat/stream' && options?.method === 'POST') {
+        // Emit one token, then stay open (never close) so Stop lands mid-stream
+        // with a non-empty partial already on screen.
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"token": "Streamed partial"}\n\n'))
+          },
+        })
+        return Promise.resolve({ body: stream, ok: true } as unknown as Response)
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) {
+        historyCalls += 1
+        // 1 = initial load (empty). 2 = first reconcile poll: backend has only
+        // the user turn so far (assistant not persisted yet -> "short"). 3+ =
+        // caught up with the persisted partial.
+        if (historyCalls === 1) return mockResponse([])
+        if (historyCalls === 2) return mockResponse([persisted[0]])
+        return mockResponse(persisted)
+      }
+      return mockResponse({})
+    })
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    const input = await screen.findByPlaceholderText(/Write a prompt for Luna/)
+    fireEvent.change(input, { target: { value: 'Hi Luna' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('arrow_upward').closest('button')!)
+    })
+
+    const stopBtn = await screen.findByRole('button', { name: 'Stop generating' })
+    await act(async () => {
+      fireEvent.click(stopBtn)
+    })
+
+    // Partial stays visible the whole time, and the reconcile keeps polling
+    // past the "short" intermediate history until the backend has caught up.
+    await waitFor(() => expect(screen.getByText('Streamed partial')).toBeInTheDocument())
+    await waitFor(() => expect(historyCalls).toBeGreaterThanOrEqual(3), { timeout: 3000 })
+    expect(screen.getByText('Streamed partial')).toBeInTheDocument()
+  })
+
   it('aborts a stalled stream after the idle timeout and shows a timeout toast', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)
@@ -1496,9 +1604,10 @@ describe('App', () => {
       })
 
       // Matches App.tsx's STREAM_IDLE_TIMEOUT_MS -- no token for this long
-      // aborts the stream automatically.
+      // aborts the stream automatically. The timer is (re)armed the moment the
+      // response headers arrive, which the mocked fetch resolves immediately.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(45000)
+        await vi.advanceTimersByTimeAsync(120000)
       })
     } finally {
       vi.useRealTimers()

@@ -5,6 +5,8 @@
 .venv/
 .env
 *.db
+*.db-shm
+*.db-wal
 chroma_db/
 e2e_chroma_db/
 test_chroma_db/

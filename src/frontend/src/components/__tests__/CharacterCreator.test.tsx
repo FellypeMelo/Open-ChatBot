@@ -69,6 +69,25 @@ describe('CharacterCreator', () => {
     });
   });
 
+  it('lets the content-rating radio row wrap instead of clipping on narrow viewports', () => {
+    render(<CharacterCreator {...defaultProps} />);
+
+    const generalRadio = screen.getByRole('radio', { name: 'General' });
+    const radioRow = generalRadio.closest('label')?.parentElement;
+    expect(radioRow?.className).toContain('flex-wrap');
+    expect(screen.getByRole('radio', { name: 'Mature' })).toBeInTheDocument();
+  });
+
+  it('keeps the footer pinned to the bottom of the scroll region', () => {
+    const { container } = render(<CharacterCreator {...defaultProps} />);
+
+    const footer = container.querySelector('[class*="sticky"][class*="bottom-0"]');
+    expect(footer).not.toBeNull();
+    expect(footer?.className).toContain('sticky');
+    expect(footer?.className).toContain('bottom-0');
+    expect(screen.getByRole('button', { name: 'Initialize' })).toBeInTheDocument();
+  });
+
   it('defaults dynamic_persona to true and sends it toggled-off in the payload', async () => {
     render(<CharacterCreator {...defaultProps} />);
     fireEvent.change(screen.getByLabelText('Title / Name *'), { target: { value: 'Elara' } });

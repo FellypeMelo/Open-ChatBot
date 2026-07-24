@@ -5,23 +5,34 @@ import type { MessageNode } from '../hooks/useMessageTree'
 // non-OK response, then return the parsed body. These three helpers hold that
 // shape in one place so each endpoint is a single line.
 
+// A dropped/dead LAN socket otherwise hangs a plain fetch() until the OS TCP
+// timeout (can be minutes); every REST call below gets this default so a
+// spinner fails fast into a retryable error instead. Streaming (/chat/stream)
+// is intentionally excluded -- it manages its own idle timeout in App.tsx
+// since a generation can legitimately run far longer than this.
+const DEFAULT_TIMEOUT_MS = 15000
+
 const jsonInit = (method: string, data: unknown): RequestInit => ({
   method,
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(data)
 })
 
-// GETs call fetch(url) with no init (tests assert the single-arg form), so init
-// is only forwarded when provided.
+// Merge in a default timeout signal unless the caller already supplied one.
+const withTimeout = (init?: RequestInit): RequestInit => ({
+  ...init,
+  signal: init?.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+})
+
 const request = async <T = unknown>(url: string, errorMessage: string, init?: RequestInit): Promise<T> => {
-  const response = init ? await fetch(url, init) : await fetch(url)
+  const response = await fetch(url, withTimeout(init))
   if (!response.ok) throw new Error(errorMessage)
   return response.json() as Promise<T>
 }
 
 // For endpoints that only signal success/failure (DELETEs) rather than a body.
 const requestOk = async (url: string, errorMessage: string, init: RequestInit): Promise<boolean> => {
-  const response = await fetch(url, init)
+  const response = await fetch(url, withTimeout(init))
   if (!response.ok) throw new Error(errorMessage)
   return response.ok
 }
@@ -108,7 +119,8 @@ export const importCharacterPng = async (file: File): Promise<Character> => {
 
   const response = await fetch('/characters/import-png', {
     method: 'POST',
-    body: formData
+    body: formData,
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
   });
 
   if (!response.ok) {
@@ -211,11 +223,15 @@ export const updatePreset = async (id: number, preset: Omit<SamplerPreset, 'id'>
 export const deletePreset = async (id: number) =>
   requestOk(`/presets/${id}`, 'Failed to delete preset', { method: 'DELETE' })
 
-export const sendMessageStream = async (message: string | null, characterId: number, parentId: number | null, config?: LLMConfig, actionId?: string, chatId?: number) => {
+// No default timeout here -- a generation can legitimately run far longer
+// than the 15s REST default. Callers that want to abort a hung/slow stream
+// (App.tsx's idle-timeout + Stop button) pass their own AbortSignal instead.
+export const sendMessageStream = async (message: string | null, characterId: number, parentId: number | null, config?: LLMConfig, actionId?: string, chatId?: number, signal?: AbortSignal) => {
   const response = await fetch('/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, character_id: characterId, parent_id: parentId, chat_id: chatId, config, action_id: actionId })
+    body: JSON.stringify({ message, character_id: characterId, parent_id: parentId, chat_id: chatId, config, action_id: actionId }),
+    signal
   })
   if (!response.ok) throw new Error('Failed to start stream')
   return response

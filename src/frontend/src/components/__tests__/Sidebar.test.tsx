@@ -73,7 +73,7 @@ describe('Sidebar', () => {
   it('should trigger onClose when mobile close button is clicked', () => {
     render(<Sidebar {...defaultProps} />);
     
-    const closeButton = screen.getByRole('button', { name: 'close' });
+    const closeButton = screen.getByRole('button', { name: 'Close menu' });
     fireEvent.click(closeButton);
 
     expect(mockOnClose).toHaveBeenCalled();

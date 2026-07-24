@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -117,9 +118,27 @@ app.include_router(presets.router, prefix="/presets", tags=["Presets"])
 # Mount static files (Frontend) - API routes MUST come first
 import os
 
+
+class ImmutableStaticFiles(StaticFiles):
+    """StaticFiles that marks every served file cacheable forever.
+
+    Vite content-hashes every filename under /assets (e.g.
+    index-CDFjAh1V.js), so a given URL's bytes never change -- a rebuild
+    produces new filenames instead. That makes it safe for phones on a slow
+    or flaky LAN connection to cache these responses indefinitely and never
+    re-request them, instead of re-validating (or re-downloading) the whole
+    JS/CSS/font bundle on every load.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 os.makedirs("static/avatars", exist_ok=True)
 os.makedirs("static/assets", exist_ok=True)
-app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
+app.mount("/assets", ImmutableStaticFiles(directory="static/assets"), name="assets")
 app.mount("/avatars", StaticFiles(directory="static/avatars"), name="avatars")
 
 
@@ -128,6 +147,43 @@ async def favicon():
     return FileResponse("static/favicon.svg")
 
 
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return FileResponse(
+        "static/manifest.webmanifest", media_type="application/manifest+json"
+    )
+
+
+# The service worker (sw.js) and its hashed Workbox runtime chunk
+# (workbox-<hash>.js) are written by vite-plugin-pwa to the build root
+# alongside index.html -- NOT under /assets -- because a service worker's
+# default scope is the directory it is served from, and it must be served
+# from "/" to control the whole single-page app. Without this, they would
+# fall through to the catch-all below and be served as index.html
+# (text/html), which fails SW registration outright.
+_PWA_RUNTIME_FILENAME_RE = re.compile(r"^(sw\.js|workbox-[\w-]+\.js)$")
+
+
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
-    return FileResponse("static/index.html")
+    if _PWA_RUNTIME_FILENAME_RE.match(full_path):
+        pwa_file_path = os.path.join("static", full_path)
+        if os.path.isfile(pwa_file_path):
+            response = FileResponse(pwa_file_path, media_type="application/javascript")
+            # Always revalidate the SW script itself so a rebuild is picked
+            # up promptly -- the precached shell it references is still
+            # immutable/content-hashed, only this small entry file isn't.
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    response = FileResponse("static/index.html")
+    # index.html is the one file in the SPA that is NEVER content-hashed, so
+    # it is the single point of failure for the "stale index.html points at
+    # deleted hashed asset filenames" class of bug: a rebuild changes every
+    # /assets/* filename, and a cached old index.html would keep requesting
+    # asset URLs that no longer exist. Forcing revalidation on every load
+    # (and disallowing any shared/disk cache from serving it without
+    # asking) guarantees a rebuild is always reflected on next load, while
+    # the actually-immutable hashed assets above are still cached forever.
+    response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response

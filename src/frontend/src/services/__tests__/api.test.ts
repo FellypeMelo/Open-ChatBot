@@ -29,7 +29,7 @@ describe('api service tests', () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(mockUser));
 
     const result = await api.fetchUser();
-    expect(fetch).toHaveBeenCalledWith('/users/me');
+    expect(fetch).toHaveBeenCalledWith('/users/me', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(result).toEqual(mockUser);
   });
 
@@ -41,7 +41,7 @@ describe('api service tests', () => {
   it('fetchCharacters should make GET call to /characters/', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse([]));
     await api.fetchCharacters();
-    expect(fetch).toHaveBeenCalledWith('/characters/');
+    expect(fetch).toHaveBeenCalledWith('/characters/', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fetchCharacters should throw on error response', async () => {
@@ -52,7 +52,7 @@ describe('api service tests', () => {
   it('fetchTags should make GET call to /tags/', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse([]));
     await api.fetchTags();
-    expect(fetch).toHaveBeenCalledWith('/tags/');
+    expect(fetch).toHaveBeenCalledWith('/tags/', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fetchTags should throw on error response', async () => {
@@ -63,7 +63,7 @@ describe('api service tests', () => {
   it('fetchHistory should make GET call with character id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse([]));
     await api.fetchHistory(42);
-    expect(fetch).toHaveBeenCalledWith('/history/42');
+    expect(fetch).toHaveBeenCalledWith('/history/42', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fetchHistory should throw on error response', async () => {
@@ -76,7 +76,7 @@ describe('api service tests', () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(mockActions));
 
     const result = await api.fetchActions();
-    expect(fetch).toHaveBeenCalledWith('/chat/actions');
+    expect(fetch).toHaveBeenCalledWith('/chat/actions', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(result).toEqual(mockActions);
   });
 
@@ -130,7 +130,7 @@ describe('api service tests', () => {
   it('deleteTag should make DELETE call to /tags/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(true));
     const result = await api.deleteTag(12);
-    expect(fetch).toHaveBeenCalledWith('/tags/12', { method: 'DELETE' });
+    expect(fetch).toHaveBeenCalledWith('/tags/12', expect.objectContaining({ method: 'DELETE' }));
     expect(result).toBe(true);
   });
 
@@ -204,7 +204,7 @@ describe('api service tests', () => {
   it('deleteCharacter should make DELETE call to /characters/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(true));
     await api.deleteCharacter(3);
-    expect(fetch).toHaveBeenCalledWith('/characters/3', { method: 'DELETE' });
+    expect(fetch).toHaveBeenCalledWith('/characters/3', expect.objectContaining({ method: 'DELETE' }));
   });
 
   it('deleteCharacter should throw on error response', async () => {
@@ -231,7 +231,7 @@ describe('api service tests', () => {
   it('fetchPresets should make GET call to /presets/', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse([mockPreset]));
     const result = await api.fetchPresets();
-    expect(fetch).toHaveBeenCalledWith('/presets/');
+    expect(fetch).toHaveBeenCalledWith('/presets/', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(result).toEqual([mockPreset]);
   });
 
@@ -277,7 +277,7 @@ describe('api service tests', () => {
   it('deletePreset should make DELETE call to /presets/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(true));
     const result = await api.deletePreset(1);
-    expect(fetch).toHaveBeenCalledWith('/presets/1', { method: 'DELETE' });
+    expect(fetch).toHaveBeenCalledWith('/presets/1', expect.objectContaining({ method: 'DELETE' }));
     expect(result).toBe(true);
   });
 
@@ -302,10 +302,20 @@ describe('api service tests', () => {
     await expect(api.sendMessageStream('hello', 1, null)).rejects.toThrow('Failed to start stream');
   });
 
+  it('sendMessageStream should forward a caller-supplied AbortSignal instead of applying the default REST timeout', async () => {
+    const mockRes = { ok: true } as Response;
+    vi.mocked(fetch).mockResolvedValue(mockRes);
+    const controller = new AbortController();
+
+    await api.sendMessageStream('hello', 1, null, undefined, undefined, undefined, controller.signal);
+
+    expect(fetch).toHaveBeenCalledWith('/chat/stream', expect.objectContaining({ signal: controller.signal }));
+  });
+
   it('fetchLore should make GET call to /lore/', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse([]));
     await api.fetchLore();
-    expect(fetch).toHaveBeenCalledWith('/lore/');
+    expect(fetch).toHaveBeenCalledWith('/lore/', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fetchLore should throw on error response', async () => {
@@ -330,7 +340,7 @@ describe('api service tests', () => {
   it('deleteLore should make DELETE call to /lore/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(true));
     await api.deleteLore(42);
-    expect(fetch).toHaveBeenCalledWith('/lore/42', { method: 'DELETE' });
+    expect(fetch).toHaveBeenCalledWith('/lore/42', expect.objectContaining({ method: 'DELETE' }));
   });
 
   it('deleteLore should throw on error response', async () => {
@@ -341,7 +351,7 @@ describe('api service tests', () => {
   it('fetchRunnerStatus should make GET call to /settings/status', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
     await api.fetchRunnerStatus();
-    expect(fetch).toHaveBeenCalledWith('/settings/status');
+    expect(fetch).toHaveBeenCalledWith('/settings/status', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fetchRunnerStatus should throw on error response', async () => {
@@ -368,7 +378,7 @@ describe('api service tests', () => {
   it('startServer should make POST call to /settings/start/:type', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
     await api.startServer('inference');
-    expect(fetch).toHaveBeenCalledWith('/settings/start/inference', { method: 'POST' });
+    expect(fetch).toHaveBeenCalledWith('/settings/start/inference', expect.objectContaining({ method: 'POST' }));
   });
 
   it('startServer should throw a type-specific error message on error response', async () => {
@@ -379,7 +389,7 @@ describe('api service tests', () => {
   it('stopServer should make POST call to /settings/stop/:type', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
     await api.stopServer('embedding');
-    expect(fetch).toHaveBeenCalledWith('/settings/stop/embedding', { method: 'POST' });
+    expect(fetch).toHaveBeenCalledWith('/settings/stop/embedding', expect.objectContaining({ method: 'POST' }));
   });
 
   it('stopServer should throw a type-specific error message on error response', async () => {
@@ -390,7 +400,7 @@ describe('api service tests', () => {
   it('restartAllServers should make POST call to /settings/restart-all', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
     await api.restartAllServers();
-    expect(fetch).toHaveBeenCalledWith('/settings/restart-all', { method: 'POST' });
+    expect(fetch).toHaveBeenCalledWith('/settings/restart-all', expect.objectContaining({ method: 'POST' }));
   });
 
   it('restartAllServers should throw on error response', async () => {
@@ -415,7 +425,7 @@ describe('api service tests', () => {
   it('clearChatHistory should make POST call to /chat/clear/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({}));
     await api.clearChatHistory(5);
-    expect(fetch).toHaveBeenCalledWith('/chat/clear/5', { method: 'POST' });
+    expect(fetch).toHaveBeenCalledWith('/chat/clear/5', expect.objectContaining({ method: 'POST' }));
   });
 
   it('clearChatHistory should throw on error response', async () => {
@@ -441,7 +451,7 @@ describe('api service tests', () => {
   it('deleteMessage should make DELETE call to /chat/message/:id', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse({ success: true }));
     const result = await api.deleteMessage(9);
-    expect(fetch).toHaveBeenCalledWith('/chat/message/9', { method: 'DELETE' });
+    expect(fetch).toHaveBeenCalledWith('/chat/message/9', expect.objectContaining({ method: 'DELETE' }));
     expect(result).toEqual({ success: true });
   });
 
@@ -453,7 +463,7 @@ describe('api service tests', () => {
   it('fetchJournal should make GET call to /characters/:id/journal', async () => {
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse([]));
     await api.fetchJournal(5);
-    expect(fetch).toHaveBeenCalledWith('/characters/5/journal');
+    expect(fetch).toHaveBeenCalledWith('/characters/5/journal', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it('fetchJournal should throw on error response', async () => {

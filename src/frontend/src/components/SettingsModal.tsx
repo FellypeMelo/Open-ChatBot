@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import Icon from './Icon'
 import * as api from '../services/api'
 import type { RunnerStatus } from '../services/api'
 
@@ -14,7 +15,7 @@ const MODEL_PREFIX = 'models/'
 
 // Shared control styling for every field in the server-config forms (both the
 // inference and embedding tabs render the same input/select chrome).
-const FIELD_CLASS = 'bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none'
+const FIELD_CLASS = 'bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-base md:text-sm focus:border-white focus:outline-none'
 const FIELD_LABEL_CLASS = 'font-label-sm text-[10px] text-[#71717A] uppercase'
 
 // Label + control wrapper. `wrapperClassName` lets a field span grid columns.
@@ -237,7 +238,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 bg-[#050505]/90 backdrop-blur-md z-50 flex items-center justify-center p-sm md:p-md overflow-y-auto">
-      <div className="w-full max-w-[650px] bg-[#0A0A0A] border border-white/10 rounded-[1.5rem] p-md md:p-lg flex flex-col gap-md z-50 animate-in zoom-in-95 duration-300 shadow-2xl relative overflow-hidden">
+      <div className="w-full max-w-[650px] max-h-[90vh] overflow-y-auto overflow-x-hidden bg-[#0A0A0A] border border-white/10 rounded-[1.5rem] p-md md:p-lg flex flex-col gap-md z-50 animate-in zoom-in-95 duration-300 shadow-2xl relative">
         {/* Ambient mesh gradient backgrounds */}
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-[#ffffff]/5 rounded-full blur-[100px] pointer-events-none" />
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-emerald-500/5 rounded-full blur-[100px] pointer-events-none" />
@@ -252,10 +253,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           <button 
             onClick={onClose}
             aria-label="Close modal" 
-            className="text-[#71717A] hover:text-white transition-all duration-300 p-1 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 flex items-center justify-center"
+            className="text-[#71717A] hover:text-white transition-all duration-300 min-h-11 min-w-11 md:min-h-9 md:min-w-9 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 flex items-center justify-center touch-manipulation active:scale-95"
             type="button"
           >
-            <span className="material-symbols-outlined text-[18px]">close</span>
+            <Icon name="close" size="sm" />
           </button>
         </div>
 
@@ -267,12 +268,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         )}
 
         {/* Tab Selector */}
-        <div className="flex border-b border-white/10 relative z-10">
+        <div className="flex border-b border-white/10 relative z-10 overflow-x-auto">
           <button
             onClick={() => setActiveTab('inference')}
-            className={`px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
-              activeTab === 'inference' 
-                ? 'border-white text-white font-medium' 
+            className={`shrink-0 whitespace-nowrap px-sm md:px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
+              activeTab === 'inference'
+                ? 'border-white text-white font-medium'
                 : 'border-transparent text-[#71717A] hover:text-white'
             }`}
           >
@@ -280,9 +281,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           </button>
           <button
             onClick={() => setActiveTab('embedding')}
-            className={`px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
-              activeTab === 'embedding' 
-                ? 'border-white text-white font-medium' 
+            className={`shrink-0 whitespace-nowrap px-sm md:px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
+              activeTab === 'embedding'
+                ? 'border-white text-white font-medium'
                 : 'border-transparent text-[#71717A] hover:text-white'
             }`}
           >
@@ -290,9 +291,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           </button>
           <button
             onClick={() => setActiveTab('samplers')}
-            className={`px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
-              activeTab === 'samplers' 
-                ? 'border-white text-white font-medium' 
+            className={`shrink-0 whitespace-nowrap px-sm md:px-md py-sm font-label-sm text-xs tracking-wider transition-all duration-300 border-b-2 uppercase ${
+              activeTab === 'samplers'
+                ? 'border-white text-white font-medium'
                 : 'border-transparent text-[#71717A] hover:text-white'
             }`}
           >
@@ -459,7 +460,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
               {isConsolidated && (
                 <div className="text-[10px] text-emerald-400/90 font-label-sm bg-emerald-500/5 border border-emerald-500/10 rounded-[0.75rem] p-sm flex items-center gap-2">
-                  <span className="material-symbols-outlined text-sm">info</span>
+                  <Icon name="info" size="xs" />
                   <span>Sharing port {infPort} and model {infModel.replace(MODEL_PREFIX, '') || 'Inference Model'}. Llama server will launch consolidated.</span>
                 </div>
               )}
@@ -547,7 +548,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                       }
                     }
                   }}
-                  className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-sm focus:border-white focus:outline-none"
+                  className="bg-[#111] border border-white/10 rounded-[0.75rem] px-sm py-xs text-white font-label-sm text-base md:text-sm focus:border-white focus:outline-none"
                 >
                   {presets.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
@@ -568,7 +569,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </div>
           )}
 
-          <div className="flex justify-end items-center gap-md pt-md border-t border-white/10 mt-sm">
+          <div className="sticky bottom-0 flex justify-end items-center gap-md pt-md pb-md md:pb-lg border-t border-white/10 mt-sm bg-[#0A0A0A]">
             <button 
               onClick={onClose}
               disabled={loading}

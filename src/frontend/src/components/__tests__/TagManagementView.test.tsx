@@ -43,6 +43,15 @@ describe('TagManagementView', () => {
     expect(screen.queryByText('Sarcastic')).not.toBeInTheDocument();
   });
 
+  it('should keep the tag filter input visible (not `hidden`) so it works on mobile', () => {
+    render(<TagManagementView {...defaultProps} />);
+
+    const filterInput = screen.getByPlaceholderText('Filter tags...');
+    const wrapper = filterInput.parentElement as HTMLElement;
+    expect(wrapper.className).not.toMatch(/\bhidden\b/);
+    expect(wrapper.className).toContain('w-full');
+  });
+
   it('should trigger onCreateTag when Create button is clicked', () => {
     render(<TagManagementView {...defaultProps} />);
     

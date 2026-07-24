@@ -1,6 +1,21 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
+ * Specs that must run under real mobile device emulation (touch, mobile
+ * viewport/UA, `hover: none` / `pointer: coarse` media) rather than the
+ * desktop `chromium` project. Keeping them in `mobile-*.spec.ts` files lets
+ * projects below select them by filename instead of by folder, so the
+ * existing flat `e2e/` layout doesn't need to change.
+ *
+ * A bare `test.use({ viewport })` override on Desktop Chrome (the previous
+ * approach in mobile-layout.spec.ts) still reports a hover-capable pointer,
+ * so `group-hover`-only action buttons behave as if hovered and hover-only
+ * regressions pass silently. See docs/mobile-integration-plan.md, "Mobile
+ * testing strategy & device coverage".
+ */
+const MOBILE_SPEC_PATTERN = /mobile-.*\.spec\.ts$/;
+
+/**
  * See https://playwright.dev/docs/test-configuration.
  */
 export default defineConfig({
@@ -29,6 +44,25 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      // Mobile-device specs run only on the mobile-* projects below, never
+      // here -- Desktop Chrome with a viewport override still reports
+      // hover:hover, which would mask hover-only-action regressions.
+      testIgnore: MOBILE_SPEC_PATTERN,
+    },
+    {
+      // Real Android/Chrome touch emulation: hasTouch, isMobile, mobile UA,
+      // deviceScaleFactor and a real ~393px viewport, so `hover: none` /
+      // `pointer: coarse` CSS and touch actionability are actually exercised.
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 5'] },
+      testMatch: MOBILE_SPEC_PATTERN,
+    },
+    {
+      // Real iOS/WebKit touch emulation (the other major mobile engine),
+      // ~390px viewport.
+      name: 'mobile-safari',
+      use: { ...devices['iPhone 13'] },
+      testMatch: MOBILE_SPEC_PATTERN,
     },
   ],
 

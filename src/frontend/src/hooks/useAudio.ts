@@ -4,6 +4,12 @@ export const useAudio = () => {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const ambientSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const currentLocationRef = useRef<string>('');
+  // The typewriter releases a character (and calls this) up to ~50x/sec while
+  // draining a token buffer, and each call used to build+tear down a fresh
+  // oscillator/gain graph -- audio-thread/GC churn for no perceptible gain.
+  // Playing every other tick halves that churn while keeping a near-identical
+  // audible cadence.
+  const clickCountRef = useRef(0);
 
   const resumeAudio = useCallback(async () => {
     if (audioCtxRef.current?.state === 'suspended') {
@@ -12,6 +18,8 @@ export const useAudio = () => {
   }, []);
 
   const playTypewriterClick = useCallback(() => {
+    clickCountRef.current += 1;
+    if (clickCountRef.current % 2 === 0) return;
     try {
       if (!audioCtxRef.current) {
         audioCtxRef.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();

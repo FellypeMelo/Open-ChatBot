@@ -92,4 +92,45 @@ describe('useTokenQueue', () => {
     });
     expect(result.current.displayedContent).toBe(''); // Should not continue
   });
+
+  it('releases more than one character per tick once the buffer backs up, catching up instead of lagging indefinitely', () => {
+    const { result } = renderHook(() => useTokenQueue(20));
+    const longText = 'x'.repeat(40);
+
+    act(() => {
+      result.current.enqueue(longText);
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    // A 40-char backlog must release more than one char on the very first
+    // tick -- the old implementation always released exactly one, regardless
+    // of how far behind the buffer had fallen.
+    expect(result.current.displayedContent.length).toBeGreaterThan(1);
+
+    act(() => {
+      vi.advanceTimersByTime(20 * 30);
+    });
+    expect(result.current.displayedContent).toBe(longText);
+    expect(result.current.isDraining).toBe(false);
+  });
+
+  it('still releases exactly one character per tick for a small buffer (unchanged steady cadence)', () => {
+    const { result } = renderHook(() => useTokenQueue(50));
+
+    act(() => {
+      result.current.enqueue('Hi');
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(result.current.displayedContent).toBe('H');
+
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(result.current.displayedContent).toBe('Hi');
+  });
 });

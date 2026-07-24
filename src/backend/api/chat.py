@@ -1204,6 +1204,56 @@ async def chat_stream(
 
     async def generate():
         full_reply = ""
+        # Set once the reply is persisted via the happy path below, so the
+        # abnormal-end fallback (_persist_partial_reply, in `finally`) never
+        # double-inserts a second MessageNode for the same turn.
+        persisted_message_id: Optional[int] = None
+
+        def _persist_partial_reply() -> None:
+            """Best-effort save of whatever text streamed in before an
+            abnormal end, through the SAME path (`_persist_assistant_reply`)
+            a normal completion uses -- so a page reload afterwards still
+            shows the partial reply instead of the turn silently vanishing
+            (the user's own prompt was already saved before generation
+            started; only the assistant's half was ever at risk). Runs from
+            `finally` below so it fires for all three abnormal-end cases: a
+            mid-stream LLM error (Exception, still caught below too), and a
+            client Stop click or idle-timeout abort
+            -- both surface here as the ASGI layer closing/cancelling this
+            generator (GeneratorExit / asyncio.CancelledError), neither of
+            which is an `Exception` subclass, so only `finally` -- not
+            `except Exception` -- is guaranteed to observe them. Uses a fresh
+            sync SessionLocal() and no `await`s, so it's safe to run even
+            while the generator is being torn down mid-cancellation.
+            Skipped once the happy path already persisted, or when nothing
+            was ever generated (nothing to save)."""
+            nonlocal persisted_message_id
+            if persisted_message_id is not None or not full_reply.strip():
+                return
+            inner_db = SessionLocal()
+            try:
+                inner_state = (
+                    inner_db.query(AgentState)
+                    .filter(AgentState.id == ctx.state.id)
+                    .first()
+                )
+                if inner_state:
+                    parse_actions_to_state(full_reply, inner_state)
+                ai_msg = _persist_assistant_reply(
+                    inner_db, inner_state, ctx, full_reply, request_id
+                )
+                persisted_message_id = ai_msg.id
+                logger.warning(
+                    f"[{request_id}] Persisted partial reply after abnormal "
+                    f"stream end: gen_len={len(full_reply)}"
+                )
+            except Exception:
+                logger.exception(
+                    f"[{request_id}] Failed to persist partial reply on abnormal stream end"
+                )
+            finally:
+                inner_db.close()
+
         try:
             async for token in llama.complete_stream(
                 ctx.prompt,
@@ -1227,6 +1277,7 @@ async def chat_stream(
                     ai_msg = _persist_assistant_reply(
                         inner_db, inner_state, ctx, full_reply, request_id
                     )
+                    persisted_message_id = ai_msg.id
 
                     # RN-003: Formatting Validation (Stream)
                     is_formatted = validate_narrative_formatting(full_reply)
@@ -1263,8 +1314,15 @@ async def chat_stream(
             else:
                 yield f"data: {json.dumps({'done': True, 'request_id': request_id})}\n\n"
         except Exception as e:
+            # Mid-stream LLM/generation error (e.g. LlamaClient.complete_stream
+            # raising once llama-server drops mid-reply): `finally` below still
+            # persists whatever text streamed in before this happened; still
+            # surface the error to the client so the UI doesn't read this as a
+            # clean finish.
             logger.error(f"[{request_id}] Stream Error: {e}")
             yield f"data: {json.dumps({'error': str(e), 'request_id': request_id})}\n\n"
+        finally:
+            _persist_partial_reply()
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

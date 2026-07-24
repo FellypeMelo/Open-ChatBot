@@ -91,17 +91,63 @@ describe('SettingsModal', () => {
 
   it('renders and displays loaded config values', async () => {
     render(<SettingsModal onClose={mockOnClose} />)
-    
+
     // Wait for the status to load and loading state to end
     await waitFor(() => {
       expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
     })
-    
+
     expect(screen.getByText('Local Narrative Core')).toBeInTheDocument()
-    
+
     // Check ports
     const portInputs = screen.getAllByLabelText('Port')
     expect(portInputs[0]).toHaveValue(8080)
+  })
+
+  it('sizes form inputs and selects to avoid iOS Safari focus-zoom', async () => {
+    render(<SettingsModal onClose={mockOnClose} />)
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    expect(screen.getByLabelText('Port').className).toContain('text-base md:text-sm')
+    expect(screen.getByLabelText('Active GGUF Model').className).toContain('text-base md:text-sm')
+  })
+
+  it('gives the modal panel its own bounded height and scroll region', async () => {
+    const { container } = render(<SettingsModal onClose={mockOnClose} />)
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    const panel = container.querySelector('[class*="max-h-[90vh]"]')
+    expect(panel).not.toBeNull()
+    expect(panel?.className).toContain('overflow-y-auto')
+  })
+
+  it('keeps the footer pinned to the bottom of the scroll region', async () => {
+    const { container } = render(<SettingsModal onClose={mockOnClose} />)
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    const footer = container.querySelector('[class*="sticky"][class*="bottom-0"]')
+    expect(footer).not.toBeNull()
+    expect(footer?.className).toContain('sticky')
+    expect(footer?.className).toContain('bottom-0')
+  })
+
+  it('lets the tab bar scroll horizontally instead of clipping on narrow viewports', async () => {
+    const { container } = render(<SettingsModal onClose={mockOnClose} />)
+    await waitFor(() => {
+      expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+
+    const tabBar = container.querySelector('[class*="overflow-x-auto"]')
+    expect(tabBar).not.toBeNull()
+
+    const samplersTab = screen.getByText('Samplers')
+    expect(samplersTab.className).toContain('whitespace-nowrap')
   })
 
   it('allows switching between Inference and Embedding tabs', async () => {
@@ -182,9 +228,21 @@ describe('SettingsModal', () => {
   it('calls startServer when START SERVER is clicked', async () => {
     vi.mocked(api.startServer).mockResolvedValue({ status: 'success' })
     render(<SettingsModal onClose={mockOnClose} />)
-    
+
     await waitFor(() => {
       expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
+    })
+    // loadStatus() populates form fields from fetchRunnerStatus() *then* awaits
+    // fetchPresets() before clearing the loading flag that disables START
+    // SERVER (disabled={loading || !infModel}) -- wait for that second fetch
+    // and the button's enabled state too, or a slower run can click while
+    // it's still disabled and startServer never fires (same CI-only flake
+    // class fixed for the Save buttons in 087bdd4/d4b789d).
+    await waitFor(() => {
+      expect(api.fetchPresets).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(screen.getByText('START SERVER')).not.toBeDisabled()
     })
 
     const startButton = screen.getByText('START SERVER')
@@ -344,8 +402,14 @@ describe('SettingsModal', () => {
       expect(screen.getByText('Inference Engine: STOPPED')).toBeInTheDocument()
     })
 
+    // The status text ("Inference Engine: STOPPED") and the config-populated
+    // args field resolve from separate async loads, so waiting on the status
+    // doesn't guarantee the field is filled yet -- wait on the field's own
+    // loaded value (re-querying) before editing, or this races empty (CI flake).
+    await waitFor(() =>
+      expect(screen.getByLabelText('Additional CLI Arguments')).toHaveValue('--cache-type-k q8_0')
+    )
     const argsInput = screen.getByLabelText('Additional CLI Arguments') as HTMLInputElement
-    expect(argsInput).toHaveValue('--cache-type-k q8_0')
     fireEvent.change(argsInput, { target: { value: '--foo bar' } })
     expect(argsInput).toHaveValue('--foo bar')
   })

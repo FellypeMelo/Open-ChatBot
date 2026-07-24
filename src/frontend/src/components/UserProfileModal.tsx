@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import Icon from './Icon'
 import type { User } from '../services/api'
 
 interface UserProfileModalProps {
@@ -29,13 +30,13 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ user, onClose, onUp
             <h2 className="font-heading-lg text-heading-lg text-primary tracking-tight">User Profile</h2>
             <p className="font-body-md text-body-md text-on-surface-variant">Update your narrative presence.</p>
           </div>
-          <button 
+          <button
             onClick={onClose}
-            aria-label="Close modal" 
-            className="text-on-surface-variant hover:text-primary transition-colors p-xs" 
+            aria-label="Close modal"
+            className="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center min-h-11 min-w-11 touch-manipulation active:scale-95"
             type="button"
           >
-            <span className="material-symbols-outlined">close</span>
+            <Icon name="close" size="sm" />
           </button>
         </div>
 

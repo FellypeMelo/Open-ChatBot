@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react'
+import Icon from './Icon'
+import IconButton from './IconButton'
 import type { Tag } from '../services/api'
 
 interface TagManagementViewProps {
@@ -21,27 +23,27 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-background custom-scrollbar">
-      <header className="w-full px-md h-16 max-w-[1200px] mx-auto flex justify-between items-center shrink-0 mt-md">
+      <header className="w-full px-md max-w-[1200px] mx-auto flex flex-col gap-sm sm:h-16 sm:flex-row sm:items-center sm:justify-between shrink-0 mt-md pb-sm sm:pb-0">
         <div>
           <h2 className="font-heading-md text-heading-md font-semibold text-primary">Tag Management</h2>
           <p className="font-label-sm text-label-sm text-on-surface-variant mt-1 uppercase tracking-wider">System Taxonomy</p>
         </div>
-        <div className="flex gap-sm items-center">
-          <div className="relative hidden sm:block">
-            <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+        <div className="flex flex-col gap-sm sm:flex-row sm:items-center">
+          <div className="relative w-full sm:w-auto">
+            <Icon name="search" size="sm" className="absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant" />
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="bg-transparent border-b border-outline focus:border-primary focus:outline-none text-on-surface pl-8 pr-3 py-xs font-body-md text-body-md w-48 placeholder-on-surface-variant transition-colors bg-transparent h-full pb-1 focus:ring-0"
+              className="bg-transparent border-b border-outline focus:border-primary focus:outline-none text-on-surface pl-8 pr-3 py-xs font-body-md text-body-md w-full sm:w-48 placeholder-on-surface-variant transition-colors bg-transparent h-full pb-1 focus:ring-0"
               placeholder="Filter tags..."
               type="text"
             />
           </div>
           <button
             onClick={onCreateTag}
-            className="bg-transparent border border-outline text-on-surface rounded px-sm py-xs font-body-md text-body-md hover:border-primary hover:text-primary transition-colors flex items-center gap-2"
+            className="bg-transparent border border-outline text-on-surface rounded px-sm py-xs font-body-md text-body-md hover:border-primary hover:text-primary transition-colors flex items-center gap-2 justify-center"
           >
-            <span className="material-symbols-outlined text-[18px]">add</span>
+            <Icon name="add" size="sm" />
             Create New Tag
           </button>
         </div>
@@ -63,21 +65,21 @@ const TagManagementView: React.FC<TagManagementViewProps> = ({ tags, onCreateTag
                   <span className="font-label-sm text-label-sm text-on-surface border border-outline rounded px-2 py-0.5 inline-block bg-surface-container-low group-hover:border-primary transition-colors">
                     {tag.label}
                   </span>
-                  <div className="flex items-center gap-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                    <button
+                  <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                    <IconButton
+                      icon="edit"
+                      label="Edit"
+                      size="sm"
                       onClick={() => onEditTag(tag)}
-                      className="text-on-surface-variant hover:text-primary transition-colors"
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">edit</span>
-                    </button>
-                    <button
+                      className="text-on-surface-variant hover:text-primary"
+                    />
+                    <IconButton
+                      icon="delete"
+                      label="Delete"
+                      size="sm"
                       onClick={() => onDeleteTag(tag.id)}
-                      className="text-on-surface-variant hover:text-primary transition-colors"
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">delete</span>
-                    </button>
+                      className="text-on-surface-variant hover:text-primary"
+                    />
                   </div>
                 </div>
                 <p className="font-body-md text-body-md text-on-surface-variant pt-2">

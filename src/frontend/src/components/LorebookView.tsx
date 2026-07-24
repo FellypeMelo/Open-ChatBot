@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import Icon from './Icon';
+import IconButton from './IconButton';
 import * as api from '../services/api';
+import { useConfirm } from '../hooks/useConfirm';
 
 interface LoreEntry {
   id: number;
@@ -17,6 +20,7 @@ const LorebookView: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'global' | 'personal'>('all');
+  const { confirm, dialog } = useConfirm();
 
   const fetchLore = async () => {
     try {
@@ -59,7 +63,13 @@ const LorebookView: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Delete this entry?')) return;
+    const ok = await confirm({
+      title: 'Delete this entry?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteLore(id);
       fetchLore();
@@ -80,14 +90,14 @@ const LorebookView: React.FC = () => {
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden p-md">
       <div className="max-w-[1200px] mx-auto w-full flex flex-col h-full gap-md">
-        <header className="flex-none flex justify-between items-end">
+        <header className="flex-none flex flex-col gap-sm md:flex-row md:justify-between md:items-end">
           <div>
             <h1 className="font-heading-md text-heading-md font-semibold text-primary">Lorebook & Knowledge</h1>
             <p className="text-on-surface-variant text-body-md mt-1">
               Define keywords that trigger character memories.
             </p>
           </div>
-          <div className="flex flex-col items-end gap-xs">
+          <div className="flex flex-col md:items-end gap-xs">
             <div className="flex bg-surface-container-high rounded-full p-1 border border-outline/30">
               <button 
                 onClick={() => setFilter('all')}
@@ -108,14 +118,14 @@ const LorebookView: React.FC = () => {
                 Personal
               </button>
             </div>
-            <div className="relative">
-              <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant/50">search</span>
-              <input 
+            <div className="relative w-full md:w-auto">
+              <Icon name="search" size="sm" className="absolute left-2 top-1/2 -translate-y-1/2 text-on-surface-variant/50" />
+              <input
                 type="text"
                 placeholder="Search lore..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="bg-surface-container-low border border-outline rounded-full pl-8 pr-md py-1 text-label-sm focus:border-primary outline-none w-48 transition-all focus:w-64"
+                className="bg-surface-container-low border border-outline rounded-full pl-8 pr-md py-1 text-label-sm focus:border-primary outline-none w-full md:w-48 transition-all md:focus:w-64"
               />
             </div>
           </div>
@@ -166,12 +176,13 @@ const LorebookView: React.FC = () => {
                   <span className="bg-surface-container-high text-on-surface px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
                     {entry.keyword}
                   </span>
-                  <button 
+                  <IconButton
+                    icon="delete"
+                    label="Delete lore entry"
+                    size="sm"
                     onClick={() => handleDelete(entry.id)}
-                    className="text-on-surface-variant/40 hover:text-error transition-colors"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                    className="text-on-surface-variant/40 hover:text-error"
+                  />
                 </div>
                 <p className="text-on-surface text-body-sm mt-sm flex-1 italic line-clamp-4">
                   "{entry.content}"
@@ -183,19 +194,20 @@ const LorebookView: React.FC = () => {
             ))}
             {filteredEntries.length === 0 && entries.length > 0 && (
               <div className="col-span-full py-10 flex flex-col items-center justify-center opacity-30">
-                <span className="material-symbols-outlined text-[48px] mb-2">search_off</span>
+                <Icon name="search_off" size="xl" className="mb-2" />
                 <p>No lore matches your search.</p>
               </div>
             )}
             {entries.length === 0 && (
               <div className="col-span-full py-10 flex flex-col items-center justify-center opacity-30">
-                <span className="material-symbols-outlined text-[48px] mb-2">auto_stories</span>
+                <Icon name="auto_stories" size="xl" className="mb-2" />
                 <p>The library is empty.</p>
               </div>
             )}
           </div>
         </main>
       </div>
+      {dialog}
     </div>
   );
 };

@@ -5,6 +5,7 @@ alembic==1.18.5
 pydantic-settings==2.14.1
 httpx==0.28.1
 python-multipart==0.0.29
+Pillow==12.3.0
 langchain==1.3.4
 langchain-community==0.4.2
 turbovec==0.7.0

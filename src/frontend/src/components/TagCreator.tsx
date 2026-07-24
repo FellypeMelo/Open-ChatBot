@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import Icon from './Icon'
 import type { Tag } from '../services/api'
 
 interface TagCreatorProps {
@@ -41,10 +42,10 @@ const TagCreator: React.FC<TagCreatorProps> = ({ onClose, onSubmit, tag }) => {
           <button
             onClick={onClose}
             aria-label="Close modal"
-            className="text-on-surface-variant hover:text-primary transition-colors p-xs"
+            className="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center min-h-11 min-w-11 touch-manipulation active:scale-95"
             type="button"
           >
-            <span className="material-symbols-outlined">close</span>
+            <Icon name="close" size="sm" />
           </button>
         </div>
 

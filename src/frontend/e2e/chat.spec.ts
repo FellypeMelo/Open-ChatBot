@@ -15,7 +15,11 @@ test.describe('Open-ChatBot E2E Core Flow', () => {
     await page.fill('#tag_label', 'Hero');
     await page.fill('#tag_instruction', 'A heroic tag.');
     await page.click('button[type="submit"]');
-    await expect(page.locator('text=Hero')).toBeVisible();
+    // Exact match: a bare `text=Hero` is a case-insensitive SUBSTRING match, so
+    // it also matches the tag's instruction "A heroic tag." ("hero" in
+    // "heroic") -> a strict-mode violation (2+ elements). Assert the tag label
+    // chip specifically.
+    await expect(page.getByText('Hero', { exact: true })).toBeVisible();
 
     // 1. Initialize Persona
     await page.click('button:has-text("Characters")');

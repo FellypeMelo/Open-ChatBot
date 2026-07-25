@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -509,9 +510,14 @@ class Brain:
             anchor=self._build_anchor(character, state, user_name, char_display_name),
         )
         # Every allocation above is the len//4 heuristic; this is the one exact
-        # check against the model's real tokenizer + context window (best-effort,
-        # never blocks assembly -- see validate_final_prompt).
-        await self.budget_calc.validate_final_prompt(final_prompt)
+        # check against the model's real tokenizer + context window -- fired as
+        # a background task (not awaited) since it only emits a diagnostic log
+        # line on overage and never raises (see validate_final_prompt), so it
+        # must not add its own network round-trip's latency to every turn's
+        # critical path, especially with llama-server's default single
+        # inference slot where it could queue behind an in-flight background
+        # reflection call.
+        asyncio.create_task(self.budget_calc.validate_final_prompt(final_prompt))
         return final_prompt
 
     async def reflect(self, messages: List[Dict], window_size: int = 20) -> Dict:

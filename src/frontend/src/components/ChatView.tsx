@@ -132,6 +132,11 @@ interface ChatViewProps {
   // Gift drawer's Actions/Gifts tabs; an id missing from this map (e.g. the
   // fetch hasn't resolved yet) simply doesn't render a button for it.
   actions?: Record<string, ActionInfo>
+  // Re-runs the GET /chat/actions fetch. Called when the drawer is opened
+  // while `actions` is still empty (the mount-time fetch failed or hasn't
+  // resolved yet), so a transient failure doesn't strand the drawer
+  // permanently empty for the rest of the session.
+  onRequestActions?: () => void
   chats?: ChatSession[]
   activeChatId?: number | null
   greetings?: string[]
@@ -161,6 +166,7 @@ const ChatView: React.FC<ChatViewProps> = ({
   onEditMessage,
   onDeleteMessage,
   actions = {},
+  onRequestActions,
   chats = [],
   activeChatId = null,
   greetings = [],
@@ -362,6 +368,14 @@ const ChatView: React.FC<ChatViewProps> = ({
   const handleSend = () => {
     resumeAudio()
     onSend()
+  }
+
+  const toggleDrawer = () => {
+    const opening = !isDrawerOpen
+    if (opening && Object.keys(actions).length === 0) {
+      onRequestActions?.()
+    }
+    setIsDrawerOpen(opening)
   }
 
   const handleActionTrigger = (actionId: string) => {
@@ -834,7 +848,7 @@ const ChatView: React.FC<ChatViewProps> = ({
             {/* Interact Drawer Toggle Button */}
             <button
               type="button"
-              onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+              onClick={toggleDrawer}
               className={`rounded-xl transition-all duration-300 flex items-center justify-center shrink-0 cursor-pointer mr-1 mb-0.5 border min-h-11 min-w-11 md:min-h-9 md:min-w-9 touch-manipulation active:scale-95 ${
                 isDrawerOpen
                   ? 'bg-white text-black border-white'

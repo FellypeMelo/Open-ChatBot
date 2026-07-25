@@ -412,7 +412,9 @@ def _persist_assistant_reply(
     parent both computed the same count-derived variant_index before either
     committed, tripping the uq_message_node_parent_variant constraint -- roll
     back and retry so the loop recomputes variant_count against the now-visible
-    sibling instead of losing the reply."""
+    sibling instead of losing the reply. Either retry re-applies the caller's
+    parse_actions_to_state mutation to the freshly re-queried state, since the
+    rollback discarded the uncommitted one."""
     state_id = state.id if state is not None else None
     for attempt in range(_max_retries + 1):
         variant_count = (
@@ -444,6 +446,12 @@ def _persist_assistant_reply(
                 raise
             if state_id is not None:
                 state = db.query(AgentState).filter(AgentState.id == state_id).first()
+                # The rollback also discarded the caller's pre-loop
+                # parse_actions_to_state mutation (never committed) -- reapply
+                # it to the freshly re-queried state so a retry doesn't
+                # silently drop the parsed location/clothes/hunger/sleep delta.
+                if state is not None:
+                    parse_actions_to_state(reply, state)
 
 
 def _resolve_active_chat(
@@ -659,6 +667,14 @@ async def _prepare_chat_turn(
                 if _attempt >= _user_msg_max_retries:
                     raise
                 state = db.query(AgentState).filter(AgentState.id == state.id).first()
+                # The rollback also discarded the uncommitted apply_action_stats
+                # mutation applied above (it was never committed) -- reapply it
+                # to the freshly re-queried state so a retry doesn't silently
+                # drop the quick-action/gift's stat deltas.
+                if is_action:
+                    state.stats = apply_action_stats(
+                        state.stats, action_cfg.get("stats", {})
+                    )
         effective_parent_id = user_msg.id
 
     history = []

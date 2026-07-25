@@ -248,13 +248,21 @@ function App() {
     }
   }, [])
 
-  const fetchActions = useCallback(async () => {
+  // Named function expression (not the outer `const`) so the onRetry closure
+  // below can refer to itself without an illegal before-declaration self-
+  // reference to `fetchActions`.
+  const fetchActions = useCallback(async function fetchActionsImpl() {
     try {
       const data = await api.fetchActions()
       setActionsConfig(data)
     } catch {
-      // Non-critical: handleSendAction falls back to a generic placeholder.
+      // handleSendAction's placeholder fallback only covers the outgoing
+      // message text -- the Interact & Gift drawer has no buttons to render
+      // at all until actionsConfig is populated, so a one-shot failure (e.g.
+      // the backend still starting up) would otherwise hide the whole feature
+      // for the rest of the session. Offer a manual recovery path.
       console.error('Failed to fetch actions')
+      showToast('Failed to fetch actions.', 'error', { onRetry: fetchActionsImpl })
     }
   }, [])
 
@@ -1061,6 +1069,7 @@ function App() {
               onEditMessage={handleEditMessage}
               onDeleteMessage={handleDeleteMessage}
               actions={actionsConfig}
+              onRequestActions={fetchActions}
               chats={chats}
               activeChatId={activeChatId}
               greetings={[activeChar?.first_mes ?? '', ...(activeChar?.alternate_greetings ?? [])].filter((g) => g.trim())}

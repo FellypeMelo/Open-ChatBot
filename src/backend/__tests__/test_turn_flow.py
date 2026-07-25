@@ -6,8 +6,9 @@ no real DB, no vector store (vector_store is patched to an AsyncMock).
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Query, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.pool import StaticPool
 
@@ -15,10 +16,13 @@ from src.backend.api.chat import (
     edit_message,
     delete_message,
     MessageEditRequest,
+    ChatRequest,
     ChatTurnContext,
     LLMConfig,
     _persist_assistant_reply,
+    _prepare_chat_turn,
 )
+from src.backend.core.engine.state_transitions import parse_actions_to_state
 from src.backend.db.database import Base
 from src.backend.db.models import AgentState, Character, MessageNode, Chat, User
 
@@ -278,6 +282,318 @@ def test_persist_assistant_reply_retries_on_stale_data():
             .count()
             == 1
         ), "reply must be persisted exactly once (not lost, not duplicated)"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+# --- uq_message_node_parent_variant: concurrent regenerate must not collide ---
+
+
+def test_persist_assistant_reply_retries_on_duplicate_variant_index():
+    # Two near-simultaneous regenerate/stream calls for the SAME parent can
+    # both compute the same count-derived variant_index before either commits.
+    # The second insert must trip uq_message_node_parent_variant, retry with a
+    # freshly recomputed variant_count, and land a distinct index -- not crash
+    # and not silently duplicate the sibling.
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        user = User.get_or_create_active(db)
+        char = Character(name="TF-race", description="d")
+        db.add(char)
+        db.commit()
+        state = AgentState(character_id=char.id)
+        db.add(state)
+        db.commit()
+        chat = Chat(character_id=char.id, title="C")
+        db.add(chat)
+        db.commit()
+        state.active_chat_id = chat.id
+        parent = MessageNode(
+            character_id=char.id, chat_id=chat.id, role="user", content="hi"
+        )
+        db.add(parent)
+        db.commit()
+
+        ctx = ChatTurnContext(
+            user=user,
+            character=char,
+            state=state,
+            prompt="",
+            config=LLMConfig(),
+            preset_dict=None,
+            effective_parent_id=parent.id,
+            user_message_content="hi",
+            force_reflect=False,
+            chat_id=chat.id,
+        )
+
+        real_count = Query.count
+        calls = {"n": 0}
+
+        def stale_count(self):
+            # Both "concurrent" callers' first read sees the same stale 0 --
+            # the race the constraint guards against. Any later re-query (a
+            # retry, or a plain DB read) sees the true, up-to-date count.
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return 0
+            return real_count(self)
+
+        with patch.object(Query, "count", stale_count):
+            msg1 = _persist_assistant_reply(db, state, ctx, "reply one", "rid-1")
+            msg2 = _persist_assistant_reply(db, state, ctx, "reply two", "rid-2")
+
+        assert msg1.id is not None and msg2.id is not None
+        assert msg1.variant_index != msg2.variant_index, (
+            "concurrent regenerate produced duplicate variant_index siblings"
+        )
+        assert {msg1.variant_index, msg2.variant_index} == {0, 1}
+        assert (
+            db.query(MessageNode).filter(MessageNode.parent_id == parent.id).count()
+            == 2
+        ), "exactly two sibling replies must exist, not a lost or duplicated row"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_prepare_chat_turn_retries_on_duplicate_user_message_variant_index():
+    # uq_message_node_parent_variant is table-wide: it also covers the
+    # user-message insert in _prepare_chat_turn, not just the assistant-reply
+    # insert covered above. Two near-simultaneous /chat calls resolving to the
+    # same effective_parent_id (e.g. two tabs both reading the same stale
+    # pointer) must not surface the resulting IntegrityError as a dropped/500'd
+    # turn -- retry with a freshly recomputed variant_count instead.
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        char = Character(name="TF-user-race", description="d")
+        db.add(char)
+        db.commit()
+        state = AgentState(character_id=char.id)
+        db.add(state)
+        db.commit()
+        parent = MessageNode(
+            character_id=char.id, role="assistant", content="Ready when you are."
+        )
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+        real_count = Query.count
+        calls = {"n": 0}
+
+        def stale_count(self):
+            # Both "concurrent" tabs' first read sees the same stale sibling
+            # count -- the race the constraint guards against. A retry (or a
+            # plain DB read) sees the true, up-to-date count.
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                return 0
+            return real_count(self)
+
+        request_a = ChatRequest(
+            character_id=char.id, message="turn A", parent_id=parent_id
+        )
+        request_b = ChatRequest(
+            character_id=char.id, message="turn B", parent_id=parent_id
+        )
+
+        with (
+            patch.object(Query, "count", stale_count),
+            patch(
+                "src.backend.api.chat.brain.build_prompt",
+                new=AsyncMock(return_value="P"),
+            ),
+        ):
+            ctx_a = await _prepare_chat_turn(request_a, db, "rid-a")
+            ctx_b = await _prepare_chat_turn(request_b, db, "rid-b")
+
+        msg_a = (
+            db.query(MessageNode)
+            .filter(MessageNode.id == ctx_a.effective_parent_id)
+            .first()
+        )
+        msg_b = (
+            db.query(MessageNode)
+            .filter(MessageNode.id == ctx_b.effective_parent_id)
+            .first()
+        )
+
+        assert msg_a.id != msg_b.id
+        assert msg_a.parent_id == parent_id and msg_b.parent_id == parent_id
+        assert msg_a.variant_index != msg_b.variant_index, (
+            "concurrent user-message insert produced duplicate variant_index siblings"
+        )
+        assert {msg_a.variant_index, msg_b.variant_index} == {0, 1}
+        assert (
+            db.query(MessageNode).filter(MessageNode.parent_id == parent_id).count()
+            == 2
+        ), "exactly two sibling user messages must exist, not a lost or duplicated row"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+# --- Action/parsed-state deltas must survive a variant_index/StaleData retry -
+
+
+@pytest.mark.asyncio
+async def test_prepare_chat_turn_retries_preserve_action_stat_deltas():
+    # Adversarial-review regression: apply_action_stats mutates `state` BEFORE
+    # the user-message insert retry loop. A rollback on a duplicate
+    # variant_index (uq_message_node_parent_variant) discards that uncommitted
+    # mutation, and the loop's re-query of fresh state must reapply it -- else
+    # a quick-action/gift's stat deltas are silently dropped while the
+    # narrated action message and reply proceed normally.
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        # Static persona: skips update_needs' time-based decay (engine.py),
+        # keeping the pre-action happiness value deterministic regardless of
+        # how much wall-clock time this test takes to run.
+        char = Character(name="TF-action-race", description="d", dynamic_persona=False)
+        db.add(char)
+        db.commit()
+        state = AgentState(character_id=char.id)
+        # Start below the [0, 100] clamp ceiling so the hug action's +5
+        # happiness delta is actually observable (default_stats starts at 100).
+        state.stats = {**state.stats, "happiness": 50}
+        db.add(state)
+        db.commit()
+        parent = MessageNode(
+            character_id=char.id, role="assistant", content="Ready when you are."
+        )
+        db.add(parent)
+        db.commit()
+        parent_id = parent.id
+
+        # Simulate another tab's message already occupying variant_index 0
+        # under this parent -- the race uq_message_node_parent_variant guards
+        # against.
+        sibling = MessageNode(
+            character_id=char.id,
+            role="user",
+            content="other tab's message",
+            parent_id=parent_id,
+            variant_index=0,
+        )
+        db.add(sibling)
+        db.commit()
+
+        real_count = Query.count
+        calls = {"n": 0}
+
+        def stale_count(self):
+            # The turn's first read sees a stale 0 (the pre-existing sibling
+            # not yet visible), colliding with it on flush. A retry's re-query
+            # sees the true, up-to-date count.
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return 0
+            return real_count(self)
+
+        request = ChatRequest(
+            character_id=char.id, action_id="hug", parent_id=parent_id
+        )
+
+        with (
+            patch.object(Query, "count", stale_count),
+            patch(
+                "src.backend.api.chat.brain.build_prompt",
+                new=AsyncMock(return_value="P"),
+            ),
+        ):
+            ctx = await _prepare_chat_turn(request, db, "rid-action")
+
+        assert calls["n"] >= 2, "test setup did not exercise the retry path"
+        committed_state = db.query(AgentState).filter(AgentState.id == state.id).first()
+        assert committed_state.stats["happiness"] == 55, (
+            "the hug action's happiness delta was lost on the variant_index retry"
+        )
+        assert ctx.state.stats["happiness"] == 55
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_persist_assistant_reply_retries_preserve_parsed_state():
+    # Adversarial-review regression: callers apply parse_actions_to_state to
+    # `state` BEFORE calling _persist_assistant_reply. A StaleDataError/
+    # IntegrityError retry rolls back (discarding that uncommitted mutation)
+    # and re-queries fresh state -- which must have the parsed
+    # location/clothes/hunger/sleep change reapplied, or it's silently lost
+    # even though the reply itself persists fine.
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        user = User.get_or_create_active(db)
+        char = Character(name="TF-parse-retry", description="d")
+        db.add(char)
+        db.commit()
+        state = AgentState(character_id=char.id)
+        db.add(state)
+        db.commit()
+        chat = Chat(character_id=char.id, title="C")
+        db.add(chat)
+        db.commit()
+        state.active_chat_id = chat.id
+        parent = MessageNode(
+            character_id=char.id, chat_id=chat.id, role="user", content="hi"
+        )
+        db.add(parent)
+        db.commit()
+
+        ctx = ChatTurnContext(
+            user=user,
+            character=char,
+            state=state,
+            prompt="",
+            config=LLMConfig(),
+            preset_dict=None,
+            effective_parent_id=parent.id,
+            user_message_content="hi",
+            force_reflect=False,
+            chat_id=chat.id,
+        )
+
+        reply = "**enters the Garden** Let's go."
+        parse_actions_to_state(reply, state)
+        assert state.location == "Garden"
+
+        real_commit = db.commit
+        calls = {"n": 0}
+
+        def flaky_commit():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise StaleDataError("simulated concurrent update")
+            return real_commit()
+
+        with patch.object(db, "commit", side_effect=flaky_commit):
+            msg = _persist_assistant_reply(db, state, ctx, reply, "rid-parse")
+
+        assert msg.id is not None
+        assert calls["n"] == 2, "persist should retry exactly once after StaleData"
+        committed_state = db.query(AgentState).filter(AgentState.id == state.id).first()
+        assert committed_state.location == "Garden", (
+            "parse_actions_to_state's location change was lost on the StaleData retry"
+        )
     finally:
         db.close()
         engine.dispose()

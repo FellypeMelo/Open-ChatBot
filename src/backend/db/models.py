@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     Index,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.exc import IntegrityError
@@ -275,9 +276,18 @@ class MessageNode(Base):
     # parent_id is the most-queried predicate in the app (variant COUNT, subtree
     # sweep, branch walk) -- index it, plus composites for the subtree walk and
     # the per-chat active-history fetch (ER review B3).
+    # uq_message_node_parent_variant: DB-level backstop for the count-derived
+    # variant_index -- two concurrent regenerate/stream inserts under the same
+    # parent can compute the same count before either commits; the constraint
+    # turns that race into an IntegrityError _persist_assistant_reply retries,
+    # instead of silently producing duplicate siblings the frontend's swipe UI
+    # (grouped by parent_id+variant_index) can't tell apart.
     __table_args__ = (
         Index("ix_message_nodes_parent_active", "parent_id", "is_active"),
         Index("ix_message_nodes_chat_active_ts", "chat_id", "is_active", "timestamp"),
+        UniqueConstraint(
+            "parent_id", "variant_index", name="uq_message_node_parent_variant"
+        ),
     )
     id = Column(Integer, primary_key=True, index=True)
     parent_id = Column(

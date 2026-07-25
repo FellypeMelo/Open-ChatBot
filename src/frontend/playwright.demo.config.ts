@@ -1,4 +1,8 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { defineConfig, devices } from '@playwright/test';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // Dedicated config for capturing the demo GIF. Records video, single worker,
 // hides no output. Reuses the E2E backend (E2E_TESTING=1, no LLM needed).
@@ -25,7 +29,7 @@ export default defineConfig({
     {
       command:
         'venv\\Scripts\\python.exe -m uvicorn src.backend.main:app --host 127.0.0.1 --port 8000',
-      cwd: 'G:\\Programas\\Open-ChatBot',
+      cwd: repoRoot,
       port: 8000,
       timeout: 120_000,
       reuseExistingServer: true,

@@ -17,37 +17,55 @@ logger = logging.getLogger(__name__)
 _LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
 
 # Quick-action buttons: the narration shown to the user plus the stat deltas
-# applied server-side. The frontend only ever sees the message text.
+# applied server-side. `name`/`icon` are the button's display metadata (icon is
+# a Material Symbols key); both are exposed via GET /chat/actions alongside
+# `stats` so the frontend never hand-types a copy that can drift from these.
 ACTIONS_CONFIG = {
     "hug": {
+        "name": "Hug",
+        "icon": "favorite",
         "message": "*I step forward and wrap my arms around you in a warm, gentle hug.*",
         "stats": {"happiness": 5, "social": 10, "relationship_score": 2},
     },
     "pat_head": {
+        "name": "Pat Head",
+        "icon": "emoji_emotions",
         "message": "*I reach out and pat your head gently, smiling softly.*",
         "stats": {"happiness": 3, "social": 5, "relationship_score": 1},
     },
     "tease": {
+        "name": "Tease",
+        "icon": "theater_comedy",
         "message": "*I look at you with a playful smirk, teasing you lightly.*",
         "stats": {"happiness": 2, "social": 8, "relationship_score": 1},
     },
     "hold_hand": {
+        "name": "Hold Hand",
+        "icon": "handshake",
         "message": "*I slide my hand into yours, holding it gently.*",
         "stats": {"happiness": 4, "social": 8, "relationship_score": 2},
     },
     "coffee": {
+        "name": "Hot Coffee",
+        "icon": "local_cafe",
         "message": "*I hand you a hot, freshly brewed cup of black coffee.*",
         "stats": {"hunger": -10, "energy": 15, "relationship_score": 2},
     },
     "croissant": {
+        "name": "Croissant",
+        "icon": "bakery_dining",
         "message": "*I offer you a warm, freshly baked chocolate croissant.*",
         "stats": {"hunger": -35, "energy": 5, "relationship_score": 3},
     },
     "book": {
+        "name": "Book",
+        "icon": "book",
         "message": "*I present you with a beautifully bound, vintage book.*",
         "stats": {"happiness": 8, "social": 5, "relationship_score": 4},
     },
     "necklace": {
+        "name": "Necklace",
+        "icon": "diamond",
         "message": "*I hand you a small velvet box containing a delicate silver necklace.*",
         "stats": {"happiness": 15, "social": 10, "relationship_score": 8},
     },

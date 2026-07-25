@@ -105,7 +105,7 @@ function App() {
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null)
   const [user, setUser] = useState<User | null>(null)
-  const [actionsMessages, setActionsMessages] = useState<Record<string, string>>({})
+  const [actionsConfig, setActionsConfig] = useState<Record<string, api.ActionInfo>>({})
   const { confirm, dialog } = useConfirm()
   // Holds the in-flight stream's AbortController so a Stop action or an idle
   // timeout can cancel it; cleared once the stream settles.
@@ -248,13 +248,21 @@ function App() {
     }
   }, [])
 
-  const fetchActions = useCallback(async () => {
+  // Named function expression (not the outer `const`) so the onRetry closure
+  // below can refer to itself without an illegal before-declaration self-
+  // reference to `fetchActions`.
+  const fetchActions = useCallback(async function fetchActionsImpl() {
     try {
       const data = await api.fetchActions()
-      setActionsMessages(data)
+      setActionsConfig(data)
     } catch {
-      // Non-critical: handleSendAction falls back to a generic placeholder.
+      // handleSendAction's placeholder fallback only covers the outgoing
+      // message text -- the Interact & Gift drawer has no buttons to render
+      // at all until actionsConfig is populated, so a one-shot failure (e.g.
+      // the backend still starting up) would otherwise hide the whole feature
+      // for the rest of the session. Offer a manual recovery path.
       console.error('Failed to fetch actions')
+      showToast('Failed to fetch actions.', 'error', { onRetry: fetchActionsImpl })
     }
   }, [])
 
@@ -707,7 +715,7 @@ function App() {
   const handleSendAction = async (actionId: string, explicitParentId?: number) => {
     if (isLoading || !selectedCharId) return
     const parentId = resolveParentId(explicitParentId)
-    const actionMessage = actionsMessages[actionId] || `*Performs action: ${actionId}*`
+    const actionMessage = actionsConfig[actionId]?.message || `*Performs action: ${actionId}*`
     const assistantMsgId = appendExchange(actionMessage, parentId)
     const chatId = activeChatId ?? undefined
     await runStream(assistantMsgId, selectedCharId, chatId, (signal) => api.sendMessageStream(null, selectedCharId, parentId, config, actionId, chatId, signal))
@@ -1060,6 +1068,8 @@ function App() {
               onSendAction={handleSendAction}
               onEditMessage={handleEditMessage}
               onDeleteMessage={handleDeleteMessage}
+              actions={actionsConfig}
+              onRequestActions={fetchActions}
               chats={chats}
               activeChatId={activeChatId}
               greetings={[activeChar?.first_mes ?? '', ...(activeChar?.alternate_greetings ?? [])].filter((g) => g.trim())}

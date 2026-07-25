@@ -92,7 +92,20 @@ def mock_vector_store_path(tmp_path, monkeypatch):
     """
     from src.backend.api import chat
     from src.backend.core.memory.vector_store import VectorStore
+    from src.backend.core.orchestration.bridge import Brain
 
     # Create a temporary VectorStore instance for the chat router
     test_vs = VectorStore(llm_client=chat.llama, path=str(tmp_path / "test_chroma_db"))
     monkeypatch.setattr(chat, "vector_store", test_vs)
+    # `chat.brain` (core/deps.py's composition-root singleton) holds its own
+    # `self.vector_store` reference captured at construction time, so patching
+    # only `chat.vector_store` leaves `brain.vector_store` pointed at the
+    # unpatched, non-isolated singleton -- a memory written via chat.py's
+    # add_memory would be invisible to brain.build_prompt's RAG retrieval.
+    # Swap the `chat.brain` NAME to a parallel Brain wired to the same
+    # test_vs (rather than mutating the shared deps.brain singleton's
+    # attribute in place), so deps.py's own production-wiring identity --
+    # asserted by test_deps.py -- is left completely untouched.
+    monkeypatch.setattr(
+        chat, "brain", Brain(vector_store=test_vs, llm_client=chat.llama)
+    )

@@ -21,7 +21,7 @@ trap "kill 0" EXIT
 
 # Start Llama Consolidated Inference + Embedding Server (Port 8080)
 echo "Starting Llama Consolidated Server..."
-./llama_bin/llama-server -m models/model.gguf --port 8080 --cache-type-k q8_0 --cache-type-v turbo3 --parallel 1 --embedding --pooling mean --cache-ram 2048 --kv-unified -ngl 99 -c 49152 --flash-attn auto &
+./llama_bin/llama-server -m models/YOUR-MODEL-HERE.gguf --port 8080 --cache-type-k q8_0 --cache-type-v turbo3 --parallel 1 --embedding --pooling mean --cache-ram 2048 --kv-unified -ngl 99 -c 49152 --flash-attn auto &
 
 # Health Check Function
 wait_for_server() {

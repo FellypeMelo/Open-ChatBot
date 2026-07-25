@@ -1,10 +1,21 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Open-ChatBot E2E Core Flow', () => {
-  
-  test('Should verify initial state, create a new character with tags, and interact', async ({ page }) => {
+
+  test('Should verify initial state, create a new character with tags, and interact', async ({ page }, testInfo) => {
+    // The e2e webServer's SQLite DB is shared across CI's retry attempts
+    // (retries: 2 in playwright.config.ts) -- a transient failure on attempt 1
+    // still leaves its tag/character committed, so an un-scoped name on retry
+    // creates a SECOND "Hero"/"E2E Tester" and turns a one-off timing hiccup
+    // into a deterministic "resolved to 2 elements" failure on every later
+    // attempt. Scope every created name by the retry index so each attempt's
+    // data is independent, mirroring mobile-chat-interactions.spec.ts's
+    // project-name scoping for the same reason.
+    const tagLabel = `Hero-r${testInfo.retry}`;
+    const charName = `E2E Tester r${testInfo.retry}`;
+
     await page.goto('/');
-    
+
     // Check main title
     await expect(page.locator('text=Character Core')).toBeVisible();
 
@@ -12,33 +23,36 @@ test.describe('Open-ChatBot E2E Core Flow', () => {
     await page.click('button:has-text("Knowledge Tags")');
     await page.click('button:has-text("Create New Tag")');
     await page.waitForSelector('#tag_label');
-    await page.fill('#tag_label', 'Hero');
+    await page.fill('#tag_label', tagLabel);
     await page.fill('#tag_instruction', 'A heroic tag.');
     await page.click('button[type="submit"]');
-    // Exact match: a bare `text=Hero` is a case-insensitive SUBSTRING match, so
-    // it also matches the tag's instruction "A heroic tag." ("hero" in
-    // "heroic") -> a strict-mode violation (2+ elements). Assert the tag label
-    // chip specifically.
-    await expect(page.getByText('Hero', { exact: true })).toBeVisible();
+    // Exact match: a bare `text=...` is a case-insensitive SUBSTRING match, so
+    // it would also match the tag's own instruction text -> a strict-mode
+    // violation (2+ elements). Assert the tag label chip specifically.
+    await expect(page.getByText(tagLabel, { exact: true })).toBeVisible();
 
     // 1. Initialize Persona
     await page.click('button:has-text("Characters")');
     await page.click('button:has-text("Initialize Persona")');
-    
+
     // Fill out the form
-    await page.fill('#char_name', 'E2E Tester');
+    await page.fill('#char_name', charName);
     await page.fill('#char_description', 'A brave E2E test character.');
-    
+
     // Select the tag
-    await page.click('button:has-text("Hero")');
+    await page.click(`button:has-text("${tagLabel}")`);
 
     await page.click('button[type="submit"]:has-text("Initialize")');
 
     // Wait for the character to appear in the library
-    await expect(page.locator('text=E2E Tester')).toBeVisible();
+    await expect(page.locator('text=' + charName)).toBeVisible();
 
-    // 2. Open Chat for the character
-    await page.click('button:has-text("Chat")');
+    // 2. Open Chat for the character. Scoped to this test's own card (not a
+    // bare 'button:has-text("Chat")') -- the webServer's DB is shared across
+    // this whole e2e run, so other specs' characters (or, pre-fix, a retried
+    // attempt's own leftover character) could otherwise make this ambiguous.
+    const charCard = page.locator('div.group', { hasText: charName }).first();
+    await charCard.getByRole('button', { name: 'Chat', exact: true }).click();
 
     // 3. Send a message
     // Now we are in the chat view

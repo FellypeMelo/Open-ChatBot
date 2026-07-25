@@ -76,10 +76,18 @@ export const updateChat = async (chatId: number, data: { title?: string; is_arch
 export const deleteChat = async (chatId: number) =>
   request(`/chat/${chatId}`, 'Failed to delete chat', { method: 'DELETE' })
 
+export interface ActionInfo {
+  id: string
+  name: string
+  icon: string
+  message: string
+  deltas: Record<string, number>
+}
+
 // Single-sourced from the backend's ACTIONS_CONFIG (src/backend/api/chat.py)
-// so the optimistic-UI placeholder text never drifts from what the server
-// actually sends.
-export const fetchActions = async (): Promise<Record<string, string>> =>
+// so neither the optimistic-UI placeholder text nor a quick-action button's
+// name/icon/effect label can ever drift from what the server actually applies.
+export const fetchActions = async (): Promise<Record<string, ActionInfo>> =>
   request('/chat/actions', 'Failed to fetch actions')
 
 export const updateUser = async (name: string, gender: string, persona_description?: string, appearance?: string) =>

@@ -344,7 +344,7 @@ describe('App', () => {
     expect(counts.actions).toBe(1)
   })
 
-  it('sends a known action using the fetched action message, and falls back to a placeholder for unknown action ids', async () => {
+  it('sends a known action using the fetched action message, and a gift id missing from the fetched map renders no button', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)
       if (u === '/chat/stream' && options?.method === 'POST') {
@@ -360,7 +360,11 @@ describe('App', () => {
       if (u === '/users/me') return mockResponse(mockUser)
       if (u === '/characters/') return mockResponse(mockCharacters)
       if (u === '/tags/') return mockResponse([])
-      if (u === '/chat/actions') return mockResponse({ hug: 'Gives Luna a warm hug.' })
+      if (u === '/chat/actions') {
+        return mockResponse({
+          hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: 'Gives Luna a warm hug.', deltas: { happiness: 5 } }
+        })
+      }
       if (u.startsWith('/history/')) return mockResponse([])
       return mockResponse({})
     })
@@ -378,14 +382,54 @@ describe('App', () => {
     expect(await screen.findByText('Gives Luna a warm hug.')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTitle('Interact & Gift')).not.toBeDisabled())
 
-    // Unknown action id (a gift id not present in the fetched actions map) should
-    // fall back to the generic placeholder message.
+    // A gift id absent from the fetched actions map renders no button for it.
     fireEvent.click(screen.getByTitle('Interact & Gift'))
     fireEvent.click(screen.getByText('Gifting'))
-    await act(async () => {
-      fireEvent.click(screen.getByText('Hot Coffee'))
+    expect(screen.queryByText('Hot Coffee')).not.toBeInTheDocument()
+  })
+
+  it('recovers the Interact & Gift drawer after GET /chat/actions initially fails: shows a failure toast, and opening the drawer retries the fetch', async () => {
+    // Regression: before the fix, a failed mount-time GET /chat/actions left
+    // the drawer permanently empty (no buttons for either tab) for the rest
+    // of the session, with no recovery short of a full page reload.
+    let actionAttempts = 0
+    vi.mocked(fetch).mockImplementation((url) => {
+      const u = String(url)
+      if (u === '/chat/actions') {
+        actionAttempts += 1
+        if (actionAttempts === 1) return mockResponse({}, false)
+        return mockResponse({
+          hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: 'Gives Luna a warm hug.', deltas: { happiness: 5 } }
+        })
+      }
+      if (u === '/users/me') return mockResponse(mockUser)
+      if (u === '/characters/') return mockResponse(mockCharacters)
+      if (u === '/tags/') return mockResponse([])
+      if (u.startsWith('/history/')) return mockResponse([])
+      return mockResponse({})
     })
-    expect(await screen.findByText('*Performs action: coffee*')).toBeInTheDocument()
+
+    render(<App />)
+    await screen.findAllByText('Luna')
+    await waitFor(() => expect(actionAttempts).toBe(1))
+    // The mount-time failure is user-visible (not just a console.error), even
+    // though this toast doesn't survive the character-select below (an
+    // existing, unrelated invariant: cancelActiveStream clears any onRetry
+    // toast so a stale stream-retry can't fire against the wrong character).
+    expect(await screen.findByText('Failed to fetch actions.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    await screen.findByPlaceholderText(/Write a prompt for Luna/)
+
+    // The failed initial fetch leaves the drawer with no buttons to render...
+    fireEvent.click(screen.getByTitle('Interact & Gift'))
+    expect(screen.queryByText('Hug')).not.toBeInTheDocument()
+
+    // ...but opening the (empty) drawer itself triggers a retry, and once it
+    // resolves the still-open drawer picks up the buttons -- a real recovery
+    // path that doesn't depend on the mount-time toast still being visible.
+    await waitFor(() => expect(actionAttempts).toBe(2))
+    expect(await screen.findByText('Hug')).toBeInTheDocument()
   })
 
   it('creates a tag successfully', async () => {

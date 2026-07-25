@@ -6,9 +6,11 @@ vector store -- vector_store.query_memory and budget_calc.get_budget are mocked.
 """
 
 import asyncio
+import httpx
 import types
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.backend.core.config import settings
 from src.backend.core.orchestration.bridge import Brain
 from src.backend.core.context.budget import ContextBudgetCalculator
 
@@ -303,6 +305,30 @@ def test_normal_card_survives_whole_not_truncated_at_300():
     assert persona.strip() in prompt
     personality_line = prompt.split("Personality:")[1].split("\n")[0]
     assert "[…]" not in personality_line
+
+
+# --- final-prompt real-token validation must never break assembly -----------
+
+
+def test_build_prompt_survives_tokenize_endpoint_failure():
+    """build_prompt's final real-tokenizer check (validate_final_prompt) is
+    best-effort: if /tokenize is unreachable, the assembled prompt is still
+    returned unchanged, not dropped or raised."""
+    brain = _brain(history_budget=8000)
+    brain.budget_calc.context_size = 100
+
+    with (
+        patch.object(settings, "TESTING", False),
+        patch.object(settings, "E2E_TESTING", False),
+        patch.object(
+            httpx.AsyncClient,
+            "post",
+            AsyncMock(side_effect=httpx.ConnectError("connection refused")),
+        ),
+    ):
+        prompt = _build(brain, user_message="Xylo42marker")
+
+    assert "Xylo42marker" in prompt
 
 
 def test_card_truncation_cuts_at_sentence_boundary():

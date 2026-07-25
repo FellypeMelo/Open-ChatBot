@@ -3,11 +3,22 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import ChatView from '../ChatView'
 import * as api from '../../services/api'
 import type { MessageNode } from '../../hooks/useMessageTree'
-import type { Character, JournalEntry } from '../../services/api'
+import type { ActionInfo, Character, JournalEntry } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
   fetchJournal: vi.fn()
 }))
+
+const mockActions: Record<string, ActionInfo> = {
+  hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: '*hugs*', deltas: { happiness: 5, social: 10, relationship_score: 2 } },
+  pat_head: { id: 'pat_head', name: 'Pat Head', icon: 'emoji_emotions', message: '*pats head*', deltas: { happiness: 3, social: 5, relationship_score: 1 } },
+  tease: { id: 'tease', name: 'Tease', icon: 'theater_comedy', message: '*teases*', deltas: { happiness: 2, social: 8, relationship_score: 1 } },
+  hold_hand: { id: 'hold_hand', name: 'Hold Hand', icon: 'handshake', message: '*holds hand*', deltas: { happiness: 4, social: 8, relationship_score: 2 } },
+  coffee: { id: 'coffee', name: 'Hot Coffee', icon: 'local_cafe', message: '*hands coffee*', deltas: { hunger: -10, energy: 15, relationship_score: 2 } },
+  croissant: { id: 'croissant', name: 'Croissant', icon: 'bakery_dining', message: '*offers a croissant*', deltas: { hunger: -35, energy: 5, relationship_score: 3 } },
+  book: { id: 'book', name: 'Book', icon: 'book', message: '*presents a book*', deltas: { happiness: 8, social: 5, relationship_score: 4 } },
+  necklace: { id: 'necklace', name: 'Necklace', icon: 'diamond', message: '*presents a necklace*', deltas: { happiness: 15, social: 10, relationship_score: 8 } }
+}
 
 const baseCharacter: Character = {
   id: 1,
@@ -79,7 +90,8 @@ describe('ChatView', () => {
       onSendAction,
       onEditMessage,
       onDeleteMessage,
-      onNewChat
+      onNewChat,
+      actions: mockActions
     }
 
     vi.mocked(api.fetchJournal).mockResolvedValue([])
@@ -471,6 +483,45 @@ describe('ChatView', () => {
 
     expect(onSendAction).toHaveBeenCalledWith('book')
     expect(screen.queryByText('Book')).not.toBeInTheDocument()
+  })
+
+  it('renders action buttons from the fetched actions prop, not a hardcoded array', () => {
+    const customActions: Record<string, ActionInfo> = {
+      hug: { id: 'hug', name: 'Custom Wave', icon: 'waving_hand', message: '*waves*', deltas: { happiness: 42 } }
+    }
+    render(<ChatView {...defaultProps} activeChar={baseCharacter} actions={customActions} />)
+
+    fireEvent.click(screen.getByTitle('Interact & Gift'))
+
+    // Only the id present in the mocked API response renders -- the old
+    // hardcoded ACTIONS entries (e.g. 'Pat Head') are gone.
+    expect(screen.getByText('Custom Wave')).toBeInTheDocument()
+    expect(screen.queryByText('Pat Head')).not.toBeInTheDocument()
+    expect(screen.queryByText('Hug')).not.toBeInTheDocument()
+  })
+
+  it('derives the effect label from the mocked deltas, and the label changes when the deltas change', () => {
+    const { rerender } = render(
+      <ChatView
+        {...defaultProps}
+        activeChar={baseCharacter}
+        actions={{ hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: '*hugs*', deltas: { happiness: 5, social: 10, relationship_score: 2 } } }}
+      />
+    )
+
+    fireEvent.click(screen.getByTitle('Interact & Gift'))
+    expect(screen.getByText('HAPPINESS +5 • SOCIAL +10 • RELATION +2')).toBeInTheDocument()
+
+    rerender(
+      <ChatView
+        {...defaultProps}
+        activeChar={baseCharacter}
+        actions={{ hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: '*hugs*', deltas: { happiness: 99, hunger: -20 } } }}
+      />
+    )
+
+    expect(screen.queryByText('HAPPINESS +5 • SOCIAL +10 • RELATION +2')).not.toBeInTheDocument()
+    expect(screen.getByText('HAPPINESS +99 • HUNGER -20')).toBeInTheDocument()
   })
 
   it('closes the drawer via the close button', () => {

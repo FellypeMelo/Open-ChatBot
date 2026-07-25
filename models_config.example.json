@@ -1,7 +1,7 @@
 {
   "inference": {
     "binary_path": "llama_bin/llama-server.exe",
-    "model_path": "models/model.gguf",
+    "model_path": "models/YOUR-MODEL-HERE.gguf",
     "port": 8080,
     "threads": 0,
     "gpu_layers": 99,
@@ -10,7 +10,7 @@
   },
   "embedding": {
     "binary_path": "llama_bin/llama-server.exe",
-    "model_path": "models/model.gguf",
+    "model_path": "models/YOUR-MODEL-HERE.gguf",
     "port": 8080,
     "threads": 0,
     "gpu_layers": 99,

@@ -491,7 +491,7 @@ class Brain:
         state_str = compress_state(state, user_name)
 
         # Format via LangChain PromptTemplate
-        return ENTITY_PROMPT_TEMPLATE.format(
+        final_prompt = ENTITY_PROMPT_TEMPLATE.format(
             master_prompt=COMPRESSED_MASTER_PROMPT,
             identity=identity,
             persona_str=persona_str,
@@ -508,6 +508,11 @@ class Brain:
             user_message=user_message,
             anchor=self._build_anchor(character, state, user_name, char_display_name),
         )
+        # Every allocation above is the len//4 heuristic; this is the one exact
+        # check against the model's real tokenizer + context window (best-effort,
+        # never blocks assembly -- see validate_final_prompt).
+        await self.budget_calc.validate_final_prompt(final_prompt)
+        return final_prompt
 
     async def reflect(self, messages: List[Dict], window_size: int = 20) -> Dict:
         """Analyzes interaction for summary, facts, traits, relationship change, and diary entry."""

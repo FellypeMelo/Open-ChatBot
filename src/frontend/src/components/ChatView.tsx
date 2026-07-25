@@ -10,7 +10,7 @@ import { useAtmosphere } from '../hooks/useAtmosphere'
 import { useAudio } from '../hooks/useAudio'
 import { useConfirm } from '../hooks/useConfirm'
 import { fetchJournal } from '../services/api'
-import type { JournalEntry, Character, ChatSession } from '../services/api'
+import type { JournalEntry, Character, ChatSession, ActionInfo } from '../services/api'
 
 // Best-effort clipboard fallback for contexts where navigator.clipboard is
 // unavailable (e.g. the app served over plain http://<lan-ip> is a
@@ -31,22 +31,29 @@ const fallbackCopyToClipboard = (text: string) => {
   }
 }
 
-const ACTIONS = [
-  { id: 'hug', name: 'Hug', icon: 'favorite', effect: 'HAPPINESS +5 • SOCIAL +10 • RELATION +2' },
-  { id: 'pat_head', name: 'Pat Head', icon: 'emoji_emotions', effect: 'HAPPINESS +3 • SOCIAL +5 • RELATION +1' },
-  { id: 'tease', name: 'Tease', icon: 'theater_comedy', effect: 'HAPPINESS +2 • SOCIAL +8 • RELATION +1' },
-  { id: 'hold_hand', name: 'Hold Hand', icon: 'handshake', effect: 'HAPPINESS +4 • SOCIAL +8 • RELATION +2' }
-]
+// Which fetched action ids populate each drawer tab, and in what order --
+// the button metadata itself (name/icon/effect) comes from the `actions` prop
+// (GET /chat/actions), single-sourced from the backend's ACTIONS_CONFIG so
+// the effect label can never drift from the real stat deltas.
+const ACTION_IDS = ['hug', 'pat_head', 'tease', 'hold_hand']
+const GIFT_IDS = ['coffee', 'croissant', 'book', 'necklace']
 
 // Composer grows with its content up to this height, then scrolls internally.
 const COMPOSER_MAX_HEIGHT = 160
 
-const GIFTS = [
-  { id: 'coffee', name: 'Hot Coffee', icon: 'local_cafe', effect: 'HUNGER -10 • ENERGY +15 • RELATION +2' },
-  { id: 'croissant', name: 'Croissant', icon: 'bakery_dining', effect: 'HUNGER -35 • ENERGY +5 • RELATION +3' },
-  { id: 'book', name: 'Book', icon: 'book', effect: 'HAPPINESS +8 • SOCIAL +5 • RELATION +4' },
-  { id: 'necklace', name: 'Necklace', icon: 'diamond', effect: 'HAPPINESS +15 • SOCIAL +10 • RELATION +8' }
-]
+const STAT_LABELS: Record<string, string> = {
+  happiness: 'HAPPINESS',
+  social: 'SOCIAL',
+  relationship_score: 'RELATION',
+  hunger: 'HUNGER',
+  energy: 'ENERGY'
+}
+
+// Matches the hand-typed format this replaces, e.g. "HAPPINESS +5 • SOCIAL +10 • RELATION +2".
+const formatEffectLabel = (deltas: Record<string, number>): string =>
+  Object.entries(deltas)
+    .map(([key, value]) => `${STAT_LABELS[key] ?? key.toUpperCase()} ${value >= 0 ? '+' : ''}${value}`)
+    .join(' • ')
 
 // Stat gauge shell: label row + progress bar. The right-hand value and controls
 // vary per stat, so each caller passes them as children.
@@ -120,6 +127,11 @@ interface ChatViewProps {
   onSendAction: (actionId: string, parentId?: number) => Promise<void>
   onEditMessage?: (messageId: number, content: string) => Promise<void>
   onDeleteMessage?: (messageId: number) => Promise<void>
+  // Quick-action button metadata keyed by action id, from GET /chat/actions
+  // (fetched once at app startup -- see App.tsx). Populates the Interact &
+  // Gift drawer's Actions/Gifts tabs; an id missing from this map (e.g. the
+  // fetch hasn't resolved yet) simply doesn't render a button for it.
+  actions?: Record<string, ActionInfo>
   chats?: ChatSession[]
   activeChatId?: number | null
   greetings?: string[]
@@ -148,6 +160,7 @@ const ChatView: React.FC<ChatViewProps> = ({
   onSendAction,
   onEditMessage,
   onDeleteMessage,
+  actions = {},
   chats = [],
   activeChatId = null,
   greetings = [],
@@ -793,23 +806,26 @@ const ChatView: React.FC<ChatViewProps> = ({
 
               {/* Items Grid (actions and gifts share one layout) */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {(drawerTab === 'actions' ? ACTIONS : GIFTS).map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleActionTrigger(item.id)}
-                    disabled={isLoading}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
-                  >
-                    <Icon name={item.icon} size="md" className="text-emerald-400 group-hover:scale-110 transition-transform duration-300" />
-                    <span className="font-mono text-[11px] text-zinc-200 font-medium">
-                      {item.name}
-                    </span>
-                    <span className="text-[9px] text-zinc-500 font-mono tracking-tighter">
-                      {item.effect}
-                    </span>
-                  </button>
-                ))}
+                {(drawerTab === 'actions' ? ACTION_IDS : GIFT_IDS)
+                  .map((id) => actions[id])
+                  .filter((item): item is ActionInfo => Boolean(item))
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleActionTrigger(item.id)}
+                      disabled={isLoading}
+                      className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/5 hover:border-white/20 transition-all duration-300 group cursor-pointer disabled:opacity-50"
+                    >
+                      <Icon name={item.icon} size="md" className="text-emerald-400 group-hover:scale-110 transition-transform duration-300" />
+                      <span className="font-mono text-[11px] text-zinc-200 font-medium">
+                        {item.name}
+                      </span>
+                      <span className="text-[9px] text-zinc-500 font-mono tracking-tighter">
+                        {formatEffectLabel(item.deltas)}
+                      </span>
+                    </button>
+                  ))}
               </div>
             </div>
           )}

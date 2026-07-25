@@ -72,7 +72,9 @@ describe('api service tests', () => {
   });
 
   it('fetchActions should make GET call to /chat/actions', async () => {
-    const mockActions = { chat: 'is typing...', hug: 'is hugging...' };
+    const mockActions = {
+      hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: 'is hugging...', deltas: { happiness: 5 } }
+    };
     vi.mocked(fetch).mockResolvedValue(mockSuccessResponse(mockActions));
 
     const result = await api.fetchActions();

@@ -105,7 +105,7 @@ function App() {
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null)
   const [user, setUser] = useState<User | null>(null)
-  const [actionsMessages, setActionsMessages] = useState<Record<string, string>>({})
+  const [actionsConfig, setActionsConfig] = useState<Record<string, api.ActionInfo>>({})
   const { confirm, dialog } = useConfirm()
   // Holds the in-flight stream's AbortController so a Stop action or an idle
   // timeout can cancel it; cleared once the stream settles.
@@ -251,7 +251,7 @@ function App() {
   const fetchActions = useCallback(async () => {
     try {
       const data = await api.fetchActions()
-      setActionsMessages(data)
+      setActionsConfig(data)
     } catch {
       // Non-critical: handleSendAction falls back to a generic placeholder.
       console.error('Failed to fetch actions')
@@ -707,7 +707,7 @@ function App() {
   const handleSendAction = async (actionId: string, explicitParentId?: number) => {
     if (isLoading || !selectedCharId) return
     const parentId = resolveParentId(explicitParentId)
-    const actionMessage = actionsMessages[actionId] || `*Performs action: ${actionId}*`
+    const actionMessage = actionsConfig[actionId]?.message || `*Performs action: ${actionId}*`
     const assistantMsgId = appendExchange(actionMessage, parentId)
     const chatId = activeChatId ?? undefined
     await runStream(assistantMsgId, selectedCharId, chatId, (signal) => api.sendMessageStream(null, selectedCharId, parentId, config, actionId, chatId, signal))
@@ -1060,6 +1060,7 @@ function App() {
               onSendAction={handleSendAction}
               onEditMessage={handleEditMessage}
               onDeleteMessage={handleDeleteMessage}
+              actions={actionsConfig}
               chats={chats}
               activeChatId={activeChatId}
               greetings={[activeChar?.first_mes ?? '', ...(activeChar?.alternate_greetings ?? [])].filter((g) => g.trim())}

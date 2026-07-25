@@ -132,6 +132,126 @@ async def test_llama_client_embed_production_mode():
     await client.close()
 
 
+def test_get_chat_llm_reuses_cached_client_for_same_target():
+    """Same (base_url, model, timeout) must return the identical ChatOpenAI
+    instance, not construct a fresh one."""
+    with patch("src.backend.core.engine.llm.ChatOpenAI") as mock_chat_openai:
+        mock_chat_openai.side_effect = lambda **kwargs: MagicMock()
+
+        client = LlamaClient()
+        first = client._get_chat_llm(
+            "http://host:8080/v1", "model-a", settings.LLM_TIMEOUT
+        )
+        second = client._get_chat_llm(
+            "http://host:8080/v1", "model-a", settings.LLM_TIMEOUT
+        )
+
+        assert first is second
+        mock_chat_openai.assert_called_once()
+
+
+def test_get_chat_llm_builds_new_client_for_different_base_url_or_model():
+    """A different base_url or model must never reuse a cached client -- that
+    would silently route a request to the wrong server/model."""
+    with patch("src.backend.core.engine.llm.ChatOpenAI") as mock_chat_openai:
+        mock_chat_openai.side_effect = lambda **kwargs: MagicMock()
+
+        client = LlamaClient()
+        same = client._get_chat_llm(
+            "http://host-a:8080/v1", "model-a", settings.LLM_TIMEOUT
+        )
+        different_url = client._get_chat_llm(
+            "http://host-b:8080/v1", "model-a", settings.LLM_TIMEOUT
+        )
+        different_model = client._get_chat_llm(
+            "http://host-a:8080/v1", "model-b", settings.LLM_TIMEOUT
+        )
+
+        assert same is not different_url
+        assert same is not different_model
+        assert different_url is not different_model
+        assert mock_chat_openai.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_llm_complete_reuses_cached_client_but_sends_fresh_sampler_kwargs():
+    """complete() must reuse the same cached ChatOpenAI client across calls to
+    the same target, while still passing each call's own preset-derived sampler
+    settings (temperature/top_p/extra_body) fresh to ainvoke() -- caching the
+    client must not freeze stale sampler values from whichever preset built it
+    first."""
+    with patch("src.backend.core.engine.llm.ChatOpenAI") as mock_chat_openai:
+        mock_instance = MagicMock()
+        mock_chat_openai.return_value = mock_instance
+        mock_instance.ainvoke = AsyncMock(return_value=MagicMock(content="ok"))
+
+        client = LlamaClient()
+        await client.complete(
+            "p1",
+            url="http://host:8080",
+            model="model-a",
+            preset={"temperature": 0.1, "top_p": 0.2},
+        )
+        await client.complete(
+            "p2",
+            url="http://host:8080",
+            model="model-a",
+            preset={"temperature": 0.9, "top_p": 0.8},
+        )
+
+        mock_chat_openai.assert_called_once()
+        assert mock_instance.ainvoke.call_count == 2
+        first_kwargs = mock_instance.ainvoke.call_args_list[0].kwargs
+        second_kwargs = mock_instance.ainvoke.call_args_list[1].kwargs
+        assert first_kwargs["temperature"] == 0.1
+        assert first_kwargs["top_p"] == 0.2
+        assert second_kwargs["temperature"] == 0.9
+        assert second_kwargs["top_p"] == 0.8
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_llm_complete_builds_separate_clients_for_different_targets():
+    """complete() calls against different urls/models must each be built with
+    their own base_url/model_name -- a cache hit must never send a request
+    meant for one server/model to another."""
+    with patch("src.backend.core.engine.llm.ChatOpenAI") as mock_chat_openai:
+        mock_chat_openai.side_effect = lambda **kwargs: MagicMock(
+            ainvoke=AsyncMock(return_value=MagicMock(content="ok"))
+        )
+
+        client = LlamaClient()
+        await client.complete("p", url="http://host-a:8080", model="model-a")
+        await client.complete("p", url="http://host-b:8080", model="model-a")
+        await client.complete("p", url="http://host-a:8080", model="model-b")
+
+        assert mock_chat_openai.call_count == 3
+        called_targets = [
+            (call.kwargs["base_url"], call.kwargs["model_name"])
+            for call in mock_chat_openai.call_args_list
+        ]
+        assert called_targets == [
+            ("http://host-a:8080/v1", "model-a"),
+            ("http://host-b:8080/v1", "model-a"),
+            ("http://host-a:8080/v1", "model-b"),
+        ]
+        await client.close()
+
+
+def test_get_embeddings_client_reuses_cached_client_for_same_target():
+    with patch("src.backend.core.engine.llm.OpenAIEmbeddings") as mock_openai_emb:
+        mock_openai_emb.side_effect = lambda **kwargs: MagicMock()
+
+        client = LlamaClient()
+        first = client._get_embeddings_client("http://host:8080/v1", "model-a")
+        second = client._get_embeddings_client("http://host:8080/v1", "model-a")
+        different = client._get_embeddings_client("http://host:8080/v1", "model-b")
+
+        assert first is second
+        assert first is not different
+        assert mock_openai_emb.call_count == 2
+
+
 @pytest.mark.asyncio
 async def test_llama_client_health_check():
     """Verify health_check queries correct ports and processes mock results."""

@@ -100,6 +100,43 @@ class ContextBudgetCalculator:
             )
             return _estimate_tokens_from_words(text)
 
+    async def validate_final_prompt(self, prompt: str) -> None:
+        """Best-effort REAL token-count check of the fully assembled prompt
+        against the model's actual context window, via llama-server's
+        /tokenize endpoint. Every allocation above this is only the len//4
+        heuristic, so a long card + history + RAG recall can still silently
+        exceed the real window with no signal -- this is the final backstop.
+
+        Skipped under TESTING/E2E_TESTING (no llama-server running), matching
+        llm.py's embed()/complete_stream() early-return pattern. Any other
+        /tokenize failure (server unreachable, non-200) is caught and skipped
+        too: this check must never raise or block prompt assembly.
+        """
+        if settings.TESTING or settings.E2E_TESTING:
+            return
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.llama_url}/tokenize", json={"content": prompt}, timeout=5.0
+                )
+            if response.status_code != 200:
+                return
+            actual_tokens = len(response.json().get("tokens", []))
+        except Exception as e:
+            logger.debug(f"Skipping final prompt token validation: {e}")
+            return
+
+        if actual_tokens > self.context_size:
+            logger.warning(
+                "Assembled prompt (%s tokens) exceeds the configured context_size "
+                "(%s tokens) by %s tokens -- the model will silently drop or "
+                "truncate context. Reduce card/history/RAG size or increase "
+                "context_size.",
+                actual_tokens,
+                self.context_size,
+                actual_tokens - self.context_size,
+            )
+
     async def get_budget(self) -> Dict[str, Any]:
         """Returns the current usable budget and allocations."""
         fixed_cost = sum(self.allocations.values())

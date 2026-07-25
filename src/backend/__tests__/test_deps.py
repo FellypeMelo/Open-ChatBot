@@ -48,3 +48,17 @@ def test_singletons_are_wired_together():
     # Brain falls back to vector_store.llm_client, so brain.llm must also
     # resolve back to the very same llama_client singleton.
     assert brain.llm is llama_client
+
+
+def test_chat_router_and_brain_share_the_patched_test_vector_store():
+    # conftest.py's autouse mock_vector_store_path fixture must redirect BOTH
+    # chat.vector_store (used by add_memory/delete_by_message_ids) AND
+    # brain.vector_store (used internally by build_prompt's RAG retrieval) to
+    # the same isolated per-test instance -- otherwise a memory written via
+    # one is invisible to a read via the other for the rest of the test run.
+    from src.backend.api import chat as chat_module
+
+    assert chat_module.brain.vector_store is chat_module.vector_store
+    # And confirm the fixture actually replaced the module-level singleton
+    # (not a no-op that left both pointed at the unpatched deps.vector_store).
+    assert chat_module.vector_store is not deps.vector_store

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import or_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from typing import List, Dict, Any, Optional
@@ -278,12 +279,29 @@ class ChatRequest(BaseModel):
     action_id: Optional[str] = None
 
 
-@router.get("/chat/actions", response_model=Dict[str, str])
+class ActionInfo(BaseModel):
+    id: str
+    name: str
+    icon: str
+    message: str
+    deltas: Dict[str, int]
+
+
+@router.get("/chat/actions", response_model=Dict[str, ActionInfo])
 async def list_actions():
-    """The message text for each quick-action button, single-sourced from
-    ACTIONS_CONFIG so the frontend never has to keep its own copy in sync
-    (stat deltas stay server-side/internal -- the client only needs the text)."""
-    return {action_id: cfg["message"] for action_id, cfg in ACTIONS_CONFIG.items()}
+    """Quick-action button metadata (name/icon/message/stat deltas), single-
+    sourced from ACTIONS_CONFIG so the frontend never hand-types a copy --
+    including the effect label -- that can drift from what's applied server-side."""
+    return {
+        action_id: ActionInfo(
+            id=action_id,
+            name=cfg["name"],
+            icon=cfg["icon"],
+            message=cfg["message"],
+            deltas=cfg.get("stats", {}),
+        )
+        for action_id, cfg in ACTIONS_CONFIG.items()
+    }
 
 
 class MessageEditRequest(BaseModel):
@@ -388,7 +406,13 @@ def _persist_assistant_reply(
     On a StaleDataError -- a concurrent stat PUT or turn advanced this
     AgentState's version between our read and commit -- re-query fresh state and
     retry, so a fully generated (already streamed) reply is never silently
-    dropped over routine same-user contention (TF-03)."""
+    dropped over routine same-user contention (TF-03).
+
+    On an IntegrityError -- two concurrent regenerate/stream calls for the same
+    parent both computed the same count-derived variant_index before either
+    committed, tripping the uq_message_node_parent_variant constraint -- roll
+    back and retry so the loop recomputes variant_count against the now-visible
+    sibling instead of losing the reply."""
     state_id = state.id if state is not None else None
     for attempt in range(_max_retries + 1):
         variant_count = (
@@ -407,14 +431,14 @@ def _persist_assistant_reply(
             request_id=request_id,
         )
         db.add(ai_msg)
-        db.flush()
-        if state is not None:
-            state.current_message_id = ai_msg.id
-            _sync_state_to_chat(db, state, ctx.chat_id)
         try:
+            db.flush()
+            if state is not None:
+                state.current_message_id = ai_msg.id
+                _sync_state_to_chat(db, state, ctx.chat_id)
             db.commit()
             return ai_msg
-        except StaleDataError:
+        except (StaleDataError, IntegrityError):
             db.rollback()  # discards the just-flushed ai_msg INSERT too
             if attempt >= _max_retries:
                 raise
@@ -599,31 +623,42 @@ async def _prepare_chat_turn(
             user_message_content = last_msg.content
 
     if request.message:
-        user_msg = MessageNode(
-            character_id=character.id,
-            chat_id=chat.id,
-            user_id=user.id,
-            role="user",
-            content=request.message,
-            parent_id=effective_parent_id,
-            request_id=request_id,
-        )
-        db.add(user_msg)
-        db.flush()
-        state.current_message_id = user_msg.id
-        try:
-            db.commit()
-        except StaleDataError:
-            # Same routine-contention case as the decay commit above, but a
-            # failed commit rolls back the just-flushed user_msg INSERT too --
-            # re-add it against the now-fresh state instead of losing the
-            # user's message.
-            db.rollback()
-            state = db.query(AgentState).filter(AgentState.id == state.id).first()
+        # uq_message_node_parent_variant is table-wide, so this insert races the
+        # same way _persist_assistant_reply's does: two near-simultaneous turns
+        # resolving to the same effective_parent_id (two tabs on a stale pointer,
+        # a client retry) can compute the same count-derived variant_index before
+        # either commits. Bounded retry, same count as _persist_assistant_reply.
+        _user_msg_max_retries = 2
+        for _attempt in range(_user_msg_max_retries + 1):
+            variant_count = (
+                db.query(MessageNode)
+                .filter(MessageNode.parent_id == effective_parent_id)
+                .count()
+            )
+            user_msg = MessageNode(
+                character_id=character.id,
+                chat_id=chat.id,
+                user_id=user.id,
+                role="user",
+                content=request.message,
+                parent_id=effective_parent_id,
+                variant_index=variant_count,
+                request_id=request_id,
+            )
             db.add(user_msg)
-            db.flush()
-            state.current_message_id = user_msg.id
-            db.commit()
+            try:
+                db.flush()
+                state.current_message_id = user_msg.id
+                db.commit()
+                break
+            except (StaleDataError, IntegrityError):
+                # A failed flush/commit rolls back the just-added user_msg
+                # INSERT too -- re-derive variant_index (and re-fetch state, in
+                # case it was the stale one) instead of losing the user's message.
+                db.rollback()
+                if _attempt >= _user_msg_max_retries:
+                    raise
+                state = db.query(AgentState).filter(AgentState.id == state.id).first()
         effective_parent_id = user_msg.id
 
     history = []

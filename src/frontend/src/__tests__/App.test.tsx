@@ -344,7 +344,7 @@ describe('App', () => {
     expect(counts.actions).toBe(1)
   })
 
-  it('sends a known action using the fetched action message, and falls back to a placeholder for unknown action ids', async () => {
+  it('sends a known action using the fetched action message, and a gift id missing from the fetched map renders no button', async () => {
     vi.mocked(fetch).mockImplementation((url, options) => {
       const u = String(url)
       if (u === '/chat/stream' && options?.method === 'POST') {
@@ -360,7 +360,11 @@ describe('App', () => {
       if (u === '/users/me') return mockResponse(mockUser)
       if (u === '/characters/') return mockResponse(mockCharacters)
       if (u === '/tags/') return mockResponse([])
-      if (u === '/chat/actions') return mockResponse({ hug: 'Gives Luna a warm hug.' })
+      if (u === '/chat/actions') {
+        return mockResponse({
+          hug: { id: 'hug', name: 'Hug', icon: 'favorite', message: 'Gives Luna a warm hug.', deltas: { happiness: 5 } }
+        })
+      }
       if (u.startsWith('/history/')) return mockResponse([])
       return mockResponse({})
     })
@@ -378,14 +382,10 @@ describe('App', () => {
     expect(await screen.findByText('Gives Luna a warm hug.')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTitle('Interact & Gift')).not.toBeDisabled())
 
-    // Unknown action id (a gift id not present in the fetched actions map) should
-    // fall back to the generic placeholder message.
+    // A gift id absent from the fetched actions map renders no button for it.
     fireEvent.click(screen.getByTitle('Interact & Gift'))
     fireEvent.click(screen.getByText('Gifting'))
-    await act(async () => {
-      fireEvent.click(screen.getByText('Hot Coffee'))
-    })
-    expect(await screen.findByText('*Performs action: coffee*')).toBeInTheDocument()
+    expect(screen.queryByText('Hot Coffee')).not.toBeInTheDocument()
   })
 
   it('creates a tag successfully', async () => {

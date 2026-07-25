@@ -86,9 +86,23 @@ def test_list_actions_returns_message_for_every_configured_action(client):
 
     assert set(data.keys()) == set(ACTIONS_CONFIG.keys())
     for action_id, cfg in ACTIONS_CONFIG.items():
-        assert data[action_id] == cfg["message"]
-        # The endpoint must never leak internal stat deltas to the client.
-        assert "stats" not in data
+        entry = data[action_id]
+        assert entry["id"] == action_id
+        assert entry["name"] == cfg["name"]
+        assert entry["icon"] == cfg["icon"]
+        assert entry["message"] == cfg["message"]
+
+
+def test_list_actions_deltas_match_actions_config_exactly(client):
+    """Single-source-of-truth check: GET /chat/actions must expose the exact
+    same stat deltas ACTIONS_CONFIG applies server-side, so the frontend's
+    effect labels can never hand-type a number that drifts from reality."""
+    resp = client.get("/chat/actions")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    for action_id, cfg in ACTIONS_CONFIG.items():
+        assert data[action_id]["deltas"] == cfg["stats"]
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +849,7 @@ async def test_run_consciousness_layer_purges_superseded_variant_memories(
         role="assistant",
         content="v1",
         parent_id=parent.id,
+        variant_index=0,
         is_active=True,
     )
     v2 = MessageNode(
@@ -842,6 +857,7 @@ async def test_run_consciousness_layer_purges_superseded_variant_memories(
         role="assistant",
         content="v2",
         parent_id=parent.id,
+        variant_index=1,
         is_active=True,
     )
     db_session.add_all([v1, v2])
@@ -887,6 +903,7 @@ async def test_reflection_walks_active_branch_excluding_offbranch_variant(
         role="assistant",
         content="CHOSEN",
         parent_id=u.id,
+        variant_index=0,
         is_active=True,
     )
     offbranch = MessageNode(
@@ -894,6 +911,7 @@ async def test_reflection_walks_active_branch_excluding_offbranch_variant(
         role="assistant",
         content="OFFBRANCH",
         parent_id=u.id,
+        variant_index=1,
         is_active=True,
     )
     db_session.add_all([chosen, offbranch])

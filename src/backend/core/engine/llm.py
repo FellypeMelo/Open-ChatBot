@@ -28,6 +28,12 @@ class LlamaClient:
         self.client = httpx.AsyncClient(timeout=settings.LLM_TIMEOUT)
         self._url = None
         self._embedding_url = None
+        # Instance-level (not class-level): each client wraps its own
+        # httpx.AsyncClient, so a cache shared across instances could hand
+        # one instance's requests to another instance's (possibly closed)
+        # transport.
+        self._chat_llm_cache: dict[tuple, ChatOpenAI] = {}
+        self._embeddings_cache: dict[tuple, OpenAIEmbeddings] = {}
 
     @staticmethod
     def _build_extra_body(preset: dict = None, grammar: str = None) -> dict:
@@ -51,27 +57,51 @@ class LlamaClient:
             extra_body["grammar"] = grammar
         return extra_body
 
-    def _build_chat_llm(
+    def _get_chat_llm(
         self,
         base_url: str,
         model_name: str,
-        preset: dict = None,
-        grammar: str = None,
-        timeout: float = None,
+        timeout: float,
     ) -> ChatOpenAI:
-        """Construct the ChatOpenAI client shared by complete()/complete_stream()
-        (they differed only in the request timeout)."""
-        return ChatOpenAI(
+        """Return a cached ChatOpenAI client for (base_url, model_name, timeout),
+        constructing one on first use. These are the only values that affect
+        client CONSTRUCTION. Per-call sampler settings (temperature, top_p,
+        extra_body/grammar) are NOT baked in here -- they vary by preset/grammar
+        on every call, so complete()/complete_stream() pass them fresh as
+        ainvoke()/astream() kwargs instead, which override the (unset) instance
+        defaults per-request without needing a new client."""
+        key = (base_url, model_name, timeout)
+        cached = self._chat_llm_cache.get(key)
+        if cached is not None:
+            return cached
+        llm = ChatOpenAI(
             base_url=base_url,
             openai_api_key="sk-anything",
             model_name=model_name,
-            temperature=_pick(preset, "temperature", settings.TEMPERATURE),
-            top_p=_pick(preset, "top_p", settings.TOP_P),
             max_tokens=settings.N_PREDICT,
-            extra_body=self._build_extra_body(preset, grammar),
-            timeout=timeout if timeout is not None else settings.LLM_TIMEOUT,
+            timeout=timeout,
             http_async_client=self.client,
         )
+        self._chat_llm_cache[key] = llm
+        return llm
+
+    def _get_embeddings_client(
+        self, base_url: str, model_name: str
+    ) -> OpenAIEmbeddings:
+        """Return a cached OpenAIEmbeddings client for (base_url, model_name)."""
+        key = (base_url, model_name)
+        cached = self._embeddings_cache.get(key)
+        if cached is not None:
+            return cached
+        embeddings = OpenAIEmbeddings(
+            openai_api_base=base_url,
+            openai_api_key="sk-anything",
+            model=model_name,
+            check_embedding_ctx_length=False,
+            http_async_client=self.client,
+        )
+        self._embeddings_cache[key] = embeddings
+        return embeddings
 
     @property
     def url(self) -> str:
@@ -113,9 +143,7 @@ class LlamaClient:
 
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
-        llm = self._build_chat_llm(
-            base_url, model_name, preset, grammar, settings.LLM_TIMEOUT
-        )
+        llm = self._get_chat_llm(base_url, model_name, settings.LLM_TIMEOUT)
 
         message = HumanMessage(content=prompt)
         t0 = time.perf_counter()
@@ -123,7 +151,12 @@ class LlamaClient:
             logger.info(
                 f"LLM REQ (LangChain): prompt_len={len(prompt)} target={base_url}"
             )
-            response = await llm.ainvoke([message])
+            response = await llm.ainvoke(
+                [message],
+                temperature=_pick(preset, "temperature", settings.TEMPERATURE),
+                top_p=_pick(preset, "top_p", settings.TOP_P),
+                extra_body=self._build_extra_body(preset, grammar),
+            )
             dur = time.perf_counter() - t0
             content = response.content.strip()
             logger.info(f"LLM RES (LangChain): dur={dur:.3f}s, gen_len={len(content)}")
@@ -148,13 +181,16 @@ class LlamaClient:
 
         base_url = (url or self.url) + "/v1"
         model_name = model or settings.MODEL_PATH
-        llm = self._build_chat_llm(
-            base_url, model_name, preset, grammar, settings.LLM_STREAM_TIMEOUT
-        )
+        llm = self._get_chat_llm(base_url, model_name, settings.LLM_STREAM_TIMEOUT)
 
         message = HumanMessage(content=prompt)
         try:
-            async for chunk in llm.astream([message]):
+            async for chunk in llm.astream(
+                [message],
+                temperature=_pick(preset, "temperature", settings.TEMPERATURE),
+                top_p=_pick(preset, "top_p", settings.TOP_P),
+                extra_body=self._build_extra_body(preset, grammar),
+            ):
                 yield chunk.content
         except Exception as e:
             logger.exception(f"Error during LangChain streaming completion: {e}")
@@ -166,14 +202,7 @@ class LlamaClient:
 
         base_url = (url or self.embedding_url) + "/v1"
         model_name = model or settings.MODEL_PATH
-
-        embeddings = OpenAIEmbeddings(
-            openai_api_base=base_url,
-            openai_api_key="sk-anything",
-            model=model_name,
-            check_embedding_ctx_length=False,
-            http_async_client=self.client,
-        )
+        embeddings = self._get_embeddings_client(base_url, model_name)
         try:
             t0 = time.perf_counter()
             logger.info(f"Generating embedding via LangChain for: {text[:50]}...")

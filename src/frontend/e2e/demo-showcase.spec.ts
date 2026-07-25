@@ -37,7 +37,11 @@ test('OpenChatBot — persistent memory demo', async ({ page }) => {
   await page.goto('/');
   await page.waitForTimeout(900);
 
-  // Create a neutral technical agent
+  // Create a neutral technical agent. This spec runs in the same CI job as
+  // several others that also create characters in the shared webServer DB,
+  // so the "Chat" click below is scoped to this card specifically -- a bare
+  // 'button:has-text("Chat")' would be ambiguous once other specs' characters
+  // exist too.
   await page.click('button:has-text("Characters")');
   await page.click('button:has-text("Initialize Persona")');
   await page.fill('#char_name', 'Atlas');
@@ -45,7 +49,8 @@ test('OpenChatBot — persistent memory demo', async ({ page }) => {
   await page.click('button[type="submit"]:has-text("Initialize")');
   await page.waitForTimeout(600);
 
-  await page.click('button:has-text("Chat")');
+  const charCard = page.locator('div.group', { hasText: 'Atlas' }).first();
+  await charCard.getByRole('button', { name: 'Chat', exact: true }).click();
   const box = page.locator('textarea');
   await box.waitFor();
   await page.waitForTimeout(500);

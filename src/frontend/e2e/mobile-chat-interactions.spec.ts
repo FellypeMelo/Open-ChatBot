@@ -18,11 +18,15 @@ test.describe('Mobile Chat Interactions E2E', () => {
     // The e2e webServer (and its SQLite DB) is started once for the whole
     // `playwright test` invocation and shared by every project, so this same
     // spec running under both mobile-chrome and mobile-safari would otherwise
-    // create two identically-named characters/messages. Scope every
-    // created-data string to the project name so each run's `.first()`
-    // lookups stay unambiguous regardless of execution order.
-    const personaName = `Mobile QA Persona (${testInfo.project.name})`;
-    const greeting = `Mobile hello from ${testInfo.project.name}!`;
+    // create two identically-named characters/messages -- scoped by project
+    // name to keep those unambiguous. ALSO scoped by testInfo.retry: CI retries
+    // (retries: 2) reuse the same DB, so a transient failure on attempt 0 still
+    // leaves its character/message committed, and an un-scoped retry attempt 1
+    // would then find two "Mobile QA Persona (...)" cards -- turning a one-off
+    // timing hiccup into a deterministic "resolved to 2 elements" failure on
+    // every subsequent attempt (this is exactly what a prior CI run showed).
+    const personaName = `Mobile QA Persona (${testInfo.project.name} r${testInfo.retry})`;
+    const greeting = `Mobile hello from ${testInfo.project.name} r${testInfo.retry}!`;
 
     await page.goto('/');
     await expect(page.locator('text=Character Core')).toBeVisible();
